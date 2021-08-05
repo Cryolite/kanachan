@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(dirname "$(readlink -e "${BASH_SOURCE[0]}")")"
+prologue_sh_path="$(readlink -e "$script_dir/../prologue.sh")"
+. "$prologue_sh_path"
+unset prologue_sh_path
+unset script_dir
+
+PROGRAM_NAME=download
+
+function print_usage ()
+{
+  cat <<'EOF'
+Usage: download [OPTION]...
+Download Boost source tree.
+
+  --version=<VERSION>        The version of Boost to download (default: the
+                             latest release version).
+  --source-dir=<DIR>         The source directory (mandatory).
+  --clobber-source-dir       Delete the source directory before the source
+                             archive is expanded there.
+  -h, --help                 Display this help and exit.
+EOF
+}
+
+if getopt -T; (( $? != 4 )); then
+  die_with_runtime_error "$PROGRAM_NAME" "\`getopt' is not an enhanced version."
+fi
+opts="$(getopt -n "$PROGRAM_NAME" -l version:,source-dir:,clobber-source-dir,help -- h "$@")"
+eval set -- "$opts"
+
+while (( $# > 0 )); do
+  arg="$1"
+  shift
+  case "$arg" in
+  --version)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    version="$1"
+    shift
+    ;;
+  --source-dir)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    source_dir="$1"
+    shift
+    ;;
+  --clobber-source-dir)
+    clobber_source_dir=yes
+    ;;
+  -h|--help)
+    set +x
+    print_usage
+    exit 0
+    ;;
+  --)
+    if (( $# > 0 )); then
+      die_with_user_error "$PROGRAM_NAME" "An invalid argument \`$1'."
+    fi
+    break
+    ;;
+  *)
+    die_with_user_error "$PROGRAM_NAME" "An invalid argument \`$arg'."
+    ;;
+  esac
+done
+
+if [[ ${version-NOT-DEFINED} == NOT-DEFINED ]]; then
+  version="$(curl -fLsS 'https://www.boost.org/users/history/'                          \
+               | grep -Eo 'Version[[:space:]]+[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+' \
+               | grep -Eo '[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+'                    \
+               | LANG=C.UTF-8 sort -Vu                                                  \
+               | tail -n 1)" \
+    || die_with_runtime_error "$PROGRAM_NAME" "Failed to guess Boost latest release version."
+  if [[ ! $version =~ ^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$ ]]; then
+    die_with_runtime_error "$PROGRAM_NAME" "Failed to eguess Boost latest release version."
+  fi
+fi
+if [[ ! $version =~ ^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$ ]]; then
+  die_with_user_error "$PROGRAM_NAME" "An invalid value \`$version' for \`--version' option."
+fi
+
+temp_dir="$(mktemp -d)" \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to create a temporary directory."
+push_rollback_command "rm -rf \"$temp_dir\""
+
+if [[ ${source_dir-NOT-DEFINED} == NOT-DEFINED ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--source-dir' option is mandatory."
+fi
+if [[ -z $source_dir ]]; then
+  die_with_user_error "$PROGRAM_NAME" "An invalid value \`$source_dir' for \`--source-dir' option."
+fi
+if [[ $(readlink -m "$source_dir") != $(cd "$temp_dir" >/dev/null && readlink -m "$source_dir") ]]; then
+  die_with_user_error "$PROGRAM_NAME" "A relative path \`$source_dir' is specified for \`--source-dir' option, but is expected to be an absolute one."
+fi
+
+if [[ -e $source_dir ]]; then
+  case "${clobber_source_dir-no}" in
+  yes)
+    rm -rf "$source_dir"
+    ;;
+  no)
+    die_with_user_error "$PROGRAM_NAME" "Could not overwrite \`$source_dir'. Use \`--clobber-source-dir' to overwrite it."
+    ;;
+  *)
+    die_with_logic_error "$PROGRAM_NAME"
+    ;;
+  esac
+fi
+mkdir -p "$source_dir" \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to create the source directory \`$source_dir'."
+
+# 379CE192D401AB61: rsa4096 2015-02-17 Bintray (by JFrog) <bintray@bintray.com>
+key_ids=(379CE192D401AB61)
+key_servers=('hkp://keys.gnupg.net:80'               \
+             'hkp://zimmermann.mayfirst.org:80'      \
+             'hkp://pgp.key-server.io:80'            \
+             'hkp://keyserver.ubuntu.com:80'         \
+             'hkp://p80.pool.sks-keyservers.net:80')
+for key_server in "${key_servers[@]}"; do
+  timeout 30 gpg --homedir "$temp_dir/.gnupg" --batch --keyserver "$key_server" --recv-keys "${key_ids[@]}" && break
+done
+
+tarball_name="boost_$(tr . _ <<<"$version").tar.bz2"
+
+(cd "$temp_dir" && curl -fLsSo "$tarball_name" "https://boostorg.jfrog.io/artifactory/main/release/$version/source/$tarball_name") \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to download \`$tarball_name'."
+{ curl --no-progress-meter 'https://www.boost.org/users/download/' | grep -F "$(sha256sum "$temp_dir/$tarball_name" | tr -s ' ' | cut -d' ' -f1)"; } \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to verify the checksum of the downloaed tarball."
+
+tar xf "$temp_dir/$tarball_name" -C "$source_dir" --strip-components=1 \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to expand \`$tarball_name'."
+rm "$temp_dir/$tarball_name"

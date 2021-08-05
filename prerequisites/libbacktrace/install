@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(dirname "$(readlink -e "${BASH_SOURCE[0]}")")"
+prologue_sh_path="$(readlink -e "$script_dir/../prologue.sh")"
+. "$prologue_sh_path"
+unset prologue_sh_path
+unset script_dir
+
+PROGRAM_NAME=install
+
+function print_usage ()
+{
+  cat <<'EOF'
+Usage: install [OPTION]...
+Install libbacktrace.
+
+  --prefix=<PREFIX>          Pass `--prefix=<PREFIX>' on to libbacktrace
+                             `configure' script (default: `/usr/local').
+  --source-dir=<DIR>         The source directory (default:
+                             `<PREFIX>/src/libbacktrace').
+  --clobber-source-dir       Delete the source directory before the source
+                             archive is expanded there.
+  -h, --help                 Display this help and exit.
+EOF
+}
+
+if getopt -T; (( $? != 4 )); then
+  die_with_runtime_error "$PROGRAM_NAME" "\`getopt' is not an enhanced version."
+fi
+opts="$(getopt -n "$PROGRAM_NAME" -l prefix:,source-dir:,clobber-source-dir,help -- h "$@")"
+eval set -- "$opts"
+
+while (( $# > 0 )); do
+  arg="$1"
+  shift
+  case "$arg" in
+  --prefix)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    prefix="$1"
+    shift
+    ;;
+  --source-dir)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    source_dir="$1"
+    shift
+    ;;
+  --clobber-source-dir)
+    clobber_source_dir=yes
+    ;;
+  -h|--help)
+    set +x
+    print_usage
+    exit 0
+    ;;
+  --)
+    if (( $# > 0 )); then
+      die_with_user_error "$PROGRAM_NAME" "An invalid argument \`$1'."
+    fi
+    break
+    ;;
+  *)
+    die_with_user_error "$PROGRAM_NAME" "An invalid argument \`$arg'."
+    ;;
+  esac
+done
+
+configure_options=()
+
+: ${prefix=/usr/local}
+configure_options+=("--prefix=$prefix")
+
+temp_dir="$(mktemp -d)" \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to create a temporary directory."
+push_rollback_command "rm -rf \"$temp_dir\""
+
+: ${source_dir="$prefix/src/libbacktrace"}
+if [[ -z $source_dir ]]; then
+  die_with_user_error "$PROGRAM_NAME" "An invalid value \`$source_dir' for \`--source-dir' option."
+fi
+if [[ $(readlink -m "$source_dir") != $(cd "$temp_dir" >/dev/null && readlink -m "$source_dir") ]]; then
+  die_with_user_error "$PROGRAM_NAME" "A relative path \`$source_dir' is specified for \`--source-dir' option, but is expected to be an absolute one."
+fi
+
+if [[ -e $source_dir ]]; then
+  case "${clobber_source_dir-no}" in
+  yes)
+    rm -rf "$source_dir"
+    ;;
+  no)
+    die_with_user_error "$PROGRAM_NAME" "Could not overwrite \`$source_dir'. Use \`--clobber-source-dir' to overwrite it."
+    ;;
+  *)
+    die_with_logic_error "$PROGRAM_NAME"
+    ;;
+  esac
+fi
+
+source_dir_prefix="$(dirname "$source_dir")"
+source_dir_basename="$(basename "$source_dir")"
+mkdir -p "$source_dir_prefix" \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to create \`$source_dir_prefix' directory, which is necessary to create the source directory \`$source_dir'."
+(cd "$source_dir_prefix" && git clone 'https://github.com/ianlancetaylor/libbacktrace.git' "$source_dir_basename") \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to \`git clone' libbacktrace repository."
+
+build_dir="$temp_dir/build"
+mkdir "$build_dir"
+
+(cd "$build_dir" || exit $?
+ "$source_dir/configure" --with-pic ${configure_options[@]+"${configure_options[@]}"}) \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to \`configure' libbacktrace."
+
+make_options=()
+
+# Check whether this script is (directly or indirectly) called from `make'.
+if ! declare -p MAKEFLAGS 2>/dev/null | grep -Eq '^declare -x MAKEFLAGS='; then
+  make_options+=(-j -l "$(nproc)")
+fi
+
+(cd "$build_dir" && make ${make_options[@]+"${make_options[@]}"}) \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to \`make' libbacktrace."
+
+(cd "$build_dir" && make check) \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to \`make check' libbacktrace."
+
+(cd "$build_dir" && make install) \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to \`make install' libbacktrace."
