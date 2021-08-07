@@ -29,6 +29,7 @@ public:
       floats_(),
       action_(std::numeric_limits<std::uint_fast8_t>::max()),
       action_index_(0u),
+      round_result_(std::numeric_limits<std::uint_fast8_t>::max()),
       delta_round_score_(),
       game_rank_(),
       game_score_(),
@@ -99,11 +100,13 @@ public:
   }
 
   void setResult(
+    std::uint_fast8_t round_result,
     std::int_fast32_t delta_round_score,
     std::uint_fast8_t game_rank,
     std::int_fast32_t game_score,
     std::int_fast32_t delta_grading_point)
   {
+    round_result_ = round_result;
     delta_round_score_ = delta_round_score;
     game_rank_ = game_rank;
     game_score_ = game_score;
@@ -131,7 +134,8 @@ public:
       }
     }
     os << '\t' << static_cast<unsigned>(action_);
-    os << '\t' << delta_round_score_
+    os << '\t' << static_cast<unsigned>(round_result_)
+       << ',' << delta_round_score_
        << ',' << static_cast<unsigned>(game_rank_)
        << ',' << game_score_
        << ',' << delta_grading_point_;
@@ -144,6 +148,7 @@ private:
   std::vector<double> floats_;
   std::uint_fast8_t action_;
   std::uint_fast8_t action_index_;
+  std::uint_fast8_t round_result_;
   std::int_fast32_t delta_round_score_;
   std::uint_fast8_t game_rank_;
   std::int_fast32_t game_score_;
@@ -318,12 +323,62 @@ PostZimoAction::PostZimoAction(
   liuju_ = 1u;
 }
 
-void PostZimoAction::setDeltaRoundScore(std::int_fast32_t const delta_round_score)
+void PostZimoAction::setRoundResult_(
+  std::uint_fast8_t const result, std::int_fast32_t const delta_round_score)
 {
+  if (round_result_ != std::numeric_limits<std::uint_fast8_t>::max()) {
+    KANACHAN_THROW<std::logic_error>("A logic error.");
+  }
   if (delta_round_score_ != std::numeric_limits<std::int_fast32_t>::max()) {
     KANACHAN_THROW<std::logic_error>("A logic error.");
   }
+  round_result_ = result;
   delta_round_score_ = delta_round_score;
+}
+
+void PostZimoAction::onZimohu(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(0u, delta_round_score);
+}
+
+void PostZimoAction::onTajiahu(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(1u, delta_round_score);
+}
+
+void PostZimoAction::onRong(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(2u, delta_round_score);
+}
+
+void PostZimoAction::onFangchong(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(3u, delta_round_score);
+}
+
+void PostZimoAction::onOther(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(4u, delta_round_score);
+}
+
+void PostZimoAction::onButing(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(5u, delta_round_score);
+}
+
+void PostZimoAction::onTingpai(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(6u, delta_round_score);
+}
+
+void PostZimoAction::onLiujumanguan(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(7u, delta_round_score);
+}
+
+void PostZimoAction::onLiuju(std::int_fast32_t delta_round_score)
+{
+  setRoundResult_(8u, delta_round_score);
 }
 
 void PostZimoAction::encode(std::string const &uuid, std::ostream &os) const
@@ -364,7 +419,7 @@ void PostZimoAction::encode(std::string const &uuid, std::ostream &os) const
   s.setActionCategory(74u, gang_);
   s.setActionBinary(hule_ == 1u);
   s.setActionBinary(liuju_ == 1u);
-  s.setResult(delta_round_score_, game_rank_, game_score_, delta_grading_point_);
+  s.setResult(round_result_, delta_round_score_, game_rank_, game_score_, delta_grading_point_);
   s.encode(os);
 }
 

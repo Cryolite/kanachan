@@ -456,7 +456,7 @@ void PlayerState::onDapai(lq::RecordDiscardTile const &record)
 
   {
     std::uint_fast8_t i = 0u;
-    for (; i < 25u; ++i) {
+    for (; i < 24u; ++i) {
       if (he_[i] == std::numeric_limits<std::uint_fast16_t>::max()) {
         break;
       }
@@ -464,7 +464,7 @@ void PlayerState::onDapai(lq::RecordDiscardTile const &record)
     if (i >= 24u) {
       KANACHAN_THROW<std::logic_error>("A logic error.");
     }
-    std::uint_fast16_t offset = 0;
+    std::uint_fast16_t offset = 0u;
     if (record.moqie()) {
       if (chipeng_ != std::numeric_limits<std::uint_fast8_t>::max()) {
         KANACHAN_THROW<std::logic_error>("A logic error.");
@@ -942,7 +942,7 @@ void PlayerState::onGang(lq::RecordAnGangAddGang const &record)
   if (record.tiles().size() != 2u) {
     KANACHAN_THROW<std::runtime_error>(_1) << "tiles = " << record.tiles();
   }
-  std::uint_fast8_t tile = Kanachan::pai2Num(record.tiles());
+  std::uint_fast8_t const tile = Kanachan::pai2Num(record.tiles());
 
   if (record.type() == 2u) {
     // 加槓

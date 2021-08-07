@@ -9,10 +9,12 @@ import torch.utils.data
 from kanachan import common
 
 
-NUM_COMMON_SPARSE_FEATURES = 32756
-MAX_NUM_ACTIVE_COMMON_SPARSE_FEATURES = 123
-NUM_COMMON_FLOAT_FEATURES = 6
-NUM_COMMON_FEATURES = 32762
+NUM_SPARSE_FEATURES = 32756
+MAX_NUM_ACTIVE_SPARSE_FEATURES = 123
+NUM_FLOAT_FEATURES = 6
+NUM_FEATURES = 32762
+
+NUM_POST_ZIMO_ACTIONS = 224
 
 
 class Dataset(torch.utils.data.IterableDataset):
@@ -39,13 +41,12 @@ class Dataset(torch.utils.data.IterableDataset):
 
 
 class Encoder(nn.Module):
-    def __init__(self, dimension, num_heads, num_layers, dtype) -> None:
+    def __init__(self, dimension, num_heads, num_layers, sparse=False) -> None:
         super(Encoder, self).__init__()
         self.__embedding = nn.Embedding(
-            NUM_COMMON_SPARSE_FEATURES + 1, dimension,
-            padding_idx=NUM_COMMON_SPARSE_FEATURES, dtype=dtype)
-        layer = nn.TransformerEncoderLayer(
-            dimension, num_heads, batch_first=True, dtype=dtype)
+            NUM_SPARSE_FEATURES + 1, dimension,
+            padding_idx=NUM_SPARSE_FEATURES, sparse=sparse)
+        layer = nn.TransformerEncoderLayer(dimension, num_heads, batch_first=True)
         self.__encoder = nn.TransformerEncoder(layer, num_layers)
 
     def forward(self, sparse_feature, float_feature):
@@ -54,24 +55,41 @@ class Encoder(nn.Module):
         return self.__encoder(feature)
 
 
-class Decoder(nn.Module):
-    def __init__(self, num_actions, dimension, num_heads, num_layers, dtype) -> None:
-        super(Decoder, self).__init__()
-        self.__embedding = nn.Embedding(num_actions, dimension, dtype=dtype)
-        layer = nn.TransformerDecoderLayer(
-            dimension, num_heads, batch_first=True, dtype=dtype)
+class DecoderBase(nn.Module):
+    def __init__(self, num_actions, dimension, num_heads, num_layers) -> None:
+        super(DecoderBase, self).__init__()
+        self.__embedding = nn.Embedding(num_actions, dimension)
+        layer = nn.TransformerDecoderLayer(dimension, num_heads, batch_first=True)
         self.__decoder = nn.TransformerDecoder(layer, num_layers)
-        self.__linear = nn.Linear(dimension, 1, dtype=dtype)
 
     def forward(self, encode, action):
         embedding = self.__embedding(action)
         decode = self.__decoder(embedding, encode)
-        decode = torch.flatten(decode, start_dim=1)
-        output = self.__linear(decode)
-        return torch.flatten(output)
+        return decode
 
 
-def training_epoch(path: pathlib.Path, iterator_adaptor, encoder, decoder, optimizer, batch_size, epoch=None):
+def validate(data: pathlib.Path, iterator_adaptor, model, loss_function,
+             batch_size, writer) -> float:
+    num_batches = 0
+    validation_loss = 0.0
+    with Dataset(path, iterator_adaptor) as dataset:
+        data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+        with torch.no_grad():
+            for sparse_feature, float_feature, action, y in data_loader:
+                prediction = model(sparse_feature, float_feature, action)
+                validation_loss += loss_function(prediction, z).item()
+                num_batches += 1
+
+    validation_loss /= num_batches
+    logging.info(f'validation loss = {validation_loss}')
+
+    return validation_loss
+
+
+def training_epoch(
+        training_data: pathlib.Path, validation_data: pathlib.Path,
+        iterator_adaptor, model, loss_function, optimizer, batch_size,
+        writer, epoch=None):
     if epoch is None:
         logging.info('A new epoch starts.')
     else:
@@ -79,13 +97,14 @@ def training_epoch(path: pathlib.Path, iterator_adaptor, encoder, decoder, optim
 
     start_time = datetime.datetime.now()
 
-    with Dataset(path, iterator_adaptor) as dataset:
+    num_batches = 0
+    training_loss = 0.0
+    with Dataset(training_data, iterator_adaptor) as dataset:
         data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
         for batch, (sparse_feature, float_feature, action, y) in enumerate(data_loader):
-            encode = encoder(sparse_feature, float_feature)
-            prediction = decoder(encode, action)
-            loss_function = nn.MSELoss()
+            prediction = model(sparse_feature, float_feature, action)
             loss = loss_function(prediction, y)
+            training_loss += loss.item()
 
             optimizer.zero_grad()
             loss.backward()
@@ -96,24 +115,19 @@ def training_epoch(path: pathlib.Path, iterator_adaptor, encoder, decoder, optim
             else:
                 logging.info(f'epoch = {epoch}, batch = {batch}, loss = {loss.item()}')
 
+            num_batches = batch + 1
+
     elapsed_time = datetime.datetime.now() - start_time
     if epoch is None:
         logging.info(f'An epoch has finished (elapsed time = {elapsed_time}).')
     else:
         logging.info(f'The {epoch}-th epoch has finished (elapsed time = {elapsed_time}).')
 
+    training_loss /= num_batches
+    logging.info(f'epoch = {epoch}, loss = {training_loss}')
+    writer.add_scalar('Training epoch loss', training_loss, epoch)
 
-def validate(path: pathlib.Path, iterator_adaptor, model, batch_size):
-    validation_loss = 0.0
-    num_samples = 0
-
-    with Dataset(path, iterator_adaptor) as dataset:
-        data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
-        with torch.no_grad():
-            for x, y, z in data_loader:
-                output = model(x, y)
-                validation_loss += nn.MSELoss(output, z).item()
-                num_samples += 1
-
-    validation_loss /= num_samples
-    logging.info(f'validation loss = {validation_loss}')
+    if validation_data is not None:
+        validation_loss = validate(
+            validation_data, iterator_adaptor, model, loss_function, batch_size, writer)
+        writer.add_scalar('Validation epoch loss', validation_loss, epoch)

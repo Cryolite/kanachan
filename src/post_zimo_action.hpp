@@ -43,7 +43,27 @@ public:
 
   PostZimoAction &operator=(PostZimoAction const &rhs) = default;
 
-  void setDeltaRoundScore(std::int_fast32_t delta_round_score);
+private:
+  void setRoundResult_(std::uint_fast8_t result, std::int_fast32_t delta_round_score);
+
+public:
+  void onZimohu(std::int_fast32_t delta_round_score);
+
+  void onTajiahu(std::int_fast32_t delta_round_score);
+
+  void onRong(std::int_fast32_t delta_round_score);
+
+  void onFangchong(std::int_fast32_t delta_round_score);
+
+  void onOther(std::int_fast32_t delta_round_score);
+
+  void onButing(std::int_fast32_t delta_round_score);
+
+  void onTingpai(std::int_fast32_t delta_round_score);
+
+  void onLiujumanguan(std::int_fast32_t delta_round_score);
+
+  void onLiuju(std::int_fast32_t delta_round_score);
 
   void encode(std::string const &uuid, std::ostream &os) const;
 
@@ -100,10 +120,15 @@ private:
   std::array<std::uint_fast16_t, 24u> he_; // [0u, 37u * 8u) = [0, 296u), optional
   std::array<std::uint_fast8_t, 4u> fulus_; // [0u, num_types_of_fulus_) = [0u, 238u), optional
   std::array<Tajia_, 3u> tajias_;
+
+  // Action
   std::uint_fast8_t dapai_ = std::numeric_limits<std::uint_fast8_t>::max(); // [0u, 37u * 4u), optional
   std::uint_fast8_t gang_ = std::numeric_limits<std::uint_fast8_t>::max(); // [0u, 74u), optional
   std::uint_fast8_t hule_ = std::numeric_limits<std::uint_fast8_t>::max(); // [0u, 1u), optional
   std::uint_fast8_t liuju_ = std::numeric_limits<std::uint_fast8_t>::max(); // [0u, 1u), optional
+
+  // Result
+  std::uint_fast8_t round_result_ = std::numeric_limits<std::uint_fast8_t>::max();
   std::int_fast32_t delta_round_score_ = std::numeric_limits<std::int_fast32_t>::max();
   std::uint_fast8_t game_rank_ = std::numeric_limits<std::uint_fast8_t>::max();
   std::int_fast32_t game_score_ = std::numeric_limits<std::int_fast32_t>::max();

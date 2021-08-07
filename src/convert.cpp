@@ -175,6 +175,8 @@ void convert(std::filesystem::path const &ph) {
   std::size_t ju;
   std::size_t ben;
 
+  std::uint_fast8_t prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
+
   for (auto const &r : msg1.records()) {
     wrapper.ParseFromString(r);
     if (wrapper.name() == ".lq.RecordAnGangAddGang") {
@@ -189,6 +191,8 @@ void convert(std::filesystem::path const &ph) {
       for(auto &state : states) {
         state.onGang(record);
       }
+
+      prev_dapai_seat = record.seat();
     }
     else if (wrapper.name() == ".lq.RecordChiPengGang") {
       lq::RecordChiPengGang record;
@@ -197,6 +201,8 @@ void convert(std::filesystem::path const &ph) {
       for (auto &state : states) {
         state.onChiPengGang(record);
       }
+
+      prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
     }
     else if (wrapper.name() == ".lq.RecordDealTile") {
       lq::RecordDealTile record;
@@ -210,6 +216,8 @@ void convert(std::filesystem::path const &ph) {
         std::cout << uuid << ": " << chang << ju << "局" << ben << "本場" << std::endl;
         throw;
       }
+
+      prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
     }
     else if (wrapper.name() == ".lq.RecordDiscardTile") {
       lq::RecordDiscardTile record;
@@ -228,6 +236,8 @@ void convert(std::filesystem::path const &ph) {
         std::cout << uuid << ": " << chang << ju << "局" << ben << "本場" << std::endl;
         throw;
       }
+
+      prev_dapai_seat = record.seat();
     }
     else if (wrapper.name() == ".lq.RecordHule") {
       lq::RecordHule record;
@@ -240,13 +250,80 @@ void convert(std::filesystem::path const &ph) {
       }
 
       for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-        std::int_fast32_t delta_round_score = record.scores()[i] - states[i].getInitialScore();
+        std::int_fast32_t const delta_round_score = record.scores()[i] - states[i].getInitialScore();
+        std::uint_fast8_t type = std::numeric_limits<std::uint_fast8_t>::max();
+        for (auto const &hule : record.hules()) {
+          if (hule.zimo()) {
+            if (record.hules().size() != 1u) {
+              KANACHAN_THROW<std::runtime_error>("A broken data.");
+            }
+            if (type != std::numeric_limits<std::uint_fast8_t>::max()) {
+              KANACHAN_THROW<std::runtime_error>("A broken data.");
+            }
+            if (hule.seat() == i) {
+              // 自摸和
+              type = 0u;
+            }
+            else {
+              // 他家自摸和
+              type = 1u;
+            }
+          }
+          else {
+            if (prev_dapai_seat == std::numeric_limits<std::uint_fast8_t>::max()) {
+              KANACHAN_THROW<std::logic_error>("A logic error.");
+            }
+            if (hule.seat() == i) {
+              // 栄和
+              // ダブロン・トリプルロンは自家の栄和とする．
+              type = 2u;
+            }
+            else if (prev_dapai_seat == i) {
+              if (type == std::numeric_limits<std::uint_fast8_t>::max() || type == 2u || type == 3u) {
+                // 放銃
+                type = 3u;
+              }
+              else {
+                KANACHAN_THROW<std::runtime_error>("A broken data.");
+              }
+            }
+            else {
+              if (type == std::numeric_limits<std::uint_fast8_t>::max() || type == 2u || type == 4u) {
+                // 横移動．ただし自家の包を含む．
+                type = 4u;
+              }
+              else {
+                KANACHAN_THROW<std::runtime_error>("A broken data.");
+              }
+            }
+          }
+        }
         for (auto &post_zimo_action : post_zimo_actions[i]) {
-          post_zimo_action.setDeltaRoundScore(delta_round_score);
+          switch (type) {
+          case 0u:
+            post_zimo_action.onZimohu(delta_round_score);
+            break;
+          case 1u:
+            post_zimo_action.onTajiahu(delta_round_score);
+            break;
+          case 2u:
+            post_zimo_action.onRong(delta_round_score);
+            break;
+          case 3u:
+            post_zimo_action.onFangchong(delta_round_score);
+            break;
+          case 4u:
+            post_zimo_action.onOther(delta_round_score);
+            break;
+          default:
+            KANACHAN_THROW<std::logic_error>("A logic error.");
+          }
           results.push_back(post_zimo_action);
         }
         post_zimo_actions[i].clear();
       }
+
+      prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
     }
     else if (wrapper.name() == ".lq.RecordLiuJu") {
       lq::RecordLiuJu record;
@@ -260,11 +337,13 @@ void convert(std::filesystem::path const &ph) {
       for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
         std::int_fast32_t const delta_round_score = states[i].getCurrentScore() - states[i].getInitialScore();
         for (auto &post_zimo_action : post_zimo_actions[i]) {
-          post_zimo_action.setDeltaRoundScore(delta_round_score);
+          post_zimo_action.onLiuju(delta_round_score);
           results.push_back(post_zimo_action);
         }
         post_zimo_actions[i].clear();
       }
+
+      prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
     }
     else if (wrapper.name() == ".lq.RecordNewRound") {
       lq::RecordNewRound record;
@@ -285,6 +364,12 @@ void convert(std::filesystem::path const &ph) {
       ju = record.ju() + 1;
       ben = record.ben();
 
+      for (auto const &i : post_zimo_actions) {
+        if (!i.empty()) {
+          KANACHAN_THROW<std::logic_error>("A logic error.");
+        }
+      }
+
       try {
         for (auto &state : states) {
           state.onNewRound(record);
@@ -293,6 +378,8 @@ void convert(std::filesystem::path const &ph) {
         std::cout << uuid << ": " << chang << ju << "局" << ben << "本場" << std::endl;
         throw;
       }
+
+      prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
     }
     else if (wrapper.name() == ".lq.RecordNoTile") {
       lq::RecordNoTile record;
@@ -307,15 +394,59 @@ void convert(std::filesystem::path const &ph) {
           }
           delta_round_score += score.delta_scores()[i];
         }
+
+        std::uint_fast8_t type = std::numeric_limits<std::uint_fast8_t>::max();
+        if (record.liujumanguan()) {
+          bool found = false;
+          for (auto const &score : record.scores()) {
+            if (score.seat() == i) {
+              type = 2u;
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            type = 3u;
+          }
+        }
+        else {
+          if (record.players().size() != 4u) {
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          if (record.players()[i].tingpai()) {
+            type = 1u;
+          }
+          else {
+            type = 0u;
+          }
+        }
+
         for (auto &post_zimo_action : post_zimo_actions[i]) {
-          post_zimo_action.setDeltaRoundScore(delta_round_score);
+          switch (type) {
+          case 0u:
+            post_zimo_action.onButing(delta_round_score);
+            break;
+          case 1u:
+            post_zimo_action.onTingpai(delta_round_score);
+            break;
+          case 2u:
+            post_zimo_action.onLiujumanguan(delta_round_score);
+            break;
+          case 3u:
+            post_zimo_action.onTajiahu(delta_round_score);
+            break;
+          default:
+            KANACHAN_THROW<std::logic_error>("A logic error.");
+          }
           results.push_back(post_zimo_action);
         }
         post_zimo_actions[i].clear();
       }
+
+      prev_dapai_seat = std::numeric_limits<std::uint_fast8_t>::max();
     }
     else {
-      throw std::runtime_error("");
+      throw std::runtime_error("A broken data.");
     }
   }
 
