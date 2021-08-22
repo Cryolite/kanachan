@@ -1,4 +1,5 @@
 .dockerignore
+/.git/
 Dockerfile
-prerequisites
-.local
+/prerequisites/
+/.local/

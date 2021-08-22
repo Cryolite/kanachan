@@ -3,6 +3,7 @@
 #include "utility.hpp"
 #include "throw.hpp"
 #include "mahjongsoul.pb.h"
+#include <iostream>
 #include <algorithm>
 #include <array>
 #include <string_view>
@@ -102,77 +103,61 @@ PlayerState::PlayerState(
     game_score_(game_score),
     delta_grading_point_(delta_grading_point)
 {
-  for (auto &i : he_) {
-    i = std::numeric_limits<std::uint_fast16_t>::max();
-  }
-  for (auto &i : fulus_) {
-    i = std::numeric_limits<std::uint_fast8_t>::max();
-  }
-
-  if (4u <= seat) {
-    KANACHAN_THROW<std::invalid_argument>(_1) << "seat = " << static_cast<unsigned>(seat);
+  if (seat >= 4u) {
+    KANACHAN_THROW<std::invalid_argument>(_1)
+      << "seat = " << static_cast<unsigned>(seat);
   }
 
   switch (mode_id) {
   case 2u:
     // 段位戦・銅の間・四人東風戦
     room_ = 0u;
-    dongfeng_ = 1u;
-    banzuang_ = 0u;
+    num_rounds_type_ = 0;
     break;
   case 3u:
     // 段位戦・銅の間・四人半荘戦
     room_ = 0u;
-    dongfeng_ = 0u;
-    banzuang_ = 1u;
+    num_rounds_type_ = 1u;
     break;
   case 5u:
     // 段位戦・銀の間・四人東風戦
     room_ = 1u;
-    dongfeng_ = 1u;
-    banzuang_ = 0u;
+    num_rounds_type_ = 0u;
     break;
   case 6u:
     // 段位戦・銀の間・四人半荘戦
     room_ = 1u;
-    dongfeng_ = 0u;
-    banzuang_ = 1u;
+    num_rounds_type_ = 1u;
     break;
   case 8u:
     // 段位戦・金の間・四人東風戦
     room_ = 2u;
-    dongfeng_ = 1u;
-    banzuang_ = 0u;
+    num_rounds_type_ = 0u;
     break;
   case 9u:
     // 段位戦・金の間・四人半荘戦
     room_ = 2u;
-    dongfeng_ = 0u;
-    banzuang_ = 1u;
+    num_rounds_type_ = 1u;
     break;
   case 11u:
     // 段位戦・玉の間・四人東風戦
     room_ = 3u;
-    dongfeng_ = 1u;
-    banzuang_ = 0u;
+    num_rounds_type_ = 0u;
     break;
   case 12u:
     // 段位戦・玉の間・四人半荘戦
     room_ = 3u;
-    dongfeng_ = 0u;
-    banzuang_ = 1u;
+    num_rounds_type_ = 1u;
     break;
   case 15u:
     // 段位戦・王座の間・四人東風戦
     room_ = 4u;
-    dongfeng_ = 1u;
-    banzuang_ = 0u;
+    num_rounds_type_ = 0u;
     break;
   case 16u:
     // 段位戦・王座の間・四人半荘戦
     room_ = 4u;
-    dongfeng_ = 0u;
-    banzuang_ = 1u;
+    num_rounds_type_ = 1u;
     break;
   default:
     KANACHAN_THROW<std::invalid_argument>(_1) << "mode_id = " << mode_id;
@@ -250,8 +235,6 @@ PlayerState::PlayerState(
 
 void PlayerState::onNewRound(lq::RecordNewRound const &record)
 {
-  qijia_ = (4u - seat_) % 4u;
-
   chang_ = record.chang();
   if (chang_ >= 3u) {
     KANACHAN_THROW<std::runtime_error>(_1)
@@ -316,18 +299,6 @@ void PlayerState::onNewRound(lq::RecordNewRound const &record)
     hand_ = makeHand_(tiles.cbegin(), tiles.cend());
     zimo_pai_ = std::numeric_limits<std::uint_fast8_t>::max();
   }
-
-  first_zimo_ = 1u;
-  lingshang_zimo_ = 0u;
-  yifa_ = 0u;
-  chipeng_ = std::numeric_limits<std::uint_fast8_t>::max();
-
-  for (auto &i : he_) {
-    i = std::numeric_limits<std::uint_fast16_t>::max();
-  }
-  for (auto &i : fulus_) {
-    i = std::numeric_limits<std::uint_fast8_t>::max();
-  }
 }
 
 void PlayerState::onZimo(lq::RecordDealTile const &record)
@@ -376,18 +347,6 @@ void PlayerState::onZimo(lq::RecordDealTile const &record)
     KANACHAN_THROW<std::logic_error>(_1) << "zimo_pai_ = " << static_cast<unsigned>(zimo_pai_);
   }
   zimo_pai_ = Kanachan::pai2Num(record.tile());
-}
-
-std::uint_fast8_t PlayerState::getFuluTail_() const
-{
-  std::uint_fast8_t result = 0u;
-  for (; result < fulus_.size(); ++result) {
-    auto const &fulu = fulus_[result];
-    if (fulu == std::numeric_limits<std::uint_fast8_t>::max()) {
-      break;
-    }
-  }
-  return result;
 }
 
 void PlayerState::onDapai(lq::RecordDiscardTile const &record)
@@ -443,233 +402,33 @@ void PlayerState::onDapai(lq::RecordDiscardTile const &record)
       handIn_();
     }
   }
-
-  first_zimo_ = 0u;
-  lingshang_zimo_ = 0u;
-
-  if (record.is_liqi() || record.is_wliqi()) {
-    yifa_ = 1u;
-  }
-  else {
-    yifa_ = 0u;
-  }
-
-  {
-    std::uint_fast8_t i = 0u;
-    for (; i < 24u; ++i) {
-      if (he_[i] == std::numeric_limits<std::uint_fast16_t>::max()) {
-        break;
-      }
-    }
-    if (i >= 24u) {
-      KANACHAN_THROW<std::logic_error>("A logic error.");
-    }
-    std::uint_fast16_t offset = 0u;
-    if (record.moqie()) {
-      if (chipeng_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-        KANACHAN_THROW<std::logic_error>("A logic error.");
-      }
-      offset += 37u;
-    }
-    if (record.is_liqi() || record.is_wliqi()) {
-      if (chipeng_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-        KANACHAN_THROW<std::logic_error>("A logic error.");
-      }
-      offset += 74u;
-    }
-    if (chipeng_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-      if (offset != 0u) {
-        KANACHAN_THROW<std::logic_error>("A logic error.");
-      }
-      if (chipeng_ >= 4u) {
-        KANACHAN_THROW<std::logic_error>("A logic error.");
-      }
-      offset = 37u * (4u + chipeng_);
-    }
-    if (offset + dapai >= 37u * 8u) {
-      KANACHAN_THROW<std::logic_error>("A logic error.");
-    }
-    he_[i] = offset + dapai;
-  }
-
-  chipeng_ = std::numeric_limits<std::uint_fast8_t>::max();
-}
-
-namespace{
-
-constexpr std::uint_fast64_t encodeChi_(
-  std::uint_fast8_t const a, std::uint_fast8_t const b, std::uint_fast8_t const c)
-{
-  return (1ul << a) + (1ul << b) + (1ul << (c + 10u));
-}
-
-} // namespace *unnamed*
-
-void PlayerState::onMyChi_(std::array<std::uint_fast8_t, 3u> const &tiles)
-{
-  std::uint_fast8_t const color = tiles[0u] / 10u;
-  for (auto tile : tiles) {
-    if (tile / 10u != color) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-  }
-
-  std::array<std::uint_fast8_t, 3u> numbers{
-    static_cast<std::uint_fast8_t>(tiles[0u] - color * 10u),
-    static_cast<std::uint_fast8_t>(tiles[1u] - color * 10u),
-    static_cast<std::uint_fast8_t>(tiles[2u] - color * 10u)
-  };
-
-  std::uint_fast8_t offset = std::numeric_limits<std::uint_fast8_t>::max();
-  switch ((1ul << numbers[0u]) + (1ul << numbers[1u]) + (1ul << (numbers[2u] + 10u))) {
-  case encodeChi_(2u, 3u, 1u):
-    offset = 0u;
-    break;
-  case encodeChi_(1u, 3u, 2u):
-    offset = 1u;
-    break;
-  case encodeChi_(3u, 4u, 2u):
-    offset = 2u;
-    break;
-  case encodeChi_(1u, 2u, 3u):
-    offset = 3u;
-    break;
-  case encodeChi_(2u, 4u, 3u):
-    offset = 4u;
-    break;
-  case encodeChi_(4u, 5u, 3u):
-    offset = 5u;
-    break;
-  case encodeChi_(4u, 0u, 3u):
-    offset = 6u;
-    break;
-  case encodeChi_(2u, 3u, 4u):
-    offset = 7u;
-    break;
-  case encodeChi_(3u, 5u, 4u):
-    offset = 8u;
-    break;
-  case encodeChi_(3u, 0u, 4u):
-    offset = 9u;
-    break;
-  case encodeChi_(5u, 6u, 4u):
-    offset = 10u;
-    break;
-  case encodeChi_(0u, 6u, 4u):
-    offset = 11u;
-    break;
-  case encodeChi_(3u, 4u, 5u):
-    offset = 12u;
-    break;
-  case encodeChi_(3u, 4u, 0u):
-    offset = 13u;
-    break;
-  case encodeChi_(4u, 6u, 5u):
-    offset = 14u;
-    break;
-  case encodeChi_(4u, 6u, 0u):
-    offset = 15u;
-    break;
-  case encodeChi_(6u, 7u, 5u):
-    offset = 16u;
-    break;
-  case encodeChi_(6u, 7u, 0u):
-    offset = 17u;
-    break;
-  case encodeChi_(4u, 5u, 6u):
-    offset = 18u;
-    break;
-  case encodeChi_(4u, 0u, 6u):
-    offset = 19u;
-    break;
-  case encodeChi_(5u, 7u, 6u):
-    offset = 20u;
-    break;
-  case encodeChi_(0u, 7u, 6u):
-    offset = 21u;
-    break;
-  case encodeChi_(7u, 8u, 6u):
-    offset = 22u;
-    break;
-  case encodeChi_(5u, 6u, 7u):
-    offset = 23u;
-    break;
-  case encodeChi_(0u, 6u, 7u):
-    offset = 24u;
-    break;
-  case encodeChi_(6u, 8u, 7u):
-    offset = 25u;
-    break;
-  case encodeChi_(8u, 9u, 7u):
-    offset = 26u;
-    break;
-  case encodeChi_(6u, 7u, 8u):
-    offset = 27u;
-    break;
-  case encodeChi_(7u, 9u, 8u):
-    offset = 28u;
-    break;
-  case encodeChi_(7u, 8u, 9u):
-    offset = 29u;
-    break;
-  default:
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-
-  std::uint_fast8_t const i = getFuluTail_();
-  if (i == fulus_.size()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  fulus_[i] = color * 30u + offset;
-
-  if (chipeng_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  chipeng_ = i;
-}
-
-void PlayerState::onMyPeng_(std::array<std::uint_fast8_t, 3u> const &tiles)
-{
-  std::uint_fast8_t const i = getFuluTail_();
-  if (i == fulus_.size()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  fulus_[i] = fulu_offsets_[1u] + tiles[2u];
-
-  if (chipeng_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  chipeng_ = i;
-}
-
-void PlayerState::onMyDaminggang_(std::array<std::uint_fast8_t, 4u> const &tiles)
-{
-  std::uint_fast8_t const i = getFuluTail_();
-  if (i == fulus_.size()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  fulus_[i] = fulu_offsets_[2u] + tiles[3u];
-
-  lingshang_zimo_ = 1u;
 }
 
 void PlayerState::onChiPengGang(lq::RecordChiPengGang const &record)
 {
   if (record.has_liqi()) {
+    // 直前の立直がロンされずに立直が成立した．
+
+    // 立直宣言者を探す．
     std::uint_fast8_t liqi_seat = std::numeric_limits<std::uint_fast8_t>::max();
     if (record.froms().size() == 3u) {
+      // チー・ポンの場合．
       if (record.type() != 0u && record.type() != 1u) {
         KANACHAN_THROW<std::runtime_error>("A broken data.");
       }
+      // `record.froms()` の最後の要素が鳴いた牌を打牌した席でつまりは立直宣言者の席．
       liqi_seat = record.froms()[2u];
     }
     else if (record.froms().size() == 4u) {
+      // 大明槓の場合．
       if (record.type() != 2u) {
         KANACHAN_THROW<std::runtime_error>("A broken data.");
       }
+      // `record.froms()` の最後の要素が鳴いた牌を打牌した席でつまりは立直宣言者の席．
       liqi_seat = record.froms()[3u];
     }
 
+    // 立直宣言者の持ち点を1000点減らして供託本数を1本増やす．
     auto const &liqi = record.liqi();
     if (liqi_seat != liqi.seat()) {
       KANACHAN_THROW<std::runtime_error>("A broken data.");
@@ -680,68 +439,38 @@ void PlayerState::onChiPengGang(lq::RecordChiPengGang const &record)
         KANACHAN_THROW<std::runtime_error>("A broken data.");
       }
     }
-
     ++liqibang_;
   }
 
-  first_zimo_ = 0u;
-  if (lingshang_zimo_ != 0u) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  yifa_ = 0u;
-
   if (seat_ != record.seat()) {
+    // 鳴いた席以外のプレイヤ状態の変更は以上．
     return;
   }
 
-  if (record.type() == 0u) {
-    if (zimo_pai_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-    if (record.tiles().size() != 3u) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-    std::array<std::uint_fast8_t, 3u> tiles{
-      Kanachan::pai2Num(record.tiles()[0u]),
-      Kanachan::pai2Num(record.tiles()[1u]),
-      Kanachan::pai2Num(record.tiles()[2u])
-    };
-    onMyChi_(tiles);
-  }
-  else if (record.type() == 1u) {
-    if (zimo_pai_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-    if (record.tiles().size() != 3u) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-    std::array<std::uint_fast8_t, 3u> tiles{
-      Kanachan::pai2Num(record.tiles()[0u]),
-      Kanachan::pai2Num(record.tiles()[1u]),
-      Kanachan::pai2Num(record.tiles()[2u])
-    };
-    onMyPeng_(tiles);
-  }
-  else if (record.type() == 2u) {
-    if (zimo_pai_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-    if (record.tiles().size() != 4u) {
-      KANACHAN_THROW<std::runtime_error>("A broken data.");
-    }
-    std::array<std::uint_fast8_t, 4u> tiles{
-      Kanachan::pai2Num(record.tiles()[0u]),
-      Kanachan::pai2Num(record.tiles()[1u]),
-      Kanachan::pai2Num(record.tiles()[2u]),
-      Kanachan::pai2Num(record.tiles()[3u])
-    };
-    onMyDaminggang_(tiles);
-  }
-  else {
+  if (zimo_pai_ != std::numeric_limits<std::uint_fast8_t>::max()) {
     KANACHAN_THROW<std::runtime_error>("A broken data.");
+  }
+
+  // 副露牌を手牌から取り除く．
+  for (std::uint_fast8_t i = 0u; i < record.tiles().size() - 1u; ++i) {
+    std::uint_fast8_t const tile = Kanachan::pai2Num(record.tiles()[i]);
+    bool found = false;
+    for (std::uint_fast8_t j = hand_offset_[tile + 1]; j > hand_offset_[tile];) {
+      --j;
+      if (hand_[j] == 0u) {
+        continue;
+      }
+      hand_[j] = 0u;
+      found = true;
+      break;
+    }
+    if (!found) {
+      KANACHAN_THROW<std::runtime_error>("A broken data.");
+    }
   }
 }
 
+// 自摸牌を手牌に組み込む．
 void PlayerState::handIn_()
 {
   if (zimo_pai_ == std::numeric_limits<std::uint_fast8_t>::max()) {
@@ -791,42 +520,6 @@ void PlayerState::onMyJiagang_(std::uint_fast8_t const tile)
     }
     handIn_();
   }
-
-  std::uint_fast8_t i = 0u;
-  if (tile == 0u || tile == 10u || tile == 20u) {
-    for (; i < fulus_.size(); ++i) {
-      auto const &fulu = fulus_[i];
-      if (fulu == fulu_offsets_[1u] + tile) {
-        break;
-      }
-      if (fulu == fulu_offsets_[1u] + tile + 5u) {
-        break;
-      }
-    }
-  }
-  else if (tile == 5u || tile == 15u || tile == 25u) {
-    for (; i < fulus_.size(); ++i) {
-      auto const &fulu = fulus_[i];
-      if (fulu == fulu_offsets_[1u] + tile) {
-        break;
-      }
-      if (fulu == fulu_offsets_[1u] + tile - 5u) {
-        break;
-      }
-    }
-  }
-  else {
-    for (; i < fulus_.size(); ++i) {
-      auto const &fulu = fulus_[i];
-      if (fulu == fulu_offsets_[1u] + tile) {
-        break;
-      }
-    }
-  }
-  if (i == fulus_.size()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  fulus_[i] = fulu_offsets_[3u] + tile;
 }
 
 void PlayerState::onMyAngang_(std::uint_fast8_t const tile)
@@ -913,12 +606,6 @@ void PlayerState::onMyAngang_(std::uint_fast8_t const tile)
       KANACHAN_THROW<std::runtime_error>("A broken data.");
     }
   }
-
-  std::uint_fast8_t const i = getFuluTail_();
-  if (i == fulus_.size()) {
-    KANACHAN_THROW<std::runtime_error>("A broken data.");
-  }
-  fulus_[i] = fulu_offsets_[4u] + tile;
 }
 
 void PlayerState::onGang(lq::RecordAnGangAddGang const &record)
@@ -932,8 +619,6 @@ void PlayerState::onGang(lq::RecordAnGangAddGang const &record)
       dora_indicators_[i] = Kanachan::pai2Num(record.doras()[i]);
     }
   }
-  first_zimo_ = 0u;
-  yifa_ = 0u;
 
   if (record.seat() != seat_) {
     return;
@@ -955,9 +640,26 @@ void PlayerState::onGang(lq::RecordAnGangAddGang const &record)
   else {
     KANACHAN_THROW<std::runtime_error>(_1) << "A broken data: type = " << record.type();
   }
+}
 
-  lingshang_zimo_ = 1u;
-  chipeng_ = std::numeric_limits<std::uint_fast8_t>::max();
+std::uint_fast8_t PlayerState::getSeat() const
+{
+  return seat_;
+}
+
+std::uint_fast8_t PlayerState::getLeftTileCount() const
+{
+  return count_;
+}
+
+std::uint_fast8_t PlayerState::getLevel() const
+{
+  return level_;
+}
+
+std::uint_fast8_t PlayerState::getRank() const
+{
+  return rank_;
 }
 
 std::int_fast32_t PlayerState::getInitialScore() const
@@ -968,6 +670,90 @@ std::int_fast32_t PlayerState::getInitialScore() const
 std::int_fast32_t PlayerState::getCurrentScore() const
 {
   return score_;
+}
+
+std::vector<std::uint_fast8_t> PlayerState::getDiscardableTiles() const
+{
+  std::vector<std::uint_fast8_t> result;
+  for (std::uint_fast8_t i = 0u; i < hand_offset_.size() - 1u; ++i) {
+    std::uint_fast8_t const offset = hand_offset_[i];
+    if (hand_[offset] == 1u) {
+      result.push_back(i);
+    }
+  }
+  return result;
+}
+
+std::uint_fast8_t PlayerState::getZimopai() const
+{
+  return zimo_pai_;
+}
+
+std::uint_fast8_t PlayerState::getGameRank() const
+{
+  return game_rank_;
+}
+
+std::int_fast32_t PlayerState::getGameScore() const
+{
+  return game_score_;
+}
+
+std::int_fast32_t PlayerState::getDeltaGradingPoint() const
+{
+  return delta_grading_point_;
+}
+
+void PlayerState::print(
+  std::array<PlayerState, 4u> const &players, std::ostream &os) const
+{
+  std::uint_fast16_t offset = 0u;
+  os << offset + room_;
+  offset += 5u;
+  os << ',' << offset + num_rounds_type_;
+  offset += 2u;
+  os << ',' << offset + seat_;
+  offset += 4u;
+  os << ',' << offset + chang_;
+  offset += 3u;
+  os << ',' << offset + ju_;
+  offset += 4u;
+  os << ',' << offset + dora_indicators_[0u];
+  offset += 37u;
+  for (std::uint_fast8_t i = 1u; i < 5u; ++i) {
+    if (dora_indicators_[i] != std::numeric_limits<std::uint_fast8_t>::max()) {
+      os << ',' << offset + dora_indicators_[i];
+    }
+    offset += 37u;
+  }
+  os << ',' << offset + count_;
+  offset += 70u;
+  for (auto const &player : players) {
+    os << ',' << offset + player.getLevel();
+    offset += 16u;
+    os << ',' << offset + player.getRank();
+    offset += 4u;
+  }
+  for (auto const &h : hand_) {
+    if (h == 1u) {
+      os << ',' << offset;
+    }
+    ++offset;
+  }
+  if (zimo_pai_ != std::numeric_limits<std::uint_fast8_t>::max()) {
+    os << ',' << offset + zimo_pai_;
+  }
+  offset += 37u;
+  if (offset != 526u) {
+    KANACHAN_THROW<std::logic_error>(_1) << offset;
+  }
+
+  os << '\t';
+  os << static_cast<unsigned>(ben_);
+  os << ',' << static_cast<unsigned>(liqibang_);
+  for (auto const &player : players) {
+    os << ',' << player.getCurrentScore();
+  }
 }
 
 } // namespace Kanachan

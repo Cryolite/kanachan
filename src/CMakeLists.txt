@@ -1,5 +1,6 @@
 add_library(kanachan
-  post_zimo_action.cpp
+  annotation.cpp
+  round_progress.cpp
   player_state.cpp
   utility.cpp
   throw.cpp
