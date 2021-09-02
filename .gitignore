@@ -1,2 +1,3 @@
-/.local
+/.local/
+/kanachan.egg-info/
 __pycache__
