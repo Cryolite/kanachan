@@ -13,56 +13,35 @@ import torch
 from torch import backends
 from torch import nn
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.distributed import init_process_group
+from torch.nn.parallel import DistributedDataParallel
 from torch.utils import tensorboard
 from kanachan.constants import (
-    MAX_LENGTH_OF_POSITIONAL_FEATURES, MAX_NUM_ACTION_CANDIDATES,)
+    MAX_LENGTH_OF_POSITIONAL_FEATURES, NUM_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
 from kanachan import common
 from kanachan.common import (Dataset,)
-from kanachan.encoder import Encoder
 from kanachan.pretraining.iterator_adaptor import IteratorAdaptor
+from kanachan.pretraining.encoder import Encoder
+from kanachan.pretraining.decoder import Decoder
+from kanachan.pretraining.model import Model
 from apex import amp
-from apex.optimizers import (FusedAdam, FusedSGD,)
-
-
-class Decoder(nn.Module):
-    def __init__(self, num_dimensions: int) -> None:
-        super(Decoder, self).__init__()
-        self.__linear = nn.Linear(num_dimensions, 1)
-
-    def forward(self, encode):
-        encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:, :]
-        prediction = self.__linear(encode)
-        prediction = torch.squeeze(prediction, dim=2)
-        return prediction
-
-
-class Model(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: Decoder) -> None:
-        super(Model, self).__init__()
-        self.__encoder = encoder
-        self.__decoder = decoder
-
-    def forward(self, x):
-        encode = self.__encoder(x)
-        prediction = self.__decoder(encode)
-        return prediction
+from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 
 
 def _training_epoch(
-        data_loader: DataLoader, model: Model, optimizer,
-        lr_scheduler: ReduceLROnPlateau, device: str, writer,
-        num_batches: Optional[int], epoch: int) -> None:
-    logging.info(f'The {epoch}-th epoch starts.')
-
+        data_loader: DataLoader, model: Model, optimizer, device: str, writer,
+        batch_count: int, snapshot_interval: int, local_rank: Optional[int],
+        snapshots_path: pathlib.Path) -> None:
     start_time = datetime.datetime.now()
 
     loss_function = nn.CrossEntropyLoss()
-
     training_loss = 0.0
-    for batch_count, annotation in enumerate(data_loader):
-        # The following assertion is sometimes violated.
-        #assert(num_batches is None or batch_count < num_batches)
+
+    for annotation in data_loader:
+        if local_rank is not None:
+            if batch_count % int(os.environ['LOCAL_WORLD_SIZE']) != local_rank:
+                batch_count += 1
+                continue
 
         if device != 'cpu':
             annotation = tuple(x.to(device=device) for x in annotation)
@@ -80,28 +59,43 @@ def _training_epoch(
             scaled_loss.backward()
         optimizer.step()
 
-        logging.info(f'epoch = {epoch}, batch = {batch_count}, training loss = {loss.item()}')
-        if num_batches is None:
+        if local_rank is None or local_rank == 0:
+            logging.info(
+                f'batch = {batch_count}, training loss = {loss.item()}')
             writer.add_scalar('Training batch loss', batch_loss, batch_count)
-        else:
-            writer.add_scalar('Training batch loss', batch_loss, num_batches * epoch + batch_count)
-    num_batches = batch_count
+
+        batch_count += 1
+
+        if batch_count % snapshot_interval == 0:
+            if local_rank is None or local_rank == 0:
+                snapshots_path.mkdir(parents=False, exist_ok=True)
+                torch.save(
+                    encoder.state_dict(),
+                    snapshots_path / f'encoder.{batch_count}.pth')
+                torch.save(
+                    decoder.state_dict(),
+                    snapshots_path / f'decoder.{batch_count}.pth')
+                torch.save(
+                    optimizer.state_dict(),
+                    snapshots_path / f'optimizer.{batch_count}.pth')
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info(f'The {epoch}-th epoch has finished (elapsed time = {elapsed_time}).')
+    logging.info(f'Pretraining has finished (elapsed time = {elapsed_time}).')
+    logging.info(f'The final training loss = {training_loss / batch_count}')
 
-    training_loss /= num_batches
-    logging.info(f'epoch = {epoch}, training loss = {training_loss}')
-    writer.add_scalar('Training epoch loss', training_loss, epoch)
-
-    lr_scheduler.step(training_loss)
-
-    return num_batches
+    if local_rank is None or local_rank == 0:
+        snapshots_path.mkdir(parents=False, exist_ok=True)
+        torch.save(
+            encoder.state_dict(), snapshots_path / f'encoder.{batch_count}.pth')
+        torch.save(
+            decoder.state_dict(), snapshots_path / f'decoder.{batch_count}.pth')
+        torch.save(
+            optimizer.state_dict(), snapshots_path / f'optimizer.{batch_count}.pth')
 
 
 if __name__ == '__main__':
     ap = ArgumentParser(
-        description='Pre-train the encoder by imitating higher level players.')
+        description='Pre-train the model by imitating human players.')
     ap_data = ap.add_argument_group(title='Data')
     ap_data.add_argument(
         '--training-data', type=pathlib.Path, required=True,
@@ -117,14 +111,18 @@ if __name__ == '__main__':
         help='floating point type (defaults to `float32`)')
     ap_model = ap.add_argument_group(title='Model')
     ap_model.add_argument(
-        '--num-dimensions', default=768, type=int,
-        help='# of embedding dimensions (defaults to 768)', metavar='DIM')
+        '--num-dimensions', default=512, type=int,
+        help='# of embedding dimensions (defaults to 512)', metavar='DIM')
     ap_model.add_argument(
-        '--num-heads', default=12, type=int, help='# of heads (defaults to 12)',
+        '--num-heads', default=8, type=int, help='# of heads (defaults to 8)',
         metavar='NHEAD')
     ap_model.add_argument(
-        '--num-layers', default=12, type=int,
-        help='# of layers (defaults to 12)', metavar='NLAYERS')
+        '--num-layers', default=6, type=int,
+        help='# of layers (defaults to 6)', metavar='NLAYERS')
+    ap_model.add_argument(
+        '--num-final-dimensions', default=2048, type=int,
+        help='# of dimensions of the final feed-forward network (defaults to 2048)',
+        metavar='DIM')
     ap_model.add_argument(
         '--initial-encoder', type=pathlib.Path,
         help='path to the initial encoder; mutually exclusive to `--resume`',
@@ -138,18 +136,15 @@ if __name__ == '__main__':
         '--batch-size', default=32, type=int, help='batch size (defaults to 32)',
         metavar='N')
     ap_training.add_argument(
-        '--max-epoch', default=100, type=int,
-        help='the maximum epoch (defaults to 100)', metavar='N')
-    ap_training.add_argument(
-        '--optimizer', default='adam', choices=('adam', 'sgd'),
+        '--optimizer', default='adam', choices=('adam', 'sgd', 'lamb',),
         help='optimizer (defaults to `adam`)')
     ap_training.add_argument(
         '--learning-rate', type=float,
-        help='learning rate (defaults to 0.001 for `adam`, 0.01 for `sgd`)',
+        help='learning rate (defaults to 0.001 for `adam` and `lamb`, 0.1 for `sgd`)',
         metavar='LR')
     ap_training.add_argument(
         '--epsilon', default=1.0e-5, type=float,
-        help='epsilon parameter; only meaningful for Adam (defaults to 1.0e-5)',
+        help='epsilon parameter; only meaningful for Adam and LAMB (defaults to 1.0e-5)',
         metavar='EPS')
     ap_training.add_argument(
         '--momentum', default=0.9, type=float,
@@ -158,22 +153,31 @@ if __name__ == '__main__':
     ap_training.add_argument(
         '--dropout', default=0.1, type=float, help='defaults to 0.1',
         metavar='DROPOUT')
+    ap_training.add_argument(
+        '--initial-optimizer', type=pathlib.Path,
+        help='path to the initial optimizer state; mutually exclusive to `--resume`',
+        metavar='PATH')
     ap_output = ap.add_argument_group(title='Output')
-    ap_output.add_argument('--output-prefix', type=pathlib.Path, required=True, metavar='PATH')
+    ap_output.add_argument(
+        '--output-prefix', type=pathlib.Path, required=True, metavar='PATH')
     ap_output.add_argument('--experiment-name', metavar='NAME')
+    ap_output.add_argument(
+        '--snapshot-interval', default=10000, type=int,
+        help='take a snapshot every specified number of batches',
+        metavar='NBATCHES')
     ap_output.add_argument('--resume', action='store_true')
 
     config = ap.parse_args()
 
     if not config.training_data.exists():
-        raise RuntimeError(f'{config.training_data}: does not exist.')
+        raise RuntimeError(f'{config.training_data}: does not exist')
     if config.num_workers < 0:
         raise RuntimeError(
-            f'{config.num_workers}: An invalid number of workers.')
+            f'{config.num_workers}: invalid number of workers')
 
     if config.device is not None:
         if re.search('^(?:cpu)|(?:cuda(?::\\d+)?)', config.device) is None:
-            raise RuntimeError(f'{config.device}: invalid device.')
+            raise RuntimeError(f'{config.device}: invalid device')
         device = config.device
     elif backends.cuda.is_built():
         device = 'cuda'
@@ -184,31 +188,29 @@ if __name__ == '__main__':
     elif config.dtype == 'float32':
         dtype = torch.float32
     else:
-        raise RuntimeError(f'{config.dtype}: An invalid value for `--dtype`.')
+        raise RuntimeError(f'{config.dtype}: invalid value for `--dtype`')
 
     if config.num_dimensions < 1:
         raise RuntimeError(
-            f'{config.num_dimensions}: An invalid number of dimensions.')
+            f'{config.num_dimensions}: invalid number of dimensions')
     if config.num_heads < 1:
-        raise RuntimeError(f'{config.num_heads}: An invalid number of heads.')
+        raise RuntimeError(f'{config.num_heads}: invalid number of heads')
     if config.num_layers < 1:
+        raise RuntimeError(f'{config.num_layers}: invalid number of layers')
+    if config.num_final_dimensions < 1:
         raise RuntimeError(
-            f'{config.num_layers}: An invalid number of layers.')
+            f'{config.num_final_dimensions}: invalid number of dimensions')
     if config.initial_encoder is not None and not config.initial_encoder.exists():
-        raise RuntimeError(f'{config.initial_encoder}: does not exist.')
+        raise RuntimeError(f'{config.initial_encoder}: does not exist')
     if config.initial_encoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`.')
+        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`')
     if config.initial_decoder is not None and not config.initial_decoder.exists():
-        raise RuntimeError(f'{config.initial_decoder}: does not exist.')
+        raise RuntimeError(f'{config.initial_decoder}: does not exist')
     if config.initial_decoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-decoder` conflicts with `--resume`.')
+        raise RuntimeError(f'`--initial-decoder` conflicts with `--resume`')
 
     if config.batch_size < 1:
-        raise RuntimeError(
-            f'{config.batch_size}: An invalid value for `--batch-size`.')
-    if config.max_epoch < 1:
-        raise RuntimeError(
-            f'{config.max_epoch}: An invalid value for `--max-epoch`.')
+        raise RuntimeError(f'{config.batch_size}: invalid batch size')
     if config.optimizer == 'sgd':
         if config.momentum == 0.0:
             sparse = True
@@ -216,9 +218,9 @@ if __name__ == '__main__':
             # See https://github.com/pytorch/pytorch/issues/29814
             sparse = False
     else:
-        assert(config.optimizer == 'adam')
+        assert(config.optimizer in ('adam', 'lamb',))
         sparse = False
-    if config.optimizer == 'adam':
+    if config.optimizer in ('adam', 'lamb',):
         if config.learning_rate is None:
             learning_rate = 0.001
         else:
@@ -226,9 +228,18 @@ if __name__ == '__main__':
     else:
         assert(config.optimizer == 'sgd')
         if config.learning_rate is None:
-            learning_rate = 0.01
+            learning_rate = 0.1
         else:
             learning_rate = config.learning_rate
+    if config.initial_optimizer is not None and not config.initial_optimizer.exists():
+        raise RuntimeError(f'{config.initial_optimizer}: does not exist')
+    if config.initial_optimizer is not None and config.resume:
+        raise RuntimeError(f'`--initial-optimizer` conflicts with `--resume`')
+
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+    else:
+        local_rank = None
 
     if config.experiment_name is None:
         now = datetime.datetime.now()
@@ -237,14 +248,19 @@ if __name__ == '__main__':
         experiment_name = config.experiment_name
 
     experiment_path = pathlib.Path(config.output_prefix / experiment_name)
-    if experiment_path.exists() and not config.resume:
-        raise RuntimeError(
-            f'{experiment_path}: already exists. Did you mean `--resume`?')
+    if local_rank is None or local_rank == 0:
+        if experiment_path.exists() and not config.resume:
+            raise RuntimeError(
+                f'{experiment_path}: already exists; did you mean `--resume`?')
     snapshots_path = experiment_path / 'snapshots'
     tensorboard_path = config.output_prefix / 'tensorboard' / experiment_name
 
+    if config.snapshot_interval < 1:
+        raise RuntimeError(
+            f'{config.snapshot_interval}: invalid value for `--snapshot-interval`')
+
     experiment_path.mkdir(parents=True, exist_ok=True)
-    common.initialize_logging(experiment_path / 'training.log')
+    common.initialize_logging(experiment_path, local_rank)
 
     logging.info(f'Training data: {config.training_data}')
     logging.info(f'# of workers: {config.num_workers}')
@@ -258,6 +274,7 @@ if __name__ == '__main__':
     logging.info(f'# of dimensions: {config.num_dimensions}')
     logging.info(f'# of heads: {config.num_heads}')
     logging.info(f'# of layers: {config.num_layers}')
+    logging.info(f'# of final dimensions: {config.num_final_dimensions}')
     if config.initial_encoder is None and not config.resume:
         logging.info(f'Initial encoder: (initialized randomly)')
     elif config.initial_encoder is not None:
@@ -267,15 +284,23 @@ if __name__ == '__main__':
     elif config.initial_decoder is not None:
         logging.info(f'Initial decoder: {config.initial_decoder}')
     logging.info(f'Batch size: {config.batch_size}')
-    logging.info(f'Max epoch: {config.max_epoch}')
     logging.info(f'Optimizer: {config.optimizer}')
-    if config.optimizer == 'adam':
+    if config.optimizer in ('adam', 'lamb',):
         logging.info(f'Epsilon parameter: {config.epsilon}')
     if config.optimizer == 'sgd':
         logging.info(f'Momentum factor: {config.momentum}')
     logging.info(f'Sparse: {sparse}')
     logging.info(f'Learning rate: {learning_rate}')
     logging.info(f'Dropout: {config.dropout}')
+    if config.initial_optimizer is None and not config.resume:
+        logging.info(f'Initial optimizer: (initialized normally)')
+    elif config.initial_optimizer is not None:
+        logging.info(f'Initial optimizer: {config.initial_optimizer}')
+    if local_rank is None:
+        logging.info(f'Local rank: N/A (single process)')
+    else:
+        logging.info(f'Local rank: {local_rank}')
+    logging.info(f'Snapshot interval: {config.snapshot_interval}')
     if config.resume:
         logging.info(f'Resume from {experiment_path}')
     else:
@@ -289,27 +314,33 @@ if __name__ == '__main__':
         'num_dimensions': config.num_dimensions,
         'num_heads': config.num_heads,
         'num_layers': config.num_layers,
+        'num_final_dimensions': config.num_final_dimensions,
         'initial_encoder': config.initial_encoder,
         'initial_decoder': config.initial_decoder,
         'batch_size': config.batch_size,
-        'max_epoch': config.max_epoch,
         'optimizer': config.optimizer,
         'epsilon': config.epsilon,
         'momentum': config.momentum,
         'sparse': sparse,
         'learning_rate': learning_rate,
         'dropout': config.dropout,
+        'initial_optimizer': config.initial_optimizer,
+        'local_rank': local_rank,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
         'snapshots_path': snapshots_path,
         'tensorboard_path': tensorboard_path,
+        'snapshot_interval': config.snapshot_interval,
         'resume': config.resume,
     }
 
     encoder = Encoder(
         config['num_dimensions'], config['num_heads'], config['num_layers'],
         dropout=config['dropout'], sparse=config['sparse'])
-    decoder = Decoder(config['num_dimensions'])
+    decoder = Decoder(
+        config['num_dimensions'], config['num_heads'], config['num_layers'],
+        num_final_dimensions=config['num_final_dimensions'],
+        dropout=config['dropout'], sparse=config['sparse'])
     model = Model(encoder, decoder)
     model.to(device=config['device'], dtype=config['dtype'])
 
@@ -317,36 +348,50 @@ if __name__ == '__main__':
         optimizer = FusedAdam(
             model.parameters(), lr=config['learning_rate'],
             eps=config['epsilon'])
-    else:
-        assert(config['optimizer'] == 'sgd')
+    elif config['optimizer'] == 'sgd':
         optimizer = FusedSGD(
             model.parameters(), lr=config['learning_rate'],
             momentum=config['momentum'])
+    else:
+        assert(config['optimizer'] == 'lamb')
+        optimizer = FusedLAMB(
+            model.parameters(), lr=config['learning_rate'],
+            eps=config['epsilon'])
 
     model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
 
-    lr_scheduler = ReduceLROnPlateau(optimizer, factor=0.5, patience=0)
+    if local_rank is not None:
+        init_process_group(backend='nccl')
+        model = DistributedDataParallel(
+            model, device_ids=[local_rank], output_device=local_rank)
 
-    epoch = 0
+    batch_count = 0
     if config['resume']:
         if not config['snapshots_path'].exists():
-            raise RuntimeError(f'{config["snapshots_path"]}: does not exist.')
+            raise RuntimeError(f'{config["snapshots_path"]}: does not exist')
         for child in os.listdir(config['snapshots_path']):
             m = re.search('^encoder\\.(\\d+)\\.pth$', child)
             if m is None:
                 continue
-            if int(m[1]) > epoch:
-                epoch = int(m[1])
-        latest_encoder_snapshot_path = config['snapshots_path'] / f'encoder.{epoch}.pth'
+            if int(m[1]) > batch_count:
+                batch_count = int(m[1])
+        latest_encoder_snapshot_path \
+            = config['snapshots_path'] / f'encoder.{batch_count}.pth'
         encoder.load_state_dict(torch.load(latest_encoder_snapshot_path))
-        latest_decoder_snapshot_path = config['snapshots_path'] / f'decoder.{epoch}.pth'
+        latest_decoder_snapshot_path \
+            = config['snapshots_path'] / f'decoder.{batch_count}.pth'
         decoder.load_state_dict(torch.load(latest_decoder_snapshot_path))
-        epoch += 1
+        latest_optimizer_snapshot_path \
+            = config['snapshots_path'] / f'optimizer.{batch_count}.pth'
+        optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
+        batch_count += 1
 
     if config['initial_encoder'] is not None:
         encoder.load_state_dict(torch.load(config['initial_encoder']))
     if config['initial_decoder'] is not None:
         decoder.load_state_dict(torch.load(config['initial_decoder']))
+    if config['initial_optimizer'] is not None:
+        optimizer.load_state_dict(torch.load(config['initial_optimizer']))
 
     with tensorboard.SummaryWriter(log_dir=config['tensorboard_path']) as writer:
         config['tensorboard_path'].mkdir(parents=True, exist_ok=True)
@@ -355,22 +400,18 @@ if __name__ == '__main__':
                 f'../tensorboard/{config["experiment_name"]}',
                 target_is_directory=True)
 
-        num_batches = None
-        for i in range(epoch, config['max_epoch'] + 1):
-            # Prepare the data loader. Note that this data loader must be
-            # created anew for each epoch.
-            iterator_adaptor = lambda fp: IteratorAdaptor(
-                fp, config['num_dimensions'], config['dtype'])
-            dataset = Dataset(config['training_data'], iterator_adaptor)
-            data_loader = DataLoader(
-                dataset, batch_size=config['batch_size'],
-                num_workers=config['num_workers'], pin_memory=True)
+        # Prepare the data loader. Note that this data loader must iterate
+        # the data set only once.
+        iterator_adaptor = lambda fp: IteratorAdaptor(
+            fp, config['num_dimensions'], config['dtype'])
+        dataset = Dataset(config['training_data'], iterator_adaptor)
+        data_loader = DataLoader(
+            dataset, batch_size=config['batch_size'],
+            num_workers=config['num_workers'], pin_memory=True)
 
-            num_batches = _training_epoch(
-                data_loader, model, optimizer, lr_scheduler, config['device'],
-                writer, num_batches, i)
-            config['snapshots_path'].mkdir(parents=False, exist_ok=True)
-            torch.save(encoder.state_dict(), config['snapshots_path'] / f'encoder.{i}.pth')
-            torch.save(decoder.state_dict(), config['snapshots_path'] / f'decoder.{i}.pth')
+        _training_epoch(
+            data_loader, model, optimizer, config['device'], writer,
+            batch_count, config['snapshot_interval'], local_rank,
+            config['snapshots_path'])
 
     sys.exit(0)

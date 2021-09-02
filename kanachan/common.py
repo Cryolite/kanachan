@@ -5,7 +5,7 @@ import datetime
 import logging
 import math
 import sys
-from typing import Union
+from typing import (Optional, Union,)
 import torch
 from torch import nn
 from torch.cuda import amp
@@ -13,11 +13,19 @@ from torch.utils.data import IterableDataset
 from kanachan import common
 
 
-def initialize_logging(path: pathlib.Path) -> None:
+def initialize_logging(
+        experiment_path: pathlib.Path, local_rank: Optional[int]) -> None:
     fmt = '%(asctime)s %(filename)s:%(lineno)d:%(levelname)s: %(message)s'
-    console_handler = logging.StreamHandler()
+    if local_rank is None:
+        path = experiment_path / 'training.log'
+    else:
+        path = experiment_path / f'training.{local_rank}.log'
     file_handler = logging.FileHandler(path, encoding='UTF-8')
-    handlers = (console_handler, file_handler)
+    if local_rank is None or local_rank == 0:
+        console_handler = logging.StreamHandler()
+        handlers = (console_handler, file_handler)
+    else:
+        handlers = (file_handler,)
     logging.basicConfig(format=fmt, level=logging.INFO, handlers=handlers)
 
 

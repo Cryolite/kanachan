@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from kanachan.constants import (
     NUM_SPARSE_FEATURES, NUM_TYPES_OF_POSITIONAL_FEATURES,
-    MAX_LENGTH_OF_POSITIONAL_FEATURES, NUM_ACTIONS)
+    MAX_LENGTH_OF_POSITIONAL_FEATURES,)
 from kanachan.positional_embedding import PositionalEmbedding
 
 
@@ -25,22 +25,15 @@ class Encoder(nn.Module):
             max_length=MAX_LENGTH_OF_POSITIONAL_FEATURES, dropout=dropout,
             sparse=sparse)
 
-        self.__candidates_embedding = nn.Embedding(
-            NUM_ACTIONS + 1, num_dimensions,
-            padding_idx=NUM_ACTIONS, sparse=sparse)
-        self.__candidates_dropout = nn.Dropout(p=dropout)
-
         encoder_layer = nn.TransformerEncoderLayer(
             num_dimensions, num_heads, dropout=dropout, batch_first=True)
         self.__encoder = nn.TransformerEncoder(encoder_layer, num_layers)
 
     def forward(self, x):
-        sparse, numeric, positional, candidates = x
+        sparse, numeric, positional = x
         sparse = self.__sparse_embedding(sparse)
         sparse = self.__sparse_dropout(sparse)
         positional = self.__positional_embedding(positional)
-        candidates = self.__candidates_embedding(candidates)
-        candidates = self.__candidates_dropout(candidates)
-        embedding = torch.cat((sparse, numeric, positional, candidates), dim=1)
+        embedding = torch.cat((sparse, numeric, positional), dim=1)
         encode = self.__encoder(embedding)
         return encode
