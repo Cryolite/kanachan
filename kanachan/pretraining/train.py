@@ -30,7 +30,8 @@ from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 
 def _training_epoch(
         data_loader: DataLoader, model: Model, optimizer, device: str, writer,
-        batch_count: int, snapshot_interval: int, local_rank: Optional[int],
+        batch_count: int, snapshot_interval: int, is_main_process: bool,
+        is_multiprocess: bool, rank: Optional[int],
         snapshots_path: pathlib.Path) -> None:
     start_time = datetime.datetime.now()
 
@@ -38,13 +39,18 @@ def _training_epoch(
     training_loss = 0.0
 
     for annotation in data_loader:
-        if local_rank is not None:
-            if batch_count % int(os.environ['LOCAL_WORLD_SIZE']) != local_rank:
-                batch_count += 1
-                continue
-
         if device != 'cpu':
-            annotation = tuple(x.to(device=device) for x in annotation)
+            if is_multiprocess:
+                local_world_size = int(os.environ['LOCAL_WORLD_SIZE'])
+                batch_size = len(annotation[0])
+                if batch_size % local_world_size != 0:
+                    raise RuntimeError(
+                        'Batch size must be divisible by the world size.')
+                first = (batch_size // local_world_size) * rank
+                last = (batch_size // local_world_size) * (rank + 1)
+                annotation = tuple(x[first:last].cuda() for x in annotation)
+            else:
+                annotation = tuple(x.cuda() for x in annotation)
 
         prediction = model(annotation[:-1])
         loss = loss_function(prediction, annotation[-1])
@@ -59,31 +65,30 @@ def _training_epoch(
             scaled_loss.backward()
         optimizer.step()
 
-        if local_rank is None or local_rank == 0:
+        if is_main_process:
             logging.info(
                 f'batch = {batch_count}, training loss = {loss.item()}')
             writer.add_scalar('Training batch loss', batch_loss, batch_count)
 
         batch_count += 1
 
-        if batch_count % snapshot_interval == 0:
-            if local_rank is None or local_rank == 0:
-                snapshots_path.mkdir(parents=False, exist_ok=True)
-                torch.save(
-                    encoder.state_dict(),
-                    snapshots_path / f'encoder.{batch_count}.pth')
-                torch.save(
-                    decoder.state_dict(),
-                    snapshots_path / f'decoder.{batch_count}.pth')
-                torch.save(
-                    optimizer.state_dict(),
-                    snapshots_path / f'optimizer.{batch_count}.pth')
+        if is_main_process and batch_count % snapshot_interval == 0:
+            snapshots_path.mkdir(parents=False, exist_ok=True)
+            torch.save(
+                encoder.state_dict(),
+                snapshots_path / f'encoder.{batch_count}.pth')
+            torch.save(
+                decoder.state_dict(),
+                snapshots_path / f'decoder.{batch_count}.pth')
+            torch.save(
+                optimizer.state_dict(),
+                snapshots_path / f'optimizer.{batch_count}.pth')
 
     elapsed_time = datetime.datetime.now() - start_time
     logging.info(f'Pretraining has finished (elapsed time = {elapsed_time}).')
     logging.info(f'The final training loss = {training_loss / batch_count}')
 
-    if local_rank is None or local_rank == 0:
+    if is_main_process:
         snapshots_path.mkdir(parents=False, exist_ok=True)
         torch.save(
             encoder.state_dict(), snapshots_path / f'encoder.{batch_count}.pth')
@@ -169,6 +174,18 @@ if __name__ == '__main__':
 
     config = ap.parse_args()
 
+    if 'LOCAL_RANK' in os.environ:
+        if os.environ['WORLD_SIZE'] != os.environ['LOCAL_WORLD_SIZE']:
+            raise RuntimeError('Multi-node not supported')
+        rank = int(os.environ['LOCAL_RANK'])
+        is_main_process = rank == 0
+        is_multiprocess = int(os.environ['LOCAL_WORLD_SIZE']) >= 2
+        torch.cuda.set_device(rank)
+    else:
+        rank = None
+        is_main_process = True
+        is_multiprocess = False
+
     if not config.training_data.exists():
         raise RuntimeError(f'{config.training_data}: does not exist')
     if config.num_workers < 0:
@@ -176,8 +193,12 @@ if __name__ == '__main__':
             f'{config.num_workers}: invalid number of workers')
 
     if config.device is not None:
-        if re.search('^(?:cpu)|(?:cuda(?::\\d+)?)', config.device) is None:
+        m = re.search('^(?:cpu)|(?:cuda(\\d+)?)', config.device)
+        if m is None:
             raise RuntimeError(f'{config.device}: invalid device')
+        if is_multiprocess and m[1] != '':
+            raise RuntimeError(
+                'Must not specify any device number in multi-process mode')
         device = config.device
     elif backends.cuda.is_built():
         device = 'cuda'
@@ -236,11 +257,6 @@ if __name__ == '__main__':
     if config.initial_optimizer is not None and config.resume:
         raise RuntimeError(f'`--initial-optimizer` conflicts with `--resume`')
 
-    if 'LOCAL_RANK' in os.environ:
-        local_rank = int(os.environ['LOCAL_RANK'])
-    else:
-        local_rank = None
-
     if config.experiment_name is None:
         now = datetime.datetime.now()
         experiment_name = now.strftime('%Y-%m-%d-%H-%M-%S')
@@ -248,10 +264,12 @@ if __name__ == '__main__':
         experiment_name = config.experiment_name
 
     experiment_path = pathlib.Path(config.output_prefix / experiment_name)
-    if local_rank is None or local_rank == 0:
-        if experiment_path.exists() and not config.resume:
-            raise RuntimeError(
-                f'{experiment_path}: already exists; did you mean `--resume`?')
+    if rank is None and (experiment_path / 'training.log').exists() and not config.resume:
+        raise RuntimeError(
+            f'{experiment_path}: already exists; did you mean `--resume`?')
+    if rank == 0 and (experiment_path / 'training.0.log').exists() and not config.resume:
+        raise RuntimeError(
+            f'{experiment_path}: already exists; did you mean `--resume`?')
     snapshots_path = experiment_path / 'snapshots'
     tensorboard_path = config.output_prefix / 'tensorboard' / experiment_name
 
@@ -260,7 +278,7 @@ if __name__ == '__main__':
             f'{config.snapshot_interval}: invalid value for `--snapshot-interval`')
 
     experiment_path.mkdir(parents=True, exist_ok=True)
-    common.initialize_logging(experiment_path, local_rank)
+    common.initialize_logging(experiment_path, rank)
 
     logging.info(f'Training data: {config.training_data}')
     logging.info(f'# of workers: {config.num_workers}')
@@ -296,10 +314,10 @@ if __name__ == '__main__':
         logging.info(f'Initial optimizer: (initialized normally)')
     elif config.initial_optimizer is not None:
         logging.info(f'Initial optimizer: {config.initial_optimizer}')
-    if local_rank is None:
-        logging.info(f'Local rank: N/A (single process)')
+    if rank is None:
+        logging.info(f'Process rank: N/A (single process)')
     else:
-        logging.info(f'Local rank: {local_rank}')
+        logging.info(f'Process rank: {rank}')
     logging.info(f'Snapshot interval: {config.snapshot_interval}')
     if config.resume:
         logging.info(f'Resume from {experiment_path}')
@@ -325,7 +343,6 @@ if __name__ == '__main__':
         'learning_rate': learning_rate,
         'dropout': config.dropout,
         'initial_optimizer': config.initial_optimizer,
-        'local_rank': local_rank,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
         'snapshots_path': snapshots_path,
@@ -342,7 +359,10 @@ if __name__ == '__main__':
         num_final_dimensions=config['num_final_dimensions'],
         dropout=config['dropout'], sparse=config['sparse'])
     model = Model(encoder, decoder)
-    model.to(device=config['device'], dtype=config['dtype'])
+    if config['device'] == 'cpu':
+        model.to(dtype=config['dtype'])
+    else:
+        model.to(device=config['device'], dtype=config['dtype'])
 
     if config['optimizer'] == 'adam':
         optimizer = FusedAdam(
@@ -360,10 +380,10 @@ if __name__ == '__main__':
 
     model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
 
-    if local_rank is not None:
+    if is_multiprocess:
         init_process_group(backend='nccl')
         model = DistributedDataParallel(
-            model, device_ids=[local_rank], output_device=local_rank)
+            model, device_ids=[rank], output_device=rank)
 
     batch_count = 0
     if config['resume']:
@@ -384,7 +404,6 @@ if __name__ == '__main__':
         latest_optimizer_snapshot_path \
             = config['snapshots_path'] / f'optimizer.{batch_count}.pth'
         optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
-        batch_count += 1
 
     if config['initial_encoder'] is not None:
         encoder.load_state_dict(torch.load(config['initial_encoder']))
@@ -395,7 +414,7 @@ if __name__ == '__main__':
 
     with tensorboard.SummaryWriter(log_dir=config['tensorboard_path']) as writer:
         config['tensorboard_path'].mkdir(parents=True, exist_ok=True)
-        if not config['resume']:
+        if is_main_process and not config['resume']:
             (config['experiment_path'] / 'tensorboard').symlink_to(
                 f'../tensorboard/{config["experiment_name"]}',
                 target_is_directory=True)
@@ -407,11 +426,12 @@ if __name__ == '__main__':
         dataset = Dataset(config['training_data'], iterator_adaptor)
         data_loader = DataLoader(
             dataset, batch_size=config['batch_size'],
-            num_workers=config['num_workers'], pin_memory=True)
+            num_workers=config['num_workers'], pin_memory=True,
+            drop_last=is_multiprocess)
 
         _training_epoch(
             data_loader, model, optimizer, config['device'], writer,
-            batch_count, config['snapshot_interval'], local_rank,
-            config['snapshots_path'])
+            batch_count, config['snapshot_interval'], is_main_process,
+            is_multiprocess, rank, config['snapshots_path'])
 
     sys.exit(0)
