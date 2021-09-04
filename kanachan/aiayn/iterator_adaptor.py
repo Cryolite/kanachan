@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pathlib
 import json
 import torch
 import torch.nn.functional
@@ -8,11 +9,10 @@ from kanachan.constants import (
     NUM_SPARSE_FEATURES, MAX_NUM_ACTIVE_SPARSE_FEATURES, NUM_NUMERIC_FEATURES,
     NUM_TYPES_OF_POSITIONAL_FEATURES, MAX_LENGTH_OF_POSITIONAL_FEATURES,
     NUM_ACTIONS, MAX_NUM_ACTION_CANDIDATES)
-from kanachan import common
 
 
 class IteratorAdaptor(object):
-    def __init__(self, path, num_dimensions, dtype) -> None:
+    def __init__(self, path: pathlib.Path, num_dimensions: int, dtype) -> None:
         self.__fp = open(path)
         self.__num_dimensions = num_dimensions
         self.__dtype = dtype
@@ -23,6 +23,9 @@ class IteratorAdaptor(object):
                     next(self.__fp)
             except StopIteration as e:
                 pass
+
+    def __del__(self) -> None:
+        self.__fp.close()
 
     def __parse_line(self, line: str):
         line = line.rstrip('\n')
