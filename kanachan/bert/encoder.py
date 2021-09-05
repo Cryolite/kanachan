@@ -11,7 +11,8 @@ from kanachan.positional_embedding import PositionalEmbedding
 class Encoder(nn.Module):
     def __init__(
             self, num_dimensions: int, num_heads: int, dim_feedforward: int,
-            num_layers:int, dropout: float=0.1, sparse: bool=False) -> None:
+            num_layers:int, dropout: float=0.1, activation_function='gelu',
+            sparse: bool=False) -> None:
         super(Encoder, self).__init__()
 
         self.__sparse_embedding = nn.Embedding(
@@ -32,7 +33,7 @@ class Encoder(nn.Module):
 
         encoder_layer = nn.TransformerEncoderLayer(
             num_dimensions, num_heads, dim_feedforward=dim_feedforward,
-            dropout=dropout, batch_first=True)
+            dropout=dropout, activation=activation_function, batch_first=True)
         self.__encoder = nn.TransformerEncoder(encoder_layer, num_layers)
 
     def forward(self, x):

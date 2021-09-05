@@ -36,21 +36,27 @@ class IteratorAdaptor(IteratorAdaptorBase):
 class Decoder(nn.Module):
     def __init__(
             self, num_dimensions: int, dim_final_feedforward: int,
-            dropout: float=0.1) -> None:
+            dropout: float=0.1, activation_function='gelu') -> None:
         super(Decoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
         self.__semifinal_linear = nn.Linear(
             num_dimensions, dim_final_feedforward)
-        self.__semifinal_activation = nn.ReLU()
         self.__semifinal_dropout = nn.Dropout(p=dropout)
+        if activation_function == 'relu':
+            self.__semifinal_activation = nn.ReLU()
+        elif activation_function == 'gelu':
+            self.__semifinal_activation = nn.GELU()
+        else:
+            raise ValueError(
+                f'{activation_function}: invalid activation function')
         self.__final_linear = nn.Linear(dim_final_feedforward, 1)
 
     def forward(self, encode):
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         decode = self.__semifinal_linear(encode)
-        decode = self.__semifinal_activation(decode)
         decode = self.__semifinal_dropout(decode)
+        decode = self.__semifinal_activation(decode)
 
         prediction = self.__final_linear(decode)
         prediction = torch.squeeze(prediction, dim=2)
@@ -71,15 +77,20 @@ class Model(nn.Module):
 
 def _training_epoch(
         data_loader: DataLoader, model: Model, optimizer, device: str, writer,
-        batch_count: int, gradient_accumulation_steps: int,
+        resumed_batch: int, gradient_accumulation_steps: int,
         snapshot_interval: int, is_main_process: bool, is_multiprocess: bool,
         rank: Optional[int], snapshots_path: pathlib.Path) -> None:
     start_time = datetime.datetime.now()
 
+    batch_count = 0
     loss_function = nn.CrossEntropyLoss()
     training_loss = 0.0
 
     for annotation in data_loader:
+        if batch_count < resumed_batch:
+            batch_count += 1
+            continue
+
         if device != 'cpu':
             if is_multiprocess:
                 local_world_size = int(os.environ['LOCAL_WORLD_SIZE'])
@@ -109,9 +120,8 @@ def _training_epoch(
             optimizer.step()
             optimizer.zero_grad()
 
+        logging.info(f'batch = {batch_count}, training loss = {batch_loss}')
         if is_main_process:
-            logging.info(
-                f'batch = {batch_count}, training loss = {batch_loss}')
             writer.add_scalar('Training batch loss', batch_loss, batch_count)
 
         batch_count += 1
@@ -177,6 +187,10 @@ if __name__ == '__main__':
         help='dimension of the final feedforward network (defaults to DIM_FEEDFORWARD)',
         metavar='DIM_FINAL_FEEDFORWARD')
     ap_model.add_argument(
+        '--activation-function', default='gelu', choices=('relu', 'gelu',),
+        help='activation function for the feedforward networks (defaults to `gelu`)',
+        metavar='ACTIVATION')
+    ap_model.add_argument(
         '--initial-encoder', type=pathlib.Path,
         help='path to the initial encoder; mutually exclusive to `--resume`',
         metavar='PATH')
@@ -196,9 +210,6 @@ if __name__ == '__main__':
         help='learning rate (defaults to 0.001 for `adam` and `lamb`, 0.1 for `sgd`)',
         metavar='LR')
     ap_training.add_argument(
-        '--gradient-accumulation-steps', default=1, type=int,
-        help='# of steps for gradient accumulation', metavar='NSTEPS')
-    ap_training.add_argument(
         '--epsilon', default=1.0e-5, type=float,
         help='epsilon parameter; only meaningful for Adam and LAMB (defaults to 1.0e-5)',
         metavar='EPS')
@@ -209,6 +220,9 @@ if __name__ == '__main__':
     ap_training.add_argument(
         '--dropout', default=0.1, type=float, help='defaults to 0.1',
         metavar='DROPOUT')
+    ap_training.add_argument(
+        '--gradient-accumulation-steps', default=1, type=int,
+        help='# of steps for gradient accumulation', metavar='NSTEPS')
     ap_training.add_argument(
         '--initial-optimizer', type=pathlib.Path,
         help='path to the initial optimizer state; mutually exclusive to `--resume`',
@@ -357,6 +371,7 @@ if __name__ == '__main__':
     logging.info(f'# of layers: {config.num_layers}')
     logging.info(
         f'Dimension of the final feedforward network: {config.dim_final_feedforward}')
+    logging.info(f'Activation function: {config.activation_function}')
     if config.initial_encoder is None and not config.resume:
         logging.info(f'Initial encoder: (initialized randomly)')
     elif config.initial_encoder is not None:
@@ -367,11 +382,11 @@ if __name__ == '__main__':
         logging.info(f'Initial decoder: {config.initial_decoder}')
     logging.info(f'Batch size: {config.batch_size}')
     logging.info(f'Optimizer: {config.optimizer}')
+    logging.info(f'Learning rate: {learning_rate}')
     if config.optimizer in ('adam', 'lamb',):
         logging.info(f'Epsilon parameter: {config.epsilon}')
     if config.optimizer == 'sgd':
         logging.info(f'Momentum factor: {config.momentum}')
-    logging.info(f'Learning rate: {learning_rate}')
     logging.info(
         f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
     logging.info(f'Dropout: {config.dropout}')
@@ -400,16 +415,17 @@ if __name__ == '__main__':
         'dim_feedforward': config.dim_feedforward,
         'num_layers': config.num_layers,
         'dim_final_feedforward': config.dim_final_feedforward,
+        'activation_function': config.activation_function,
+        'sparse': sparse,
         'initial_encoder': config.initial_encoder,
         'initial_decoder': config.initial_decoder,
         'batch_size': config.batch_size,
         'optimizer': config.optimizer,
         'learning_rate': learning_rate,
-        'gradient_accumulation_steps': config.gradient_accumulation_steps,
         'epsilon': config.epsilon,
         'momentum': config.momentum,
-        'sparse': sparse,
         'dropout': config.dropout,
+        'gradient_accumulation_steps': config.gradient_accumulation_steps,
         'initial_optimizer': config.initial_optimizer,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
@@ -422,10 +438,13 @@ if __name__ == '__main__':
     encoder = Encoder(
         config['num_dimensions'], config['num_heads'],
         config['dim_feedforward'], config['num_layers'],
-        dropout=config['dropout'], sparse=config['sparse'])
+        dropout=config['dropout'],
+        activation_function=config['activation_function'],
+        sparse=config['sparse'])
     decoder = Decoder(
         config['num_dimensions'], config['dim_final_feedforward'],
-        dropout=config['dropout'])
+        dropout=config['dropout'],
+        activation_function=config['activation_function'])
     model = Model(encoder, decoder)
     if config['device'] == 'cpu':
         model.to(dtype=config['dtype'])
@@ -453,7 +472,7 @@ if __name__ == '__main__':
         model = DistributedDataParallel(
             model, device_ids=[rank], output_device=rank)
 
-    batch_count = 0
+    resumed_batch = 0
     if config['resume']:
         if not config['snapshots_path'].exists():
             raise RuntimeError(f'{config["snapshots_path"]}: does not exist')
@@ -461,16 +480,17 @@ if __name__ == '__main__':
             m = re.search('^encoder\\.(\\d+)\\.pth$', child)
             if m is None:
                 continue
-            if int(m[1]) > batch_count:
-                batch_count = int(m[1])
+            if int(m[1]) > resumed_batch:
+                resumed_batch = int(m[1])
+        logging.info(f'Resumed from the {resumed_batch}-th batch')
         latest_encoder_snapshot_path \
-            = config['snapshots_path'] / f'encoder.{batch_count}.pth'
+            = config['snapshots_path'] / f'encoder.{resumed_batch}.pth'
         encoder.load_state_dict(torch.load(latest_encoder_snapshot_path))
         latest_decoder_snapshot_path \
-            = config['snapshots_path'] / f'decoder.{batch_count}.pth'
+            = config['snapshots_path'] / f'decoder.{resumed_batch}.pth'
         decoder.load_state_dict(torch.load(latest_decoder_snapshot_path))
         latest_optimizer_snapshot_path \
-            = config['snapshots_path'] / f'optimizer.{batch_count}.pth'
+            = config['snapshots_path'] / f'optimizer.{resumed_batch}.pth'
         optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
 
     if config['initial_encoder'] is not None:
@@ -499,7 +519,7 @@ if __name__ == '__main__':
 
         _training_epoch(
             data_loader, model, optimizer, config['device'], writer,
-            batch_count, config['gradient_accumulation_steps'],
+            resumed_batch, config['gradient_accumulation_steps'],
             config['snapshot_interval'], is_main_process, is_multiprocess, rank,
             config['snapshots_path'])
 
