@@ -77,15 +77,20 @@ class Model(nn.Module):
 
 def _training_epoch(
         data_loader: DataLoader, model: Model, optimizer, device: str, writer,
-        batch_count: int, gradient_accumulation_steps: int,
+        resumed_batch: int, gradient_accumulation_steps: int,
         snapshot_interval: int, is_main_process: bool, is_multiprocess: bool,
         rank: Optional[int], snapshots_path: pathlib.Path) -> None:
     start_time = datetime.datetime.now()
 
+    batch_count = 0
     loss_function = nn.CrossEntropyLoss()
     training_loss = 0.0
 
     for annotation in data_loader:
+        if batch_count < resumed_batch:
+            batch_count += 1
+            continue
+
         if device != 'cpu':
             if is_multiprocess:
                 local_world_size = int(os.environ['LOCAL_WORLD_SIZE'])
@@ -115,9 +120,8 @@ def _training_epoch(
             optimizer.step()
             optimizer.zero_grad()
 
+        logging.info(f'batch = {batch_count}, training loss = {batch_loss}')
         if is_main_process:
-            logging.info(
-                f'batch = {batch_count}, training loss = {batch_loss}')
             writer.add_scalar('Training batch loss', batch_loss, batch_count)
 
         batch_count += 1
@@ -468,7 +472,7 @@ if __name__ == '__main__':
         model = DistributedDataParallel(
             model, device_ids=[rank], output_device=rank)
 
-    batch_count = 0
+    resumed_batch = 0
     if config['resume']:
         if not config['snapshots_path'].exists():
             raise RuntimeError(f'{config["snapshots_path"]}: does not exist')
@@ -476,16 +480,17 @@ if __name__ == '__main__':
             m = re.search('^encoder\\.(\\d+)\\.pth$', child)
             if m is None:
                 continue
-            if int(m[1]) > batch_count:
-                batch_count = int(m[1])
+            if int(m[1]) > resumed_batch:
+                resumed_batch = int(m[1])
+        logging.info(f'Resumed from the {resumed_batch}-th batch')
         latest_encoder_snapshot_path \
-            = config['snapshots_path'] / f'encoder.{batch_count}.pth'
+            = config['snapshots_path'] / f'encoder.{resumed_batch}.pth'
         encoder.load_state_dict(torch.load(latest_encoder_snapshot_path))
         latest_decoder_snapshot_path \
-            = config['snapshots_path'] / f'decoder.{batch_count}.pth'
+            = config['snapshots_path'] / f'decoder.{resumed_batch}.pth'
         decoder.load_state_dict(torch.load(latest_decoder_snapshot_path))
         latest_optimizer_snapshot_path \
-            = config['snapshots_path'] / f'optimizer.{batch_count}.pth'
+            = config['snapshots_path'] / f'optimizer.{resumed_batch}.pth'
         optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
 
     if config['initial_encoder'] is not None:
@@ -514,7 +519,7 @@ if __name__ == '__main__':
 
         _training_epoch(
             data_loader, model, optimizer, config['device'], writer,
-            batch_count, config['gradient_accumulation_steps'],
+            resumed_batch, config['gradient_accumulation_steps'],
             config['snapshot_interval'], is_main_process, is_multiprocess, rank,
             config['snapshots_path'])
 
