@@ -170,7 +170,7 @@ if __name__ == '__main__':
         help='dimension of the feedforward network in each layer (defaults to 4 * DIM)',
         metavar='DIM_FEEDFORWARD')
     ap_model.add_argument(
-        '--num-layers', default=6, type=int,
+        '--num-layers', default=12, type=int,
         help='# of layers (defaults to 12)', metavar='NLAYERS')
     ap_model.add_argument(
         '--dim-final-feedforward', type=int,
