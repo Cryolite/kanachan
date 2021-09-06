@@ -446,6 +446,41 @@ if __name__ == '__main__':
         dropout=config['dropout'],
         activation_function=config['activation_function'])
     model = Model(encoder, decoder)
+
+    if config['initial_encoder'] is not None:
+        assert(not config['resume'])
+        encoder.load_state_dict(torch.load(config['initial_encoder']))
+    if config['initial_decoder'] is not None:
+        assert(not config['resume'])
+        decoder.load_state_dict(torch.load(config['initial_decoder']))
+    if config['initial_optimizer'] is not None:
+        assert(not config['resume'])
+        optimizer.load_state_dict(torch.load(config['initial_optimizer']))
+
+    resumed_batch = 0
+    if config['resume']:
+        assert(config['initial_encoder'] is None)
+        assert(config['initial_decoder'] is None)
+        assert(config['initial_optimizer'] is None)
+        if not config['snapshots_path'].exists():
+            raise RuntimeError(f'{config["snapshots_path"]}: does not exist')
+        for child in os.listdir(config['snapshots_path']):
+            m = re.search('^encoder\\.(\\d+)\\.pth$', child)
+            if m is None:
+                continue
+            if int(m[1]) > resumed_batch:
+                resumed_batch = int(m[1])
+        logging.info(f'Resumed from the {resumed_batch}-th batch')
+        latest_encoder_snapshot_path \
+            = config['snapshots_path'] / f'encoder.{resumed_batch}.pth'
+        encoder.load_state_dict(torch.load(latest_encoder_snapshot_path))
+        latest_decoder_snapshot_path \
+            = config['snapshots_path'] / f'decoder.{resumed_batch}.pth'
+        decoder.load_state_dict(torch.load(latest_decoder_snapshot_path))
+        latest_optimizer_snapshot_path \
+            = config['snapshots_path'] / f'optimizer.{resumed_batch}.pth'
+        optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
+
     if config['device'] == 'cpu':
         model.to(dtype=config['dtype'])
     else:
@@ -471,34 +506,6 @@ if __name__ == '__main__':
         init_process_group(backend='nccl')
         model = DistributedDataParallel(
             model, device_ids=[rank], output_device=rank)
-
-    resumed_batch = 0
-    if config['resume']:
-        if not config['snapshots_path'].exists():
-            raise RuntimeError(f'{config["snapshots_path"]}: does not exist')
-        for child in os.listdir(config['snapshots_path']):
-            m = re.search('^encoder\\.(\\d+)\\.pth$', child)
-            if m is None:
-                continue
-            if int(m[1]) > resumed_batch:
-                resumed_batch = int(m[1])
-        logging.info(f'Resumed from the {resumed_batch}-th batch')
-        latest_encoder_snapshot_path \
-            = config['snapshots_path'] / f'encoder.{resumed_batch}.pth'
-        encoder.load_state_dict(torch.load(latest_encoder_snapshot_path))
-        latest_decoder_snapshot_path \
-            = config['snapshots_path'] / f'decoder.{resumed_batch}.pth'
-        decoder.load_state_dict(torch.load(latest_decoder_snapshot_path))
-        latest_optimizer_snapshot_path \
-            = config['snapshots_path'] / f'optimizer.{resumed_batch}.pth'
-        optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
-
-    if config['initial_encoder'] is not None:
-        encoder.load_state_dict(torch.load(config['initial_encoder']))
-    if config['initial_decoder'] is not None:
-        decoder.load_state_dict(torch.load(config['initial_decoder']))
-    if config['initial_optimizer'] is not None:
-        optimizer.load_state_dict(torch.load(config['initial_optimizer']))
 
     with tensorboard.SummaryWriter(log_dir=config['tensorboard_path']) as writer:
         config['tensorboard_path'].mkdir(parents=True, exist_ok=True)
