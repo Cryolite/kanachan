@@ -10,7 +10,9 @@ import torch
 from torch import nn
 from torch.cuda import amp
 from torch.utils.data import IterableDataset
-from kanachan import common
+from kanachan.constants import (
+    NUM_SPARSE_FEATURES, NUM_TYPES_OF_POSITIONAL_FEATURES,
+    MAX_LENGTH_OF_POSITIONAL_FEATURES, NUM_ACTIONS)
 
 
 def initialize_logging(

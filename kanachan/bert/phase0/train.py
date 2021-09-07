@@ -16,11 +16,12 @@ from torch.utils.data import DataLoader
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils import tensorboard
-from kanachan.constants import (MAX_NUM_ACTION_CANDIDATES,)
 from kanachan import common
 from kanachan.iterator_adaptor_base import IteratorAdaptorBase
 from kanachan.common import (Dataset,)
 from kanachan.bert.encoder import Encoder
+from kanachan.bert.phase0.decoder import Decoder
+from kanachan.bert.phase0.model import Model
 from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 from apex import amp
 
@@ -31,48 +32,6 @@ class IteratorAdaptor(IteratorAdaptorBase):
 
     def __next__(self):
         return super(IteratorAdaptor, self).__next__()[:-1]
-
-
-class Decoder(nn.Module):
-    def __init__(
-            self, num_dimensions: int, dim_final_feedforward: int,
-            dropout: float=0.1, activation_function='gelu') -> None:
-        super(Decoder, self).__init__()
-
-        # The final layer is position-wise feed-forward network.
-        self.__semifinal_linear = nn.Linear(
-            num_dimensions, dim_final_feedforward)
-        self.__semifinal_dropout = nn.Dropout(p=dropout)
-        if activation_function == 'relu':
-            self.__semifinal_activation = nn.ReLU()
-        elif activation_function == 'gelu':
-            self.__semifinal_activation = nn.GELU()
-        else:
-            raise ValueError(
-                f'{activation_function}: invalid activation function')
-        self.__final_linear = nn.Linear(dim_final_feedforward, 1)
-
-    def forward(self, encode):
-        encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
-        decode = self.__semifinal_linear(encode)
-        decode = self.__semifinal_dropout(decode)
-        decode = self.__semifinal_activation(decode)
-
-        prediction = self.__final_linear(decode)
-        prediction = torch.squeeze(prediction, dim=2)
-        return prediction
-
-
-class Model(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: Decoder) -> None:
-        super(Model, self).__init__()
-        self.__encoder = encoder
-        self.__decoder = decoder
-
-    def forward(self, x):
-        encode = self.__encoder(x)
-        prediction = self.__decoder(encode)
-        return prediction
 
 
 def _training_epoch(
