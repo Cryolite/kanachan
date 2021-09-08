@@ -93,6 +93,9 @@ def _training_epoch(
             torch.save(
                 decoder.state_dict(),
                 snapshots_path / f'decoder.{batch_count}.pth')
+            torch.save(
+                optimizer.state_dict(),
+                snapshots_path / f'optimizer.{batch_count}.pth')
 
     elapsed_time = datetime.datetime.now() - start_time
     logging.info(f'Pretraining has finished (elapsed time = {elapsed_time}).')
@@ -104,6 +107,9 @@ def _training_epoch(
             encoder.state_dict(), snapshots_path / f'encoder.{batch_count}.pth')
         torch.save(
             decoder.state_dict(), snapshots_path / f'decoder.{batch_count}.pth')
+        torch.save(
+            optimizer.state_dict(),
+            snapshots_path / f'optimizer.{batch_count}.pth')
 
     return batch_count
 
@@ -179,6 +185,10 @@ if __name__ == '__main__':
     ap_training.add_argument(
         '--gradient-accumulation-steps', default=1, type=int,
         help='# of steps for gradient accumulation', metavar='NSTEPS')
+    ap_training.add_argument(
+        '--initial-optimizer', type=pathlib.Path,
+        help='path to the initial optimizer state; mutually exclusive to `--resume`',
+        metavar='PATH')
     ap_output = ap.add_argument_group(title='Output')
     ap_output.add_argument(
         '--output-prefix', type=pathlib.Path, required=True, metavar='PATH')
@@ -279,6 +289,10 @@ if __name__ == '__main__':
     if config.gradient_accumulation_steps < 1:
         raise RuntimeError(
             f'{config.gradient_accumulation_steps}: invalid steps for gradient accumulation')
+    if config.initial_optimizer is not None and not config.initial_optimizer.exists():
+        raise RuntimeError(f'{config.initial_optimizer}: does not exist')
+    if config.initial_optimizer is not None and config.resume:
+        raise RuntimeError(f'`--initial-optimizer` conflicts with `--resume`')
 
     if config.experiment_name is None:
         now = datetime.datetime.now()
@@ -320,6 +334,7 @@ if __name__ == '__main__':
     logging.info(
         f'Dimension of the final feedforward network: {config.dim_final_feedforward}')
     logging.info(f'Activation function: {config.activation_function}')
+    logging.info(f'Sparse: {sparse}')
     if config.initial_encoder is None and not config.resume:
         logging.info(f'Initial encoder: (initialized randomly)')
     elif config.initial_encoder is not None:
@@ -338,7 +353,10 @@ if __name__ == '__main__':
     logging.info(
         f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
     logging.info(f'Dropout: {config.dropout}')
-    logging.info(f'Sparse: {sparse}')
+    if config.initial_optimizer is None and not config.resume:
+        logging.info(f'Initial optimizer state: (initialized normally)')
+    elif config.initial_optimizer is not None:
+        logging.info(f'Initial optimizer state: {config.initial_optimizer}')
     if rank is None:
         logging.info(f'Process rank: N/A (single process)')
     else:
@@ -370,6 +388,7 @@ if __name__ == '__main__':
         'momentum': config.momentum,
         'dropout': config.dropout,
         'gradient_accumulation_steps': config.gradient_accumulation_steps,
+        'initial_optimizer': config.initial_optimizer,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
         'snapshots_path': snapshots_path,
@@ -389,20 +408,6 @@ if __name__ == '__main__':
         dropout=config['dropout'],
         activation_function=config['activation_function'])
     model = Model(encoder, decoder)
-
-    if config['optimizer'] == 'adam':
-        optimizer = FusedAdam(
-            model.parameters(), lr=config['learning_rate'],
-            eps=config['epsilon'])
-    elif config['optimizer'] == 'sgd':
-        optimizer = FusedSGD(
-            model.parameters(), lr=config['learning_rate'],
-            momentum=config['momentum'])
-    else:
-        assert(config['optimizer'] == 'lamb')
-        optimizer = FusedLAMB(
-            model.parameters(), lr=config['learning_rate'],
-            eps=config['epsilon'])
 
     if config['initial_encoder'] is not None:
         assert(not config['resume'])
@@ -436,7 +441,34 @@ if __name__ == '__main__':
     else:
         model.to(device=config['device'], dtype=config['dtype'])
 
-    model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
+    if config['optimizer'] == 'adam':
+        optimizer = FusedAdam(
+            model.parameters(), lr=config['learning_rate'],
+            eps=config['epsilon'])
+    elif config['optimizer'] == 'sgd':
+        optimizer = FusedSGD(
+            model.parameters(), lr=config['learning_rate'],
+            momentum=config['momentum'])
+    else:
+        assert(config['optimizer'] == 'lamb')
+        optimizer = FusedLAMB(
+            model.parameters(), lr=config['learning_rate'],
+            eps=config['epsilon'])
+
+    if config['initial_optimizer'] is not None:
+        assert(not config['resume'])
+        optimizer.load_state_dict(torch.load(config['initial_optimizer']))
+    if config['resume']:
+        assert(config['initial_optimizer'] is None)
+        latest_optimizer_snapshot_path \
+            = config['snapshots_path'] / f'optimizer.{resumed_batch}.pth'
+        optimizer.load_state_dict(torch.load(latest_optimizer_snapshot_path))
+
+    if is_main_process:
+        model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
+    else:
+        model, optimizer = amp.initialize(
+            model, optimizer, opt_level='O1', verbosity=0)
 
     if is_multiprocess:
         init_process_group(backend='nccl')
@@ -471,5 +503,7 @@ if __name__ == '__main__':
             config['experiment_path'] / 'encoder.pth')
         (config['snapshots_path'] / f'decoder.{batch_count}.pth').link_to(
             config['experiment_path'] / 'decoder.pth')
+        (config['snapshots_path'] / f'optimizer.{batch_count}.pth').link_to(
+            config['experiment_path'] / 'optimizer.pth')
 
     sys.exit(0)
