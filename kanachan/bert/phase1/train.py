@@ -7,15 +7,17 @@ import pathlib
 import os
 from argparse import ArgumentParser
 import logging
+import json
 import sys
-from typing import Optional
+from typing import (Optional, Tuple,)
 import torch
 from torch import backends
 from torch import nn
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils import tensorboard
+from torch.utils.tensorboard.writer import SummaryWriter
 from kanachan import common
 from kanachan.iterator_adaptor_base import IteratorAdaptorBase
 from kanachan.common import (Dataset,)
@@ -28,9 +30,19 @@ from apex import amp
 
 
 def _validate(
-        data_loader: DataLoader, model: Model, device: str,
-        is_multiprocess: bool, rank: Optional[int]) -> float:
+        config: object, model: Model, is_multiprocess: bool,
+        rank: Optional[int]) -> float:
     start_time = datetime.datetime.now()
+
+    # Prepare the validation data loader. Note that this data loader must
+    # iterate the validation data set only once.
+    iterator_adaptor = lambda fp: IteratorAdaptor(
+        fp, config['num_dimensions'], config['dtype'])
+    dataset = Dataset(config['validation_data'], iterator_adaptor)
+    data_loader = DataLoader(
+        dataset, batch_size=config['validation_batch_size'],
+        num_workers=config['num_workers'], pin_memory=True,
+        drop_last=is_multiprocess)
 
     with torch.no_grad():
         loss_function = nn.CrossEntropyLoss()
@@ -38,7 +50,7 @@ def _validate(
         batch_in_epoch = 0
         for annotation in data_loader:
             batch_size = len(annotation[0])
-            if device != 'cpu':
+            if config['device'] != 'cpu':
                 if is_multiprocess:
                     world_size = int(os.environ['LOCAL_WORLD_SIZE'])
                     if batch_size % world_size != 0:
@@ -68,32 +80,43 @@ def _validate(
 
 
 def _training_epoch(
-        data_loader: DataLoader, model: Model, optimizer, device: str, writer,
-        batch: int, epoch: int, batch_in_epoch: int,
-        gradient_accumulation_steps: int, snapshot_interval: int,
-        is_main_process: bool, is_multiprocess: bool, rank: Optional[int],
-        snapshots_path: pathlib.Path) -> None:
+        config: object, model: Model, optimizer: Optimizer,
+        writer: SummaryWriter, batch: int, epoch: int, batch_in_epoch: int,
+        is_main_process: bool, is_multiprocess: bool,
+        rank: Optional[int]) -> Tuple[int, int]:
     start_time = datetime.datetime.now()
+
+    # Prepare the training data loader. Note that this data loader must iterate
+    # the training data set only once.
+    training_iterator_adaptor = lambda fp: IteratorAdaptor(
+        fp, config['num_dimensions'], config['dtype'])
+    training_dataset = Dataset(
+        config['training_data'], training_iterator_adaptor)
+    training_data_loader = DataLoader(
+        training_dataset, batch_size=config['training_batch_size'],
+        num_workers=config['num_workers'], pin_memory=True,
+        drop_last=is_multiprocess)
 
     skipped_batch_in_epoch = 0
     loss_function = nn.CrossEntropyLoss()
 
     training_loss_file_path \
-        = snapshots_path / f'training_loss.{epoch}.{batch_in_epoch}.txt'
+        = config['snapshots_path'] / f'training_loss.{epoch}.{batch_in_epoch}.txt'
     if training_loss_file_path.exists():
         with open(training_loss_file_path) as f:
             training_loss = float(f.read())
     else:
         training_loss = 0.0
 
-    for annotation in data_loader:
-        if skipped_batch_in_epoch < batch_in_epoch:
+    for annotation in training_data_loader:
+        if skipped_batch_in_epoch is not None and skipped_batch_in_epoch < batch_in_epoch:
             skipped_batch_in_epoch += 1
             continue
+        skipped_batch_in_epoch = None
 
         batch_size = len(annotation[0])
 
-        if device != 'cpu':
+        if config['device'] != 'cpu':
             if is_multiprocess:
                 world_size = int(os.environ['LOCAL_WORLD_SIZE'])
                 if batch_size % world_size != 0:
@@ -113,11 +136,11 @@ def _training_epoch(
         batch_loss = loss.item()
         training_loss += batch_loss
 
-        loss = loss / gradient_accumulation_steps
+        loss = loss / config['gradient_accumulation_steps']
         with amp.scale_loss(loss, optimizer) as scaled_loss:
             scaled_loss.backward()
 
-        if (batch_in_epoch + 1) % gradient_accumulation_steps == 0:
+        if (batch_in_epoch + 1) % config['gradient_accumulation_steps'] == 0:
             optimizer.step()
             optimizer.zero_grad()
 
@@ -129,19 +152,19 @@ def _training_epoch(
 
         batch_in_epoch += 1
 
-        if is_main_process and batch_in_epoch % snapshot_interval == 0:
-            snapshots_path.mkdir(parents=False, exist_ok=True)
+        if is_main_process and batch_in_epoch % config['snapshot_interval'] == 0:
+            config['snapshots_path'].mkdir(parents=False, exist_ok=True)
             torch.save(
                 encoder.state_dict(),
-                snapshots_path / f'encoder.{epoch}.{batch_in_epoch}.pth')
+                config['snapshots_path'] / f'encoder.{epoch}.{batch_in_epoch}.pth')
             torch.save(
                 decoder.state_dict(),
-                snapshots_path / f'decoder.{epoch}.{batch_in_epoch}.pth')
+                config['snapshots_path'] / f'decoder.{epoch}.{batch_in_epoch}.pth')
             torch.save(
                 optimizer.state_dict(),
-                snapshots_path / f'optimizer.{epoch}.{batch_in_epoch}.pth')
+                config['snapshots_path'] / f'optimizer.{epoch}.{batch_in_epoch}.pth')
             training_loss_file_path \
-                = snapshots_path / f'training_loss.{epoch}.{batch_in_epoch}.txt'
+                = config['snapshots_path'] / f'training_loss.{epoch}.{batch_in_epoch}.txt'
             with open(training_loss_file_path, 'w') as f:
                 print(training_loss, file=f, end='')
 
@@ -150,22 +173,13 @@ def _training_epoch(
     logging.info(f'Training epoch loss = {training_loss / batch_in_epoch}')
 
     batch += batch_in_epoch
-    with open(snapshots_path / 'batch.json', 'w') as f:
-        data = {'training_batch_size': batch_size, 'batch': batch}
-        json.dump(f, data, separators=(',', ':'))
+    if is_main_process:
+        config['snapshots_path'].mkdir(parents=False, exist_ok=True)
+        with open(config['snapshots_path'] / 'batch.json', 'w') as f:
+            data = {'training_batch_size': batch_size, 'batch': batch}
+            json.dump(data, f, separators=(',', ':'))
 
-    # Prepare the validation data loader. Note that this data loader must
-    # iterate the validation data set only once.
-    validation_iterator_adaptor = lambda fp: IteratorAdaptor(
-        fp, config['num_dimensions'], config['dtype'])
-    validation_dataset = Dataset(
-        config['validation_data'], validation_iterator_adaptor)
-    validation_data_loader = DataLoader(
-        validation_dataset, batch_size=config['validation_batch_size'],
-        num_workers=config['num_workers'], pin_memory=True,
-        drop_last=is_multiprocess)
-    validation_loss = _validate(
-        validation_data_loader, model, config['device'], is_multiprocess, rank)
+    validation_loss = _validate(config, model, is_multiprocess, rank)
     if is_main_process:
         writer.add_scalar('Validation epoch loss', validation_loss, epoch)
 
@@ -173,16 +187,18 @@ def _training_epoch(
     batch_in_epoch = 0
 
     if is_main_process:
-        snapshots_path.mkdir(parents=False, exist_ok=True)
+        config['snapshots_path'].mkdir(parents=False, exist_ok=True)
         torch.save(
             encoder.state_dict(),
-            snapshots_path / f'encoder.{epoch}.{batch_in_epoch}.pth')
+            config['snapshots_path'] / f'encoder.{epoch}.{batch_in_epoch}.pth')
         torch.save(
             decoder.state_dict(),
-            snapshots_path / f'decoder.{epoch}.{batch_in_epoch}.pth')
+            config['snapshots_path'] / f'decoder.{epoch}.{batch_in_epoch}.pth')
         torch.save(
             optimizer.state_dict(),
-            snapshots_path / f'optimizer.{epoch}.{batch_in_epoch}.pth')
+            config['snapshots_path'] / f'optimizer.{epoch}.{batch_in_epoch}.pth')
+
+    return batch, epoch
 
 
 if __name__ == '__main__':
@@ -578,42 +594,15 @@ if __name__ == '__main__':
         model = DistributedDataParallel(
             model, device_ids=[rank], output_device=rank)
 
-    with tensorboard.SummaryWriter(log_dir=config['tensorboard_path']) as writer:
+    with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
         if batch_in_epoch == 0:
-            # Prepare the validation data loader. Note that this data loader
-            # must iterate the validation data set only once.
-            validation_iterator_adaptor = lambda fp: IteratorAdaptor(
-                fp, config['num_dimensions'], config['dtype'])
-            validation_dataset = Dataset(
-                config['validation_data'], validation_iterator_adaptor)
-            validation_data_loader = DataLoader(
-                validation_dataset, batch_size=config['validation_batch_size'],
-                num_workers=config['num_workers'], pin_memory=True,
-                drop_last=is_multiprocess)
-
-            validation_loss = _validate(
-                validation_data_loader, model, config['device'],
-                is_multiprocess, rank)
-
+            validation_loss = _validate(config, model, is_multiprocess, rank)
             if is_main_process:
                 writer.add_scalar(
                     'Validation epoch loss', validation_loss, epoch)
 
         while True:
-            # Prepare the training data loader. Note that this data loader must
-            # iterate the training data set only once.
-            training_iterator_adaptor = lambda fp: IteratorAdaptor(
-                fp, config['num_dimensions'], config['dtype'])
-            training_dataset = Dataset(
-                config['training_data'], training_iterator_adaptor)
-            training_data_loader = DataLoader(
-                training_dataset, batch_size=config['training_batch_size'],
-                num_workers=config['num_workers'], pin_memory=True,
-                drop_last=is_multiprocess)
-
-            _training_epoch(
-                training_data_loader, model, optimizer, config['device'],
-                writer, batch, epoch, batch_in_epoch,
-                config['gradient_accumulation_steps'],
-                config['snapshot_interval'], is_main_process, is_multiprocess,
-                rank, config['snapshots_path'])
+            batch, epoch = _training_epoch(
+                config, model, optimizer, writer, batch, epoch, batch_in_epoch,
+                is_main_process, is_multiprocess, rank)
+            batch_in_epoch = 0
