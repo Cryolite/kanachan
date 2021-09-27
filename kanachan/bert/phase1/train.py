@@ -179,12 +179,12 @@ def _training_epoch(
             data = {'training_batch_size': batch_size, 'batch': batch}
             json.dump(data, f, separators=(',', ':'))
 
+    epoch += 1
+    batch_in_epoch = 0
+
     validation_loss = _validate(config, model, is_multiprocess, rank)
     if is_main_process:
         writer.add_scalar('Validation epoch loss', validation_loss, epoch)
-
-    epoch += 1
-    batch_in_epoch = 0
 
     if is_main_process:
         config['snapshots_path'].mkdir(parents=False, exist_ok=True)
