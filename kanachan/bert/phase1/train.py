@@ -15,7 +15,7 @@ from torch import backends
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
-from torch.distributed import init_process_group
+from torch.distributed import (init_process_group, all_reduce)
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.tensorboard.writer import SummaryWriter
 from kanachan import common
@@ -66,6 +66,9 @@ def _validate(
             loss = loss_function(prediction, annotation[-1])
             if math.isnan(loss.item()):
                 raise RuntimeError('Validation loss becomes NaN.')
+            if is_multiprocess:
+                all_reduce(loss)
+                loss /= int(os.environ['LOCAL_WORLD_SIZE'])
             validation_loss += loss.item()
 
             batch_in_epoch += 1
@@ -102,7 +105,9 @@ def _training_epoch(
 
     training_loss_file_path \
         = config['snapshots_path'] / f'training_loss.{epoch}.{batch_in_epoch}.txt'
-    if training_loss_file_path.exists():
+    if batch_in_epoch > 0:
+        if not training_loss_file_path.exists():
+            raise RuntimeError(f'{training_loss_file_path}: does not exist')
         with open(training_loss_file_path) as f:
             training_loss = float(f.read())
     else:
@@ -133,7 +138,11 @@ def _training_epoch(
         if math.isnan(loss.item()):
             raise RuntimeError('Training loss becomes NaN.')
 
-        batch_loss = loss.item()
+        batch_loss = loss
+        if is_multiprocess:
+            all_reduce(batch_loss)
+            batch_loss /= int(os.environ['LOCAL_WORLD_SIZE'])
+        batch_loss = batch_loss.item()
         training_loss += batch_loss
 
         loss = loss / config['gradient_accumulation_steps']
