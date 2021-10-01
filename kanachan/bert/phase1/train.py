@@ -185,7 +185,10 @@ def _training_epoch(
     if is_main_process:
         config['snapshots_path'].mkdir(parents=False, exist_ok=True)
         with open(config['snapshots_path'] / 'batch.json', 'w') as f:
-            data = {'training_batch_size': batch_size, 'batch': batch}
+            data = {
+                'training_batch_size': config['training_batch_size'],
+                'batch': batch
+            }
             json.dump(data, f, separators=(',', ':'))
 
     epoch += 1
