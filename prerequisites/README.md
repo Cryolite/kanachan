@@ -4,5 +4,5 @@
 
 ```bash
 kanachan$ cd prerequisites
-kanachan/prerequisites$ docker build .
+kanachan/prerequisites$ docker build --pull -t cryolite/kanachan.prerequisites .
 ```
