@@ -1,5 +1,6 @@
-.dockerignore
-/.git/
-Dockerfile
-/prerequisites/
-/.local/
+/.git
+/.local
+/kanachan.egg-info
+/.dockerignore
+/prerequisites
+/annotate/Dockerfile

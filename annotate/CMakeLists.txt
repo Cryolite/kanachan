@@ -11,7 +11,7 @@ target_link_libraries(kanachan
   Boost::stacktrace_backtrace
   Boost::headers)
 
-add_executable(convert
-  convert.cpp)
-target_link_libraries(convert
+add_executable(annotate
+  main.cpp)
+target_link_libraries(annotate
   PRIVATE kanachan)

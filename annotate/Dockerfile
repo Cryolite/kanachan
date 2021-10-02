@@ -1,6 +1,6 @@
-FROM kanachan-prerequisites
+FROM cryolite/kanachan.prerequisites
 
-ARG CMAKE_BUILD_TYPE=Debug
+ARG CMAKE_BUILD_TYPE=Release
 
 COPY --chown=ubuntu . /opt/kanachan
 
@@ -8,7 +8,7 @@ USER ubuntu
 
 WORKDIR /opt/kanachan
 
-RUN (cd src && protoc -I. --cpp_out=. mahjongsoul.proto) && \
+RUN (cd annotate && protoc -I. --cpp_out=. mahjongsoul.proto) && \
     mkdir build && \
     cd build && \
     cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
@@ -16,3 +16,5 @@ RUN (cd src && protoc -I. --cpp_out=. mahjongsoul.proto) && \
           -DCMAKE_CXX_COMPILER=/usr/local/bin/g++ \
           .. && \
     VERBOSE=1 make
+
+ENTRYPOINT ["build/annotate/annotate", "/data"]
