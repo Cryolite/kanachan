@@ -47,24 +47,7 @@ Make various prerequisite packages and tools available for use in [annotate](#an
 
 ### [annotate](annotate)
 
-A C++ program that extracts all the *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's action and round's/game's final results into annotations. The output of the program is text, where each line represents the annotation of a decision-making point. The format of the annotation (each line of the output) is specified in the [Annotation Specification](#annotation-specification) section.
-
-A *decision-making point* is defined by a point in a game at which a player is forced to choose an action among multiple options. Possible points and actions are enumerated as follows:
-
-* Immediately after a self-draw (zimo, 自摸):
-  * which tile in their hand to discard if not in riichi,
-  * whether or not to declare riichi if possible,
-  * whether or not to declare to win (zimo hu, 自摸和) if possible,
-  * whether or not to declare a closed kong (an gang, 暗槓) if possible,
-  * whether or not to declare a open kong (jia gang, 加槓) if possible, and
-  * whether or not to declare no game (jiu zhong jiu pai, 九種九牌) if possible.
-* Immediately after other player's discard:
-  * whether or not to declare chi if possible,
-  * whether or not to declare pon (peng, ポン, 碰) if possible,
-  * whether or not to declare kong (da ming gang, 大明槓) if possible, and
-  * whether or not to declare to win (rong, 栄和) if possible.
-* Immediately after other player's kong:
-  * whether or not declare to win (qiang gang, 槍槓) if possible.
+A C++ program that extracts almost all the *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's action and round's/game's final results into annotations suitable to learning.
 
 ### [kanachan](kanachan)
 
