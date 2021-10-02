@@ -41,6 +41,10 @@ The idea behind this project is to learn mappings from action selections to thes
 
 ## Components
 
+### [prerequisites](prerequisites) (For developers only)
+
+Make various prerequisite packages and tools available for use in [annotate](#annotate). This component is built and available as a [public Docker image](https://hub.docker.com/r/cryolite/kanachan.prerequisites), and implicitly used by annotate. Therefore, there is no need for non-developers to build or directly use this component.
+
 ### [annotate](annotate)
 
 A C++ program that extracts all the *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's action and round's/game's final results into annotations. The output of the program is text, where each line represents the annotation of a decision-making point. The format of the annotation (each line of the output) is specified in the [Annotation Specification](#annotation-specification) section.
