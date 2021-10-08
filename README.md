@@ -3,13 +3,19 @@
 # kanachan
 A Mahjong AI that supports a variant of rules of 4-player Japanese Riichi Mahjong that is adopted in standard games in Mahjong Soul (雀魂).
 
+## What This Repository Provides and What It Does Not
+
+This repository provides an annotation tool for game records of Mahjong Soul, and programs training some types of Mahjong AI models. However, this repository does not provide any crawler for game records of Mahjong Soul, any training data, nor any trained models. Therefore, users are assumed to prepare their own training data and computation resources.
+
+The first thing users should do in order to use this repository is to collect game records of Mahjong Soul. This can be done by capturing WebSocket messages exchanged with the Mahjong Soul's API server, using either of network sniffering tools including [mitmproxy](https://mitmproxy.org/) and [Wireshark](https://www.wireshark.org/), browser extensions, or others. Again, this repository does not include such a program. Therefore, please look for one on code hosting services including GitHub, or implement one yourself.
+
 ## Goal of This Project
 
 The goal of this project is to create a Mahjong AI for a variant of rules of 4-player Japanese Riichi Mahjong that can beat existing top-tier Mahjong AIs, including [NAGA](https://dmv.nico/ja/articles/mahjong_ai_naga/) and [Suphx](https://arxiv.org/abs/2003.13590), and even top professional human players.
 
-This project is an individual one by myself. This is in contrast to some of the top mahjong AI projects today, which are run by corporations. This project is also intended to show the world that top-class mahjong AI can be built by individual projects.
+This project is a personal one by myself. This is in contrast to some of the top mahjong AI projects today, which are run by corporations. This project is also intended to show the world that top-class mahjong AI can be built by personal projects.
 
-Currently, Japanese chess (Shogi, 将棋) AI has been already considered to be far superior to the level of top human professionals. I believe that the driving force behind this situation in Japanese chess is the fierce competition among various Shogi AI by individual projects. I expect for this project to be a pioneer to cause such situation in the field of mahjong AI, too.
+Currently, Japanese chess (Shogi, 将棋) AI has been already considered to be far superior to the level of top human professionals. I believe that the driving force behind this situation in Japanese chess is the fierce competition among various Shogi AI by personal projects. I expect for this project to be a pioneer to cause such situation in the field of mahjong AI, too.
 
 ## Key Features of This Project
 
@@ -23,21 +29,21 @@ This critical difference in data volume will allow us to use models that are ord
 
 ### No Human-crafted Features
 
-The inputs to models in this project, the features in other words, are almost devoid of processing based on human experience and intuition about Mahjong. All tiles are represented as mere tokens, which are indexes to the corresponding embeddings. The token representing the 1 Circle (一筒) tile is not directly associated with the number "1", nor it does indicate one of Circle tiles. The tokens that represent the 1 Circle tile in one's hand and ones that represent the 1 Circle tile in their discarded tiles (河) are not directly related at all. There is no feature that directly represents the relationship between the dora-indicating tile (ドラ表示牌) and the dora (ドラ) tile. There is no feature that represents the visible-to-player number of tiles of a certain type. While there are a total of 90 types of chows (chi, チー, 吃) in the standard rule of Mahjong Soul, each chi is represented by only one of completely independent 90 tokens... and so on.
+The inputs to models in this project, the features in other words, are almost devoid of processing based on human experience and intuition about Mahjong. All tiles are represented as mere tokens, which are indexes to the corresponding embeddings. The token representing the 1 Circle (一筒) tile is not directly associated with the number "1", nor it does indicate one of Circle tiles. The tokens that represent the 1 Circle tile in one's hand and ones that represent the 1 Circle tile in their discarded tiles (河) are not directly related at all. There is no feature that directly represents the relationship between the dora-indicating tile (ドラ表示牌) and the dora (ドラ) tile. There is no feature that represents the visible-to-player number of tiles of a certain type. While there are a total of 90 types of chows (chi, チー, 吃) in the standard rule of Mahjong Soul, each chow is represented by only one of completely independent 90 tokens... and so on.
 
-The situation at a given time in a game is represented very simply as follows. Aspects of game situation that have nothing to do with the order in which the game is played, such as the game wind (chang, 場), the round number (ju, 局), the dora tiles, the hand tiles, etc., are represented as a set of above-mentioned tokens. The discarded tiles (打牌) and the meldings (fulu, 副露) played by each player are represented as a sequence of above-mentioned tokens representing the order in which they occur. The number of points, the number of deposits, and other numerically meaningful features are represented as numbers themselves.
+The situation at a given time in a game is represented very simply as follows. Aspects of game situation that have nothing to do with the order in which the game is played, such as the game wind (chang, 場), the round number (ju, 局), the dora tiles, the hand tiles, etc., are represented as a set of above-mentioned tokens. The discarded tiles (打牌) and the meldings (fulu, 副露) played by each player are represented as a sequence of above-mentioned tokens representing the order in which they occur. The number of points, the number of riichi deposits, and other numerically meaningful features are represented as numbers themselves.
 
 To be more specific, see [Annotation Specification](#annotation-specification) section.
 
 Some readers may be seriously wondering whether such feature design is really capable of proper learning. Don't worry. Even in the very early stages of learning, the behavior of the model trained with the above-mentioned feature design already shows that it has acquired basic concepts of Mahjong. It seems to acquire concepts including dora, the red tiles, the Dragon Tiles (箭牌), the game wind tile (圏風牌), the player's wind tile (門風牌), 断幺九, melding (鳴き) for fans (役) including 断幺九, 三色同順, 一気通貫, 混全帯么九, and 対々和, value of 混一色 and 清一色, merely formal ready hands (形式聴牌), getting out of the game, 現物 (gen-butsu, the concept that tiles discarded after a riichi is absolutely safe against that riichi), 筋 (suji, the concept that, for example, if 5s is discarded after a riichi, 2s and 8s are relatively safe against that riichi), Liuju Manguan (流し満貫)... and so on.
 
-However, it goes without saying that such an end-to-end feature design requires large data sets and highly expressive models to function properly. It is a fundamental trade-off in machine learning whether to use human wisdom to devise appropriate feature designs, or to prepare large datasets and highly expressive models and leave them to large-scale computational resources. This project chooses the latter, because the essence of the success of deep learning is the liberation from feature engineering, and because I have been engaged in machine learning since the early 2000s and had struggled with feature engineering in those days.
+However, it goes without saying that such an end-to-end feature design requires large data sets and highly expressive models to function properly. It is a fundamental trade-off in machine learning whether to use human wisdom to devise appropriate feature designs, or to prepare large datasets and highly expressive models and leave them to large-scale computational resources. This project chooses the latter, because the essence of the success of deep learning is the liberation from feature engineering, and because I have been engaged in machine learning since the early 2000s and struggled with feature engineering in those days.
 
 ### Step-by-step Curriculum Fine-tuning
 
-There are various objectives in Mahjong AIs, include imitation of human behavior, maximization of round delta of the score, higher final ranking, and maximization of delta of the grading point (段位戦ポイント). Since these objectives become more abstract and comprehensive in this order, the latter learning we move to, the more difficult it becomes to learn.
+There are various objectives in Mahjong AIs, including imitation of human behavior, maximization of round delta of the score, higher final ranking, and maximization of delta of the grading point (段位戦ポイント). Since these objectives become more abstract and comprehensive in this order, the latter learning we move to, the more difficult it becomes to learn.
 
-The idea behind this project is to learn mappings from action selections to these objectives step by step, from the easiest to the hardest. This would be equivalent to [Curriculum Learning](https://dl.acm.org/doi/10.1145/1553374.1553380). Moreover, when a mapping for one objective has been learned and then start learning a mapping for one more harder objective, the *encoder part* of the model trained in the former step is reused in the training of the latter mapping, and only the *decoder part* of the model is replaced to tailor to the new harder objective. The information learned in the former step is stored in the encoder part and transferred to the latter step. By doing so, it is intended that universal knowledge about Mahjong that is independent of objectives will be retained in the encoder part. In this project, this idea is called *curriculum fine-tuning*.
+The idea behind this project is to learn mappings from action selections to these objectives step by step, from the easiest to the hardest. This would be equivalent to [Curriculum Learning](https://dl.acm.org/doi/10.1145/1553374.1553380). Moreover, when a mapping for one objective has been learned and then starting learning a mapping for one more harder objective, the *encoder part* of the model trained in the former step is reused in the training of the latter mapping, and only the *decoder part* of the model is replaced to tailor to the new harder objective. The information learned in the former step is stored in the encoder part and transferred to the latter step. By doing so, it is intended that universal knowledge about Mahjong that is independent of objectives will be retained in the encoder part. In this project, this idea is called *curriculum fine-tuning*.
 
 ## Components
 
@@ -164,29 +170,30 @@ The 0th field is the game UUID, which uniquely identifies the game in which the 
 
 The 1st field consists of *sparse features*. All the elements in this field are an non-negative integer. These integers are used as indices for embeddings, which are finally used as a part of inputs to learning models. The meaning of each integer is as follows.
 
-| Title                              | Value                                                | Note                        |
-|------------------------------------|------------------------------------------------------|-----------------------------|
+| Title                              | Value                                                | Note                            |
+|------------------------------------|------------------------------------------------------|---------------------------------|
 | Room                               | `0`: Bronze Room (銅の間)<br/>`1`: Silver Room (銀の間)<br/>`2`: Gold Room (金の間)<br/>`3`: Jade Room (玉の間)<br/>`4`: Throne Room (王座の間) ||
 | Game Style                         | `5`: quarter-length game (dong feng zhan, 東風戦)<br/>`6`: half-length game (ban zhuang zhan, 半荘戦) ||
-| Seat                               | `7` ~ `10`                                           | `7 + seat`                  |
-| Game Wind (Chang, 場)              | `11`: East (東場)<br/>`12`: South (南場)<br/>`13`: West (西場) |                   |
-| Round (Ju, 局)                     | `14` ~ `17`                                          | `14 + round`                |
-| Dora Indicator                     | `18` ~ `54`                                          | `18 + tile`                 |
-| 2nd Dora Indicator                 | `55` ~ `91`                                          | optional, `55 + tile`       |
-| 3rd Dora Indicator                 | `92` ~ `128`                                         | optional, `92 + tile`       |
-| 4th Dora Indicator                 | `129` ~ `165`                                        | optional, `129 + tile`      |
-| 5th Dora Indicator                 | `166` ~ `202`                                        | optional, `166 + tile`      |
-| # of Left Tiles to Draw            | `203` ~ `272`                                        | `# of left tiles = 272 - x` |
-| Grade of 0th Seat (起家段位)       | `273` ~ `288`                                        | `273 + grade`               |
-| Rank of 0th Seat (起家順位)        | `289` ~ `292`                                        | `289 + rank`                |
-| Grade of 1st Seat (起家の下家段位) | `293` ~ `308`                                        | `293 + grade`               |
-| Rank of 1st Seat (起家の下家順位)  | `309` ~ `312`                                        | `309 + rank`                |
-| Grade of 2nd Seat (起家の対面段位) | `313` ~ `328`                                        | `313 + grade`               |
-| Rank of 2nd Seat (起家の対面順位)  | `329` ~ `332`                                        | `329 + rank`                |
-| Grade of 3rd Seat (起家の上家段位) | `333` ~ `348`                                        | `333 + grade`               |
-| Rank of 3rd Seat (起家の上家順位)  | `349` ~ `352`                                        | `349 + rank`                |
-| Hand (shou pai, 手牌)              | `353` ~ `488`                                        | combination of tiles        |
-| Drawn Tile (zimo pai, 自摸牌)      | `489` ~ `525`                                        | optional, `489 + tile`      |
+| Seat                               | `7` ~ `10`                                           | `7 + seat`                      |
+| Game Wind (Chang, 場)              | `11`: East (東場)<br/>`12`: South (南場)<br/>`13`: West (西場) |                       |
+| Round (Ju, 局)                     | `14` ~ `17`                                          | `14 + round`                    |
+| Dora Indicator                     | `18` ~ `54`                                          | `18 + tile`                     |
+| 2nd Dora Indicator                 | `55` ~ `91`                                          | optional, `55 + tile`           |
+| 3rd Dora Indicator                 | `92` ~ `128`                                         | optional, `92 + tile`           |
+| 4th Dora Indicator                 | `129` ~ `165`                                        | optional, `129 + tile`          |
+| 5th Dora Indicator                 | `166` ~ `202`                                        | optional, `166 + tile`          |
+| # of Left Tiles to Draw            | `203` ~ `272`                                        | `# of left tiles = 272 - x`     |
+| Grade of 0th Seat (起家段位)       | `273` ~ `288`                                        | `273 + grade`                   |
+| Rank of 0th Seat (起家順位)        | `289` ~ `292`                                        | `289 + rank`                    |
+| Grade of 1st Seat (起家の下家段位) | `293` ~ `308`                                        | `293 + grade`                   |
+| Rank of 1st Seat (起家の下家順位)  | `309` ~ `312`                                        | `309 + rank`                    |
+| Grade of 2nd Seat (起家の対面段位) | `313` ~ `328`                                        | `313 + grade`                   |
+| Rank of 2nd Seat (起家の対面順位)  | `329` ~ `332`                                        | `329 + rank`                    |
+| Grade of 3rd Seat (起家の上家段位) | `333` ~ `348`                                        | `333 + grade`                   |
+| Rank of 3rd Seat (起家の上家順位)  | `349` ~ `352`                                        | `349 + rank`                    |
+| Hand (shou pai, 手牌)              | `353` ~ `488`                                        | combination of tiles            |
+| Drawn Tile (zimo pai, 自摸牌)      | `489` ~ `525`                                        | optional, `489 + tile`          |
+| &lt;PADDING&gt;                    | `526`                                                | (does not appear in annotation) |
 
 ### 2nd Field: Numeric Features
 
@@ -203,17 +210,18 @@ The 2nd field consists of *numeric features*. This field consists of exactly 6 e
 
 ### 3rd Field: Progression Features
 
-The 3rd field consists of *progression features*. This field represents a sequence of non-negative integers. Each integer stands for some event in a round of a game. The order of the integers in the sequence directly represents the order in which the events occur in the round of the game. These integers are used as indices for embeddings, which are finally used as a part of inputs to learning models. Note, however, that positional encoding must be applied to the embeddings if they are to be used as a part of inputs to models such as ones using transformer, which erase the positional/order information of the input embeddings. The meaning of each integer is as follows.
+The 3rd field consists of *progression features*. This field represents a sequence of non-negative integers. Each integer stands for some event in a round of a game. The order of the integers in the sequence directly represents the order in which the events occurred until the decision-making point. These integers are used as indices for embeddings, which are finally used as a part of inputs to learning models. Note, however, that positional encoding must be applied to the embeddings if they are to be used as a part of inputs to models such as ones using transformer, which erase the positional/order information of the input embeddings. The meaning of each integer is as follows.
 
 | Title                  | Values          | Note                                      |
 |------------------------|-----------------|-------------------------------------------|
 | Begging of Round       | `0`             | Always starts with this feature           |
 | Discard of Tile (打牌) | `5` ~ `596`     | `5 + seat * 148 + tile * 4 + a * 2 + b`, where;<br/>`a = 0`: not moqi (手出し)<br/>`a = 1`: moqi (自摸切り)<br/>`b = 0`: w/o riichi declaration<br/>`b = 1`: w/ riichi declaration |
-| Chow (Chi, チー)       | `597` ~ `956`   | `597 + seat * 90 + chi`                   |
-| Pon (peng, ポン)       | `957` ~ `1400`  | `957 + seat * 111 + relseat * 37 + tile`  |
+| Chow (Chi, チー, 吃)   | `597` ~ `956`   | `597 + seat * 90 + chi`                   |
+| Pon (peng, ポン, 碰)   | `957` ~ `1400`  | `957 + seat * 111 + relseat * 37 + tile`  |
 | Da Ming Gang (大明槓)  | `1401` ~ `1844` | `1401 + seat * 111 + relseat * 37 + tile` |
 | An Gang (暗槓)         | `1845` ~ `1980` | `1845 + seat * 34 + tile'`                |
 | Jia Gang (加槓)        | `1981` ~ `2128` | `1981 + seat * 37 + tile`                 |
+| &lt;PADDING&gt;        | `2129`          | (does not appear in annotation)           |
 
 ### 4th Field: Possible Actions
 
@@ -227,10 +235,11 @@ The 4th field consists of all the possible actions at that decision-making point
 | Zimo Hu (自摸和)             | `219`         |                                                                           |
 | Jiu Zhong Jiu Pai (九種九牌) | `220`         |                                                                           |
 | Skip                         | `221`         |                                                                           |
-| Chi (チー, 吃)               | `222` ~ `311` | `222 + chi`                                                               |
-| Peng (ポン)                  | `312` ~ `422` | `312 + relseat * 37 + tile`                                               |
-| Da Ming Gang                 | `423` ~ `533` | Represented by the discarded tile.<br/>`423 + relseat * 37 + tile`        |
+| Chow (chi, チー, 吃)         | `222` ~ `311` | `222 + chi`                                                               |
+| Pon, (peng, ポン, 碰)        | `312` ~ `422` | `312 + relseat * 37 + tile`                                               |
+| Da Ming Gang (大明槓)        | `423` ~ `533` | Represented by the discarded tile.<br/>`423 + relseat * 37 + tile`        |
 | Rong (栄和)                  | `534` ~ `536` | `534`: from xia jia (下家から)<br/>`535`: from dui mian (対面から)<br/>`536`: from shang Jia (上家から) |
+| &lt;PADDING&gt;              | `537`         | (does not appear in annotation)                                           |
 
 ### 5th Field: Actual Action
 
