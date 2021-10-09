@@ -3,11 +3,15 @@
 # kanachan
 A Mahjong AI that supports a variant of rules of 4-player Japanese Riichi Mahjong that is adopted in standard games in Mahjong Soul (雀魂).
 
-## What This Repository Provides and What It Does Not
+## Brief Guide
 
 This repository provides an annotation tool for game records of Mahjong Soul, and programs training some types of Mahjong AI models. However, this repository does not provide any crawler for game records of Mahjong Soul, any training data, nor any trained models. Therefore, users are assumed to prepare their own training data and computation resources.
 
-The first thing users should do in order to use this repository is to collect game records of Mahjong Soul. This can be done by capturing WebSocket messages exchanged with the Mahjong Soul's API server, using either of network sniffering tools including [mitmproxy](https://mitmproxy.org/) and [Wireshark](https://www.wireshark.org/), browser extensions, or others. Again, this repository does not include such a program. Therefore, please look for one on code hosting services including GitHub, or implement one yourself.
+The first thing users should do in order to use this repository is to collect game records of Mahjong Soul. The format of game records must be the same as the WebSocket response message that is returned from the Mahjong Soul API server when you hit a URL of the format `https://game.mahjongsoul.com/?paipu=YYMMDD-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`. Data in this format can be obtained by capturing WebSocket messages exchanged with the Mahjong Soul's API server, using a network sniffering tools such as [mitmproxy](https://mitmproxy.org/) or [Wireshark](https://www.wireshark.org/), browser extensions, or other tools. Again, this repository does not include such a tool. Therefore, please look for one on code hosting services including GitHub, or implement one yourself.
+
+After collecting game records, the next step is to use [annotate](annotate) to convert the game records into annotations in a format suitable for learning.
+
+Finally, the trained model can be obtained by running the training programs under the [kanachan](kanachan) Python module with the annotations as input.
 
 ## Goal of This Project
 
