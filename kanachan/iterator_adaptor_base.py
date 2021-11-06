@@ -12,10 +12,9 @@ from kanachan.constants import (
 
 
 class IteratorAdaptorBase(object):
-    def __init__(self, path: pathlib.Path, num_dimensions: int, dtype) -> None:
+    def __init__(self, path: pathlib.Path, dimension: int) -> None:
         self.__fp = open(path)
-        self.__num_dimensions = num_dimensions
-        self.__dtype = dtype
+        self.__dimension = dimension
 
         if get_worker_info() is not None:
             try:
@@ -46,10 +45,10 @@ class IteratorAdaptorBase(object):
         if len(numeric) != NUM_NUMERIC_FEATURES:
             raise RuntimeError(uuid)
         numeric[2:] = [x / 10000.0 for x in numeric[2:]]
-        numeric = torch.tensor(numeric, device='cpu', dtype=self.__dtype)
+        numeric = torch.tensor(numeric, device='cpu', dtype=torch.float32)
         numeric = torch.unsqueeze(numeric, 1)
         numeric = torch.nn.functional.pad(
-            numeric, (0, self.__num_dimensions - 1))
+            numeric, (0, self.__dimension - 1))
 
         positional = json.loads('[' + positional + ']')
         if len(positional) > MAX_LENGTH_OF_POSITIONAL_FEATURES:

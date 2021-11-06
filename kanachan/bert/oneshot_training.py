@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 import logging
 import json
 import sys
-from typing import Optional
+from typing import (Optional, Type,)
 import torch
 from torch import backends
 from torch import nn
@@ -18,93 +18,33 @@ from torch.utils.data import DataLoader
 from torch.distributed import (init_process_group, all_reduce,)
 from torch.utils.tensorboard.writer import SummaryWriter
 from kanachan import common
+from kanachan.iterator_adaptor_base import IteratorAdaptorBase
 from kanachan.common import Dataset
 from kanachan.bert.encoder import Encoder
-from kanachan.bert.phase0.decoder import Decoder
-from kanachan.bert.phase0.model import Model
-from kanachan.bert.phase0.iterator_adaptor import IteratorAdaptor
 from apex import amp
 from apex.parallel import (DistributedDataParallel, convert_syncbn_model,)
 from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 
 
-def _validate(
-        *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
-        device: str, validation_data: Path, num_workers: int, dimension: int,
-        validation_batch_size: int, model: Model, **kwargs) -> float:
-    start_time = datetime.datetime.now()
-
-    # Prepare the validation data loader. Note that this data loader must
-    # iterate the validation data set only once.
-    iterator_adaptor = lambda path: IteratorAdaptor(path, dimension)
-    dataset = Dataset(validation_data, iterator_adaptor)
-    data_loader = DataLoader(
-        dataset, batch_size=validation_batch_size, num_workers=num_workers,
-        pin_memory=True, drop_last=is_multiprocess)
-
-    loss_function = nn.CrossEntropyLoss()
-    validation_loss = 0.0
-
-    for batch_count, annotation in enumerate(data_loader):
-        batch_size = len(annotation[0])
-
-        if device != 'cpu':
-            if is_multiprocess:
-                assert(world_size is not None)
-                assert(rank is not None)
-                if batch_size % world_size != 0:
-                    raise RuntimeError(
-                        'Batch size must be divisible by the world size.')
-                first = (batch_size // world_size) * rank
-                last = (batch_size // world_size) * (rank + 1)
-                annotation = tuple(x[first:last].cuda() for x in annotation)
-            else:
-                annotation = tuple(x.cuda() for x in annotation)
-
-        model.eval()
-        try:
-            prediction = model(annotation[:-1])
-            loss = loss_function(prediction, annotation[-1])
-        except:
-            model.train()
-            raise
-        model.train()
-        if math.isnan(loss.item()):
-            raise RuntimeError('Validation loss becomes NaN.')
-        if is_multiprocess:
-            all_reduce(loss)
-            loss /= world_size
-        validation_loss += loss.item()
-
-    validation_loss /= batch_count
-
-    elapsed_time = datetime.datetime.now() - start_time
-    logging.info(f'Validation has finished (elapsed time = {elapsed_time}).')
-    logging.info(f'Validation loss = {validation_loss}')
-
-    return validation_loss
-
-
-def _training_epoch(
-        config: object, *, is_multiprocess: bool, world_size: Optional[int],
+def _training(
+        *, is_multiprocess: bool, world_size: Optional[int],
         rank: Optional[int], is_main_process: bool, training_data: Path,
-        num_workers: int, device: str, dimension: int, training_batch_size: int,
-        gradient_accumulation_steps: int, gradient_max_norm: float,
-        encoder: Encoder, decoder: Decoder, model: Model, optimizer: Optimizer,
-        snapshots_path: Path, num_epoch_digits: int, epoch: int,
-        snapshot_interval: int, num_samples: int, num_samples_to_skip: int,
-        writer: SummaryWriter, **kwargs) -> int:
+        num_workers: int, device: str, dimension: int, encoder: Encoder,
+        decoder: nn.Module, model: nn.Module, training_batch_size: int,
+        gradient_accumulation_steps: int, max_gradient_norm: float,
+        optimizer: Optimizer, iterator_adaptor_type: Type[IteratorAdaptorBase],
+        loss_function, snapshots_path: Path, num_snapshot_index_digits: int,
+        snapshot_index: int, snapshot_interval: int, num_samples: int,
+        num_samples_to_skip: int, writer: SummaryWriter, **kwargs) -> int:
     start_time = datetime.datetime.now()
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: IteratorAdaptor(path, dimension)
+    iterator_adaptor = lambda path: iterator_adaptor_type(path, dimension)
     dataset = Dataset(training_data, iterator_adaptor)
     data_loader = DataLoader(
         dataset, batch_size=training_batch_size, num_workers=num_workers,
         pin_memory=True, drop_last=is_multiprocess)
-
-    loss_function = nn.CrossEntropyLoss()
 
     last_snapshot = None
     if snapshot_interval > 0:
@@ -173,8 +113,8 @@ def _training_epoch(
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
             snapshots_path.mkdir(parents=False, exist_ok=True)
-            epoch_str = str(epoch).zfill(num_epoch_digits)
-            infix = f'.{epoch_str}.{num_samples}'
+            index = str(snapshot_index).zfill(num_snapshot_index_digits)
+            infix = f'.{index}.{num_samples}'
             torch.save(
                 encoder.state_dict(), snapshots_path / f'encoder{infix}.pth')
             torch.save(
@@ -193,42 +133,19 @@ def _training_epoch(
         batch_count += 1
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info(f'Training epoch has finished (elapsed time = {elapsed_time}).')
-
-    validation_loss = _validate(**config)
-    if is_main_process:
-        writer.add_scalar('Validation epoch loss', validation_loss, epoch + 1)
-
-    if is_main_process:
-        snapshots_path.mkdir(parents=False, exist_ok=True)
-        epoch_str = str(epoch + 1).zfill(num_epoch_digits)
-        torch.save(
-            encoder.state_dict(), snapshots_path / f'encoder.{epoch_str}.pth')
-        torch.save(
-            decoder.state_dict(), snapshots_path / f'decoder.{epoch_str}.pth')
-        optimizer_state = {
-            'optimizer': optimizer.state_dict(),
-            'amp': amp.state_dict(),
-        }
-        torch.save(
-            optimizer_state, snapshots_path / f'optimizer.{epoch_str}.pth')
-        with open(snapshots_path / f'progress.{epoch_str}.pth', 'w') as f:
-            progress_data = {'num_samples': num_samples}
-            json.dump(progress_data, f, separators=(',', ':'))
+    logging.info(f'Training has finished (elapsed time = {elapsed_time}).')
 
     return num_samples
 
 
-def main()
-    ap = ArgumentParser(
-        description='BERT training phase1 - imitating human players.')
+def main(*, program_description: str, decoder_type: Type[nn.Module],
+         model_type: Type[nn.Module], default_optimizer: str,
+         iterator_adaptor_type: Type[IteratorAdaptorBase], loss_function):
+    ap = ArgumentParser(description=program_description)
     ap_data = ap.add_argument_group(title='Data')
     ap_data.add_argument(
         '--training-data', type=Path, required=True,
         help='path to training data', metavar='PATH')
-    ap_data.add_argument(
-        '--validation-data', type=Path, required=True,
-        help='path to validation data', metavar='PATH')
     ap_data.add_argument(
         '--num-workers', default=2, type=int,
         help='# of worker processes in data loading (defaults to `2`)',
@@ -275,12 +192,9 @@ def main()
         '--training-batch-size', type=int, required=True,
         help='training batch size', metavar='N')
     ap_training.add_argument(
-        '--validation-batch-size', type=int, required=True,
-        help='validation batch size', metavar='N')
-    ap_training.add_argument(
-        '--optimizer', default='lamb',
+        '--optimizer', default=default_optimizer,
         choices=('sgd', 'adam', 'radam', 'lamb',),
-        help='optimizer (defaults to `lamb`)')
+        help=f'optimizer (defaults to `{default_optimizer}`)')
     ap_training.add_argument(
         '--learning-rate', type=float,
         help='learning rate (defaults to `0.001` for `adam`, `radam`, and `lamb`, `0.1` for `sgd`)',
@@ -312,8 +226,8 @@ def main()
         '--output-prefix', type=Path, required=True, metavar='PATH')
     ap_output.add_argument('--experiment-name', metavar='NAME')
     ap_output.add_argument(
-        '--num-epoch-digits', default=2, type=int,
-        help='number of digits to index epoch (defaults to `2`)',
+        '--num-snapshot-index-digits', default=2, type=int,
+        help='number of digits to index snapshot files (defaults to `2`)',
         metavar='NDIGITS')
     ap_output.add_argument(
         '--snapshot-interval', default=0, type=int,
@@ -339,8 +253,6 @@ def main()
 
     if not config.training_data.exists():
         raise RuntimeError(f'{config.training_data}: does not exist')
-    if not config.validation_data.exists():
-        raise RuntimeError(f'{config.validation_data}: does not exist')
     if config.num_workers < 0:
         raise RuntimeError(
             f'{config.num_workers}: invalid number of workers')
@@ -414,9 +326,6 @@ def main()
     if config.training_batch_size < 1:
         raise RuntimeError(
             f'{config.training_batch_size}: invalid training batch size')
-    if config.validation_batch_size < 1:
-        raise RuntimeError(
-            f'{config.validation_batch_size}: invalid validation batch size')
 
     if config.optimizer in ('adam', 'radam', 'lamb',):
         if config.learning_rate is None:
@@ -461,16 +370,16 @@ def main()
     snapshots_path = experiment_path / 'snapshots'
     tensorboard_path = experiment_path / 'tensorboard'
 
-    if config.num_epoch_digits < 1:
+    if config.num_snapshot_index_digits < 1:
         raise RuntimeError(
-            f'{config.num_epoch_digits}: invalid number of epoch digits')
+            f'{config.num_snapshot_index_digits}: invalid number of snapshot index digits')
 
     if config.snapshot_interval < 0:
         raise RuntimeError(
             f'{config.snapshot_interval}: invalid snapshot interval')
 
-    epoch = 0
     snapshot_index = 0
+    snapshot_subindex = 0
     num_samples = 0
     num_samples_to_skip = 0
     if config.resume:
@@ -487,18 +396,18 @@ def main()
             if tmp == '':
                 tmp = '0'
             tmp = int(tmp)
-            if tmp > epoch:
-                epoch = tmp
-                snapshot_index = 0
-            if tmp == epoch and m[2] is not None:
+            if tmp > snapshot_index:
+                snapshot_index = tmp
+                snapshot_subindex = 0
+            if tmp == snapshot_index and m[2] is not None:
                 tmp = int(m[2])
-                if tmp > snapshot_index:
-                    snapshot_index = tmp
-        epoch_str = str(epoch).zfill(config.num_epoch_digits)
-        snapshot_index_str = ''
-        if snapshot_index != 0:
-            snapshot_index_str = f'.{snapshot_index}'
-        infix = f'.{epoch_str}{snapshot_index_str}'
+                if tmp > snapshot_subindex:
+                    snapshot_subindex = tmp
+        index = str(snapshot_index).zfill(config.num_snapshot_index_digits)
+        subindex = ''
+        if snapshot_subindex != 0:
+            subindex = f'.{snapshot_subindex}'
+        infix = f'.{index}{subindex}'
         encoder_snapshot_path = snapshots_path / f'encoder{infix}.pth'
         if not encoder_snapshot_path.exists():
             raise RuntimeError(f'{encoder_snapshot_path}: does not exist')
@@ -516,10 +425,10 @@ def main()
             progress_data = json.load(f)
         num_samples = progress_data['num_samples']
 
-        if snapshot_index == 0:
+        if snapshot_subindex == 0:
             num_samples_to_skip = 0
         else:
-            with open(snapshots_path / f'progress.{epoch_str}.json') as f:
+            with open(snapshots_path / f'progress.{index}.json') as f:
                 progress_data = json.load(f)
             num_samples_to_skip = num_samples - progress_data['num_samples']
 
@@ -535,7 +444,6 @@ def main()
         logging.info(f'World size: {world_size}')
         logging.info(f'Process rank: {rank}')
     logging.info(f'Training data: {config.training_data}')
-    logging.info(f'Validation data: {config.validation_data}')
     logging.info(f'# of workers: {config.num_workers}')
     logging.info(f'Device: {device}')
     if backends.cudnn.is_available():
@@ -562,7 +470,6 @@ def main()
     elif config.initial_decoder is not None:
         logging.info(f'Initial decoder: {config.initial_decoder}')
     logging.info(f'Training batch size: {config.training_batch_size}')
-    logging.info(f'Validation batch size: {config.validation_batch_size}')
     logging.info(f'Optimizer: {config.optimizer}')
     logging.info(f'Learning rate: {learning_rate}')
     if config.optimizer == 'sgd':
@@ -589,7 +496,8 @@ def main()
         logging.info(f'# of samples to skip: {num_samples_to_skip}')
     else:
         logging.info(f'Experiment output: {experiment_path}')
-    logging.info(f'# of digits to index epoch: {config.num_epoch_digits}')
+    logging.info(
+        f'# of digits to index snapshot files: {config.num_snapshot_index_digits}')
     if config.snapshot_interval == 0:
         logging.info(f'Snapshot interval: N/A')
     else:
@@ -601,7 +509,6 @@ def main()
         'rank': rank,
         'is_main_process': is_main_process,
         'training_data': config.training_data,
-        'validation_data': config.validation_data,
         'num_workers': config.num_workers,
         'device': device,
         'dimension': config.dimension,
@@ -614,7 +521,6 @@ def main()
         'initial_encoder': config.initial_encoder,
         'initial_decoder': config.initial_decoder,
         'training_batch_size': config.training_batch_size,
-        'validation_batch_size': config.validation_batch_size,
         'optimizer': config.optimizer,
         'learning_rate': learning_rate,
         'epsilon': config.epsilon,
@@ -628,16 +534,16 @@ def main()
         'snapshots_path': snapshots_path,
         'tensorboard_path': tensorboard_path,
         'resume': config.resume,
-        'num_epoch_digits': config.num_epoch_digits,
-        'epoch': epoch,
+        'num_snapshot_index_digits': config.num_snapshot_index_digits,
+        'snapshot_index': snapshot_index,
         'snapshot_interval': config.snapshot_interval,
         'num_samples': num_samples,
         'num_samples_to_skip': num_samples_to_skip,
     }
 
     encoder = Encoder(**config, sparse=False)
-    decoder = Decoder(**config)
-    model = Model(encoder, decoder)
+    decoder = decoder_type(**config)
+    model = model_type(encoder, decoder)
     model.to(device=config['device'], dtype=torch.float32)
 
     if config['optimizer'] == 'sgd':
@@ -702,21 +608,31 @@ def main()
     config['encoder'] = encoder
     config['decoder'] = decoder
     config['model'] = model
+    config['iterator_adaptor_type'] = iterator_adaptor_type
+    config['loss_function'] = loss_function
     config['optimizer'] = optimizer
 
     with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
-        if snapshot_index == 0:
-            validation_loss = _validate(**config)
-            if config['is_main_process']:
-                writer.add_scalar(
-                    'Validation epoch loss', validation_loss, epoch)
+        num_samples = _training(**config, writer=writer)
 
-        while True:
-            config['num_samples'] = _training_epoch(
-                config, **config, writer=writer)
-            config['epoch'] += 1
+    config['snapshot_index'] += 1
 
-
-if __name__ == '__main__':
-    main()
-    sys.exit(0)
+    if is_main_process:
+        config['snapshots_path'].mkdir(parents=False, exist_ok=True)
+        index = str(config['snapshot_index']).zfill(config['num_snapshot_index_digits'])
+        torch.save(
+            encoder.state_dict(),
+            config['snapshots_path'] / f'encoder.{index}.pth')
+        torch.save(
+            decoder.state_dict(),
+            config['snapshots_path'] / f'decoder.{index}.pth')
+        optimizer_state = {
+            'optimizer': optimizer.state_dict(),
+            'amp': amp.state_dict(),
+        }
+        torch.save(
+            optimizer_state,
+            config['snapshots_path'] / f'optimizer.{index}.pth')
+        with open(config['snapshots_path'] / f'progress.{index}.json', 'w') as f:
+            progress_data = {'num_samples': num_samples}
+            json.dump(progress_data, f, separators=(',', ':'))

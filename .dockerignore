@@ -4,3 +4,5 @@
 /.dockerignore
 /prerequisites
 /annotate/Dockerfile
+/kanachan/Dockerfile
+/kanachan/**/__pycache__
