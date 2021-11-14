@@ -43,7 +43,9 @@ kanachan$ docker build -f annotate/Dockerfile -t cryolite/kanachan.annotate .
 Let `/path/to/data` be the path to the directory you have prepared according to the description in the [Data Preparation](#data-preparation) section. The following command line
 
 ```bash
-$ docker run -it -v /path/to/data:/data:ro --rm cryolite/kanachan.annotate
+$ docker run -i -v /path/to/data:/data:ro --rm cryolite/kanachan.annotate
 ```
 
 prints the annotations converted from the game records in `/path/to/data` to the standard output.
+
+Be careful not to specify the `-t` option to the `docker run` command, because the `-t` option will cause the newline code in the standard output of the `docker run` command to be `\r\n` instead of `\n` (cf. https://github.com/moby/moby/issues/8513). However, the training programs will work correctly even if the newline code in the annotation data is `\r\n`.
