@@ -13,23 +13,21 @@ class Encoder(nn.Module):
     def __init__(
             self, *, dimension: int, num_heads: int, dim_feedforward: int,
             num_layers:int, dropout: float, activation_function,
-            sparse: bool, checkpointing: bool, **kwargs) -> None:
+            checkpointing: bool, **kwargs) -> None:
         super(Encoder, self).__init__()
 
         self.__sparse_embedding = nn.Embedding(
             NUM_SPARSE_FEATURES + 1, dimension,
-            padding_idx=NUM_SPARSE_FEATURES, sparse=sparse)
+            padding_idx=NUM_SPARSE_FEATURES)
         self.__sparse_dropout = nn.Dropout(p=dropout)
 
         self.__positional_embedding = PositionalEmbedding(
             NUM_TYPES_OF_POSITIONAL_FEATURES + 1, dimension,
             padding_idx=NUM_TYPES_OF_POSITIONAL_FEATURES,
-            max_length=MAX_LENGTH_OF_POSITIONAL_FEATURES, dropout=dropout,
-            sparse=sparse)
+            max_length=MAX_LENGTH_OF_POSITIONAL_FEATURES, dropout=dropout)
 
         self.__candidates_embedding = nn.Embedding(
-            NUM_ACTIONS + 1, dimension, padding_idx=NUM_ACTIONS,
-            sparse=sparse)
+            NUM_ACTIONS + 1, dimension, padding_idx=NUM_ACTIONS)
         self.__candidates_dropout = nn.Dropout(p=dropout)
 
         encoder_layer = nn.TransformerEncoderLayer(
