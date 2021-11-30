@@ -256,14 +256,14 @@ The 6th field consists of some aspects of the final result of the round and game
 | Element Index  | Explanation                                                                    |
 |----------------|--------------------------------------------------------------------------------|
 | 0              | End-of-round result from the point of view of the player indicated by **Seat**<br/>`0`: 自家自摸和<br/>`1`: 下家自摸和<br/>`2`: 対面自摸和<br/>`3`: 上家自摸和<br/>`4`: 下家からの自家栄和<br/>`5`: 対面からの自家栄和<br/>`6`: 上家からの自家栄和<br/>`7`: 下家への放銃<br/>`8`: 対面への放銃<br/>`9`: 上家への放銃<br/>`10`: 下家へ対面から横移動<br/>`11`: 下家へ上家から横移動<br/>`12`: 対面へ下家から横移動<br/>`13`: 対面へ上家から横移動<br/>`14`: 上家へ下家から横移動<br/>`15`: 上家へ対面から横移動<br/>`16`: 荒牌平局 (不聴)<br/>`17`: 荒牌平局 (聴牌)<br/>`18`: 途中流局|
-| 1              | Round delta of the score of the 0th seat                                       |
-| 2              | Round delta of the score of the 1st seat                                       |
-| 3              | Round delta of the score of the 2nd seat                                       |
-| 4              | Round delta of the score of the 3rd seat                                       |
-| 5              | End-of-game ranking of the 0th seat                                            |
-| 6              | End-of-game ranking of the 1st seat                                            |
-| 7              | End-of-game ranking of the 2nd seat                                            |
-| 8              | End-of-game ranking of the 3rd seat                                            |
+| 1              | Round delta of the score of the player indicated by **Seat**                   |
+| 2              | Round delta of the score of the player right next to **Seat** (Seat の下家)    |
+| 3              | Round delta of the score of the player across from **Seat** (Seat の対面)      |
+| 4              | Round delta of the score of the player left next to **Seat** (Seat の上家)     |
+| 5              | End-of-game ranking of the player indicated by **Seat**                        |
+| 6              | End-of-game ranking of the player right next to **Seat**                       |
+| 7              | End-of-game ranking of the player across from **Seat**                         |
+| 8              | End-of-game ranking of the player left next to **Seat**                        |
 | 9              | End-of-game ranking of the player indicated by **Seat**                        |
 | 10             | End-of-game score of the player indicated by **Seat**                          |
 | 11             | Game delta of grading score of the player indicated by **Seat**                |
