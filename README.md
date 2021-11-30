@@ -247,7 +247,7 @@ The 4th field consists of all the possible actions at that decision-making point
 
 ### 5th Field: Actual Action
 
-The 5th field indicates the actual action chosen by the player at that decision-making point. This field is the index to one of the possible actions enumerated in the 4th field.
+The 5th field indicates the actual action chosen by the player (indicated by **Seat**) at that decision-making point. This field is the index to one of the possible actions enumerated in the 4th field.
 
 ### 6th Field: Results
 
