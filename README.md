@@ -221,11 +221,11 @@ The 3rd field consists of *progression features*. This field represents a sequen
 | Begging of Round       | `0`             | Always starts with this feature           |
 | Discard of Tile (打牌) | `5` ~ `596`     | `5 + seat * 148 + tile * 4 + a * 2 + b`, where;<br/>`a = 0`: not moqi (手出し)<br/>`a = 1`: moqi (自摸切り)<br/>`b = 0`: w/o riichi declaration<br/>`b = 1`: w/ riichi declaration |
 | Chow (Chi, チー, 吃)   | `597` ~ `956`   | `597 + seat * 90 + chi`                   |
-| Pon (peng, ポン, 碰)   | `957` ~ `1400`  | `957 + seat * 111 + relseat * 37 + tile`  |
-| Da Ming Gang (大明槓)  | `1401` ~ `1844` | `1401 + seat * 111 + relseat * 37 + tile` |
-| An Gang (暗槓)         | `1845` ~ `1980` | `1845 + seat * 34 + tile'`                |
-| Jia Gang (加槓)        | `1981` ~ `2128` | `1981 + seat * 37 + tile`                 |
-| &lt;PADDING&gt;        | `2129`          | (does not appear in annotation)           |
+| Pon (peng, ポン, 碰)   | `957` ~ `1436`  | `957 + seat * 120 + relseat * 40 + peng`  |
+| Da Ming Gang (大明槓)  | `1437` ~ `1880` | `1437 + seat * 111 + relseat * 37 + tile` |
+| An Gang (暗槓)         | `1881` ~ `2016` | `1881 + seat * 34 + tile'`                |
+| Jia Gang (加槓)        | `2017` ~ `2164` | `2017 + seat * 37 + tile`                 |
+| &lt;PADDING&gt;        | `2165`          | (does not appear in annotation)           |
 
 ### 4th Field: Possible Actions
 
@@ -240,10 +240,10 @@ The 4th field consists of all the possible actions at that decision-making point
 | Jiu Zhong Jiu Pai (九種九牌) | `220`         |                                                                           |
 | Skip                         | `221`         |                                                                           |
 | Chow (chi, チー, 吃)         | `222` ~ `311` | `222 + chi`                                                               |
-| Pon, (peng, ポン, 碰)        | `312` ~ `422` | `312 + relseat * 37 + tile`                                               |
-| Da Ming Gang (大明槓)        | `423` ~ `533` | Represented by the discarded tile.<br/>`423 + relseat * 37 + tile`        |
-| Rong (栄和)                  | `534` ~ `536` | `534`: from xia jia (下家から)<br/>`535`: from dui mian (対面から)<br/>`536`: from shang Jia (上家から) |
-| &lt;PADDING&gt;              | `537`         | (does not appear in annotation)                                           |
+| Pon, (peng, ポン, 碰)        | `312` ~ `431` | `312 + relseat * 40 + peng`                                               |
+| Da Ming Gang (大明槓)        | `432` ~ `542` | Represented by the discarded tile.<br/>`432 + relseat * 37 + tile`        |
+| Rong (栄和)                  | `543` ~ `545` | `543`: from xia jia (下家から)<br/>`535`: from dui mian (対面から)<br/>`536`: from shang Jia (上家から) |
+| &lt;PADDING&gt;              | `546`         | (does not appear in annotation)                                           |
 
 ### 5th Field: Actual Action
 
