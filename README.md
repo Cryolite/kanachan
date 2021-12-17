@@ -233,7 +233,7 @@ The 1st field consists of *sparse features*. All the elements in this field are 
 | 3rd Dora Indicator                                       | `92` ~ `128`                                         | optional, `92 + tile`           |
 | 4th Dora Indicator                                       | `129` ~ `165`                                        | optional, `129 + tile`          |
 | 5th Dora Indicator                                       | `166` ~ `202`                                        | optional, `166 + tile`          |
-| # of Left Tiles to Draw                                  | `203` ~ `272`                                        | `# of left tiles = 272 - x`     |
+| # of Left Tiles to Draw                                  | `203` ~ `272`                                        | `(# of left tiles) - 203`       |
 | Grade of the player indicated by **Seat**                | `273` ~ `288`                                        | `273 + grade`                   |
 | Rank of the player indicated by **Seat**                 | `289` ~ `292`                                        | `289 + rank`                    |
 | Grade of the player right next to **Seat** (Seat の下家) | `293` ~ `308`                                        | `293 + grade`                   |
