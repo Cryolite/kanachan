@@ -166,6 +166,53 @@ Chows are represented by integers from 0 to 89, inclusive.
 | `30` ~ `59` | Likewise for Circle tiles (筒子)                      |
 | `60` ~ `89` | Likewise for Bamboo tiles (索子)                      |
 
+#### Pon (Peng)
+
+Pons are represented by integers from 0 to 39, inclusive.
+
+| Value | Pon (The last element represents the discarded tile) |
+|-------|------------------------------------------------------|
+| `0`   | (1m, 1m, 1m)                                         |
+| `1`   | (2m, 2m, 2m)                                         |
+| `2`   | (3m, 3m, 3m)                                         |
+| `3`   | (4m, 4m, 4m)                                         |
+| `4`   | (5m, 5m, 5m)                                         |
+| `5`   | (0m, 5m, 5m)                                         |
+| `6`   | (5m, 5m, 0m)                                         |
+| `7`   | (6m, 6m, 6m)                                         |
+| `8`   | (7m, 7m, 7m)                                         |
+| `9`   | (8m, 8m, 8m)                                         |
+| `10`  | (9m, 9m, 9m)                                         |
+| `11`  | (1p, 1p, 1p)                                         |
+| `12`  | (2p, 2p, 2p)                                         |
+| `13`  | (3p, 3p, 3p)                                         |
+| `14`  | (4p, 4p, 4p)                                         |
+| `15`  | (5p, 5p, 5p)                                         |
+| `16`  | (0p, 5p, 5p)                                         |
+| `17`  | (5p, 5p, 0p)                                         |
+| `18`  | (6p, 6p, 6p)                                         |
+| `19`  | (7p, 7p, 7p)                                         |
+| `20`  | (8p, 8p, 8p)                                         |
+| `21`  | (9p, 9p, 9p)                                         |
+| `22`  | (1s, 1s, 1s)                                         |
+| `23`  | (2s, 2s, 2s)                                         |
+| `24`  | (3s, 3s, 3s)                                         |
+| `25`  | (4s, 4s, 4s)                                         |
+| `26`  | (5s, 5s, 5s)                                         |
+| `27`  | (0s, 5s, 5s)                                         |
+| `28`  | (5s, 5s, 0s)                                         |
+| `29`  | (6s, 6s, 6s)                                         |
+| `30`  | (7s, 7s, 7s)                                         |
+| `31`  | (8s, 8s, 8s)                                         |
+| `32`  | (9s, 9s, 9s)                                         |
+| `33`  | (1z, 1z, 1z)                                         |
+| `34`  | (2z, 2z, 2z)                                         |
+| `35`  | (3z, 3z, 3z)                                         |
+| `36`  | (4z, 4z, 4z)                                         |
+| `37`  | (5z, 5z, 5z)                                         |
+| `38`  | (6z, 6z, 6z)                                         |
+| `39`  | (7z, 7z, 7z)                                         |
+
 ### 0th Field: Game UUID
 
 The 0th field is the game UUID, which uniquely identifies the game in which the decision-making point appears. This field is for debugging purposes only and is not used for learning at all.
@@ -174,43 +221,43 @@ The 0th field is the game UUID, which uniquely identifies the game in which the 
 
 The 1st field consists of *sparse features*. All the elements in this field are an non-negative integer. These integers are used as indices for embeddings, which are finally used as a part of inputs to learning models. The meaning of each integer is as follows.
 
-| Title                              | Value                                                | Note                            |
-|------------------------------------|------------------------------------------------------|---------------------------------|
-| Room                               | `0`: Bronze Room (銅の間)<br/>`1`: Silver Room (銀の間)<br/>`2`: Gold Room (金の間)<br/>`3`: Jade Room (玉の間)<br/>`4`: Throne Room (王座の間) ||
-| Game Style                         | `5`: quarter-length game (dong feng zhan, 東風戦)<br/>`6`: half-length game (ban zhuang zhan, 半荘戦) ||
-| Seat                               | `7` ~ `10`                                           | `7 + seat`                      |
-| Game Wind (Chang, 場)              | `11`: East (東場)<br/>`12`: South (南場)<br/>`13`: West (西場) |                       |
-| Round (Ju, 局)                     | `14` ~ `17`                                          | `14 + round`                    |
-| Dora Indicator                     | `18` ~ `54`                                          | `18 + tile`                     |
-| 2nd Dora Indicator                 | `55` ~ `91`                                          | optional, `55 + tile`           |
-| 3rd Dora Indicator                 | `92` ~ `128`                                         | optional, `92 + tile`           |
-| 4th Dora Indicator                 | `129` ~ `165`                                        | optional, `129 + tile`          |
-| 5th Dora Indicator                 | `166` ~ `202`                                        | optional, `166 + tile`          |
-| # of Left Tiles to Draw            | `203` ~ `272`                                        | `# of left tiles = 272 - x`     |
-| Grade of 0th Seat (起家段位)       | `273` ~ `288`                                        | `273 + grade`                   |
-| Rank of 0th Seat (起家順位)        | `289` ~ `292`                                        | `289 + rank`                    |
-| Grade of 1st Seat (起家の下家段位) | `293` ~ `308`                                        | `293 + grade`                   |
-| Rank of 1st Seat (起家の下家順位)  | `309` ~ `312`                                        | `309 + rank`                    |
-| Grade of 2nd Seat (起家の対面段位) | `313` ~ `328`                                        | `313 + grade`                   |
-| Rank of 2nd Seat (起家の対面順位)  | `329` ~ `332`                                        | `329 + rank`                    |
-| Grade of 3rd Seat (起家の上家段位) | `333` ~ `348`                                        | `333 + grade`                   |
-| Rank of 3rd Seat (起家の上家順位)  | `349` ~ `352`                                        | `349 + rank`                    |
-| Hand (shou pai, 手牌)              | `353` ~ `488`                                        | combination of tiles            |
-| Drawn Tile (zimo pai, 自摸牌)      | `489` ~ `525`                                        | optional, `489 + tile`          |
-| &lt;PADDING&gt;                    | `526`                                                | (does not appear in annotation) |
+| Title                                                    | Value                                                | Note                            |
+|----------------------------------------------------------|------------------------------------------------------|---------------------------------|
+| Room                                                     | `0`: Bronze Room (銅の間)<br/>`1`: Silver Room (銀の間)<br/>`2`: Gold Room (金の間)<br/>`3`: Jade Room (玉の間)<br/>`4`: Throne Room (王座の間) ||
+| Game Style                                               | `5`: quarter-length game (dong feng zhan, 東風戦)<br/>`6`: half-length game (ban zhuang zhan, 半荘戦) ||
+| Seat                                                     | `7` ~ `10`                                           | `7 + seat`                      |
+| Game Wind (Chang, 場)                                    | `11`: East (東場)<br/>`12`: South (南場)<br/>`13`: West (西場) |                       |
+| Round (Ju, 局)                                           | `14` ~ `17`                                          | `14 + round`                    |
+| Dora Indicator                                           | `18` ~ `54`                                          | `18 + tile`                     |
+| 2nd Dora Indicator                                       | `55` ~ `91`                                          | optional, `55 + tile`           |
+| 3rd Dora Indicator                                       | `92` ~ `128`                                         | optional, `92 + tile`           |
+| 4th Dora Indicator                                       | `129` ~ `165`                                        | optional, `129 + tile`          |
+| 5th Dora Indicator                                       | `166` ~ `202`                                        | optional, `166 + tile`          |
+| # of Left Tiles to Draw                                  | `203` ~ `272`                                        | `# of left tiles = 272 - x`     |
+| Grade of the player indicated by **Seat**                | `273` ~ `288`                                        | `273 + grade`                   |
+| Rank of the player indicated by **Seat**                 | `289` ~ `292`                                        | `289 + rank`                    |
+| Grade of the player right next to **Seat** (Seat の下家) | `293` ~ `308`                                        | `293 + grade`                   |
+| Rank of the player right next to **Seat** (Seat の下家)  | `309` ~ `312`                                        | `309 + rank`                    |
+| Grade of the player across from **Seat** (Seat の対面)   | `313` ~ `328`                                        | `313 + grade`                   |
+| Rank of the player across from **Seat** (Seat の対面)    | `329` ~ `332`                                        | `329 + rank`                    |
+| Grade of the player left next to **Seat** (Seat の上家)  | `333` ~ `348`                                        | `333 + grade`                   |
+| Rank of the player left next to **Seat** (Seat の上家)   | `349` ~ `352`                                        | `349 + rank`                    |
+| Hand (shou pai, 手牌)                                    | `353` ~ `488`                                        | combination of tiles            |
+| Drawn Tile (zimo pai, 自摸牌)                            | `489` ~ `525`                                        | optional, `489 + tile`          |
+| &lt;PADDING&gt;                                          | `526`                                                | (does not appear in annotation) |
 
 ### 2nd Field: Numeric Features
 
 The 2nd field consists of *numeric features*. This field consists of exactly 6 elements. These features are numerically meaningful and directly used as a part of inputs to learning models. The meaning of each element is as follows.
 
-| Element Index  | Explanation                                    |
-|----------------|------------------------------------------------|
-| 0              | The number of counter sticks (ben chang, 本場) |
-| 1              | The number of riichi deposits (供託本数)       |
-| 2              | The score of the 0th seat                      |
-| 3              | The score of the 1st seat                      |
-| 4              | The score of the 2nd seat                      |
-| 5              | The score of the 3rd seat                      |
+| Element Index  | Explanation                                                  |
+|----------------|--------------------------------------------------------------|
+| 0              | The number of counter sticks (ben chang, 本場)               |
+| 1              | The number of riichi deposits (供託本数)                     |
+| 2              | The score of the player indicated by **Seat**                |
+| 3              | The score of the player right next to **Seat** (Seat の下家) |
+| 4              | The score of the player across from **Seat** (Seat の対面)   |
+| 5              | The score of the player left next to **Seat** (Seat の上家)  |
 
 ### 3rd Field: Progression Features
 
@@ -251,7 +298,7 @@ The 5th field indicates the actual action chosen by the player (indicated by **S
 
 ### 6th Field: Results
 
-The 6th field consists of some aspects of the final result of the round and game in which the decision-making point appear. This field consists of exactly 12 elements.
+The 6th field consists of some aspects of the final result of the round and game in which the decision-making point appear. This field consists of exactly 11 elements.
 
 | Element Index  | Explanation                                                                    |
 |----------------|--------------------------------------------------------------------------------|
@@ -264,6 +311,5 @@ The 6th field consists of some aspects of the final result of the round and game
 | 6              | End-of-game ranking of the player right next to **Seat**                       |
 | 7              | End-of-game ranking of the player across from **Seat**                         |
 | 8              | End-of-game ranking of the player left next to **Seat**                        |
-| 9              | End-of-game ranking of the player indicated by **Seat**                        |
-| 10             | End-of-game score of the player indicated by **Seat**                          |
-| 11             | Game delta of grading score of the player indicated by **Seat**                |
+| 9              | End-of-game score of the player indicated by **Seat**                          |
+| 10             | Game delta of grading score of the player indicated by **Seat**                |
