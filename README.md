@@ -298,7 +298,7 @@ The 5th field indicates the actual action chosen by the player (indicated by **S
 
 ### 6th Field: Results
 
-The 6th field consists of some aspects of the final result of the round and game in which the decision-making point appear. This field consists of exactly 11 elements.
+The 6th field consists of some aspects of the final result of the round and game in which the decision-making point appear. This field consists of exactly 12 elements.
 
 | Element Index  | Explanation                                                                    |
 |----------------|--------------------------------------------------------------------------------|
@@ -307,9 +307,10 @@ The 6th field consists of some aspects of the final result of the round and game
 | 2              | Round delta of the score of the player right next to **Seat** (Seat の下家)    |
 | 3              | Round delta of the score of the player across from **Seat** (Seat の対面)      |
 | 4              | Round delta of the score of the player left next to **Seat** (Seat の上家)     |
-| 5              | End-of-game ranking of the player indicated by **Seat**                        |
-| 6              | End-of-game ranking of the player right next to **Seat**                       |
-| 7              | End-of-game ranking of the player across from **Seat**                         |
-| 8              | End-of-game ranking of the player left next to **Seat**                        |
-| 9              | End-of-game score of the player indicated by **Seat**                          |
-| 10             | Game delta of grading score of the player indicated by **Seat**                |
+| 5              | End-of-round ranking of the player indicated by **Seat**                       |
+| 6              | End-of-round ranking of the player right next to **Seat**                      |
+| 7              | End-of-round ranking of the player across from **Seat**                        |
+| 8              | End-of-round ranking of the player left next to **Seat**                       |
+| 9              | End-of-game ranking of the player indicated by **Seat**                        |
+| 10             | End-of-game score of the player indicated by **Seat**                          |
+| 11             | Game delta of grading score of the player indicated by **Seat**                |
