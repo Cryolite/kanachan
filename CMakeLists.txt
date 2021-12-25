@@ -3,12 +3,16 @@ project(kanachan)
 
 enable_testing()
 
+message("PYTHON_VERSION=${PYTHON_VERSION}")
+
 message("CMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
 message("CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
 
 set(CMAKE_CXX_STANDARD 20)
 
-include_directories(annotate)
+include_directories(
+  "/usr/include/python${PYTHON_VERSION}"
+  src)
 
 if (("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang"))
   add_compile_options(-Werror)
@@ -69,6 +73,10 @@ if (KANACHAN_WITH_TSAN)
 endif()
 message("KANACHAN_WITH_TSAN=${KANACHAN_WITH_TSAN}")
 
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
 add_compile_options(-pthread)
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -pthread")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pthread")
@@ -87,6 +95,8 @@ endif()
 set(BOOST_ROOT /usr/local)
 find_package(Boost
   REQUIRED
-  COMPONENTS stacktrace_backtrace)
+  COMPONENTS stacktrace_backtrace python)
 
-add_subdirectory(annotate)
+add_compile_definitions(BOOST_STACKTRACE_USE_BACKTRACE)
+
+add_subdirectory(src)

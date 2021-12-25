@@ -1,0 +1,5 @@
+add_subdirectory(xiangting)
+add_subdirectory(common)
+add_subdirectory(annotation)
+add_subdirectory(paishan)
+add_subdirectory(simulation)
