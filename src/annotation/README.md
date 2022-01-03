@@ -43,7 +43,7 @@ kanachan$ docker build -f annotate/Dockerfile -t cryolite/kanachan.annotate .
 Let `/path/to/data` be the path to the directory you have prepared according to the description in the [Data Preparation](#data-preparation) section. The following command line
 
 ```bash
-$ docker run -i -v /path/to/data:/data:ro --rm cryolite/kanachan.annotate
+$ docker run -v /path/to/data:/data:ro --rm cryolite/kanachan.annotate
 ```
 
 prints the annotations converted from the game records in `/path/to/data` to the standard output.
