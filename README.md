@@ -65,7 +65,7 @@ A C++ program that generates a [LOUDS-based TRIE data structure](https://github.
 
 ### [src/simulation](src/simulation)
 
-A C++ library implementing a Mahjong simulator that perfectly mimics the standard game rule of Mahjong Soul, including even many unstated corner cases of the rule. This library can be also accessed as the `kanachan.simulation` Python module.
+A C++ library implementing a Mahjong simulator that perfectly mimics the standard game rule of Mahjong Soul, including even many unstated corner cases of the rule. The functionality of this library can be also accessed via the `kanachan.simulation.simulate` Python function.
 
 ### [src/paishan](src/paishan)
 
