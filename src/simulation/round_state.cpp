@@ -515,7 +515,7 @@ RoundState::constructDoraIndicators_(std::uint_fast8_t const seat) const
 }
 
 std::pair<std::uint_fast8_t, std::uint_fast8_t>
-RoundState::checkDaSanyuanPao() const
+RoundState::checkDaSanyuanPao_() const
 {
   std::uint_fast8_t to = std::numeric_limits<std::uint_fast8_t>::max();
   std::uint_fast8_t count = 0u;
@@ -523,7 +523,8 @@ RoundState::checkDaSanyuanPao() const
     python::object o = progression_[i];
     python::extract<long> e(o);
     KANACHAN_ASSERT((e.check()));
-    KANACHAN_ASSERT((0u <= e()));
+    KANACHAN_ASSERT((0 <= e()));
+    KANACHAN_ASSERT((e() <= 2164));
     std::uint_fast16_t const encode = e();
 
     if (/*0u <= encode && */encode <= 956u) {
@@ -608,6 +609,100 @@ RoundState::checkDaSanyuanPao() const
   return {
     std::numeric_limits<std::uint_fast8_t>::max(),
     std::numeric_limits<std::uint_fast8_t>::max()
+  };
+}
+
+std::pair<std::uint_fast8_t, std::uint_fast8_t>
+RoundState::checkDaSixiPao_() const
+{
+  std::uint_fast8_t to = -1;
+  std::uint_fast8_t count = 0u;
+  for (long i = 0; i < python::len(progression_); ++i) {
+    python::object o = progression_[i];
+    python::extract<long> e(o);
+    KANACHAN_ASSERT((e.check()));
+    KANACHAN_ASSERT((0 <= e()));
+    KANACHAN_ASSERT((e() <= 2164));
+    std::uint_fast16_t const encode = e();
+
+    if (/*0u <= encode && */encode <= 956u) {
+      continue;
+    }
+    if (/*957u <= encode && */encode <= 1436u) {
+      // ポン
+      std::uint_fast8_t const seat = (encode - 957u) / 120u;
+      std::uint_fast8_t const relseat = (encode - 957u - seat * 120u) / 40u;
+      std::uint_fast8_t const peng
+        = (encode - 957u - seat * 120u - relseat * 40u);
+      if (peng < 33u || 36 < peng) {
+        // 風牌以外のポン
+        continue;
+      }
+      if (to == static_cast<std::uint_fast8_t>(-1)) {
+        to = seat;
+      }
+      else if (to != seat) {
+        return {
+          static_cast<std::uint_fast8_t>(-1), static_cast<std::uint_fast8_t>(-1)
+        };
+      }
+      ++count;
+      if (count == 4u) {
+        return { (seat + relseat + 1u) % 4u, to };
+      }
+      continue;
+    }
+    if (/*1437u <= encode && */encode <= 1880u) {
+      // 大明槓
+      std::uint_fast8_t const seat = (encode - 1437u) / 111u;
+      std::uint_fast8_t const relseat = (encode - 1437u - seat * 111u) / 37u;
+      std::uint_fast8_t const tile = (encode - 1437u - seat * 111u - relseat * 37u);
+      if (tile < 30u || 33u < tile) {
+        // 風牌以外の大明槓．
+        continue;
+      }
+      if (to == static_cast<std::uint_fast8_t>(-1)) {
+        to = seat;
+      }
+      else if (to != seat) {
+        return {
+          static_cast<std::uint_fast8_t>(-1), static_cast<std::uint_fast8_t>(-1)
+        };
+      }
+      ++count;
+      if (count == 4u) {
+        return { (seat + relseat + 1u) % 4u, to };
+      }
+      continue;
+    }
+    if (/*1881u <= encode && */encode <= 2016u) {
+      // 暗槓
+      std::uint_fast8_t const seat = (encode - 1881u) / 34u;
+      std::uint_fast8_t const tile = (encode - 1881u - seat * 34u);
+      if (tile < 27u || 30u < tile) {
+        // 風牌以外の暗槓．
+        continue;
+      }
+      if (to == static_cast<std::uint_fast8_t>(-1)) {
+        to = seat;
+      }
+      else if (to != seat) {
+        return {
+          static_cast<std::uint_fast8_t>(-1), static_cast<std::uint_fast8_t>(-1)
+        };
+      }
+      ++count;
+      continue;
+    }
+    if (2017u <= encode && encode <= 2164u) {
+      // 加槓
+      continue;
+    }
+    KANACHAN_THROW<std::logic_error>(_1) << encode << ": A logic error.";
+  }
+  KANACHAN_ASSERT((count < 3u));
+  return {
+    static_cast<std::uint_fast8_t>(-1), static_cast<std::uint_fast8_t>(-1)
   };
 }
 
@@ -1523,22 +1618,46 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
           << static_cast<unsigned>(fu) << ')';
       }
 
-      auto const [from, to] = checkDaSanyuanPao();
-      if (from != std::numeric_limits<std::uint_fast8_t>::max() && to == seat_) {
-        // 大三元の包が発生している．
-        KANACHAN_ASSERT((from < 4u));
+      {
+        auto const [from, to] = checkDaSanyuanPao_();
+        if (from != static_cast<std::uint_fast8_t>(-1) && to == seat_) {
+          // 大三元の包が発生している．
+          KANACHAN_ASSERT((from < 4u));
 
-        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-          // 包がある場合，本場は包の対象者が全額を払う．
-          if (i == from) {
-            std::int_fast32_t const score = -32000 - 200 * getBenChang();
-            round_result[i]["delta_score"] += score;
-            game_state_.addPlayerScore(i, score);
+          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+            // 包がある場合，本場は包の対象者が全額を払う．
+            if (i == from) {
+              std::int_fast32_t const score = -32000 - 200 * getBenChang();
+              round_result[i]["delta_score"] += score;
+              game_state_.addPlayerScore(i, score);
+            }
+            else if (i != seat_) {
+              std::int_fast32_t const score = 16000 + 100 * getBenChang();
+              round_result[i]["delta_score"] += score;
+              game_state_.addPlayerScore(i, score);
+            }
           }
-          else if (i != seat_) {
-            std::int_fast32_t const score = 16000 + 100 * getBenChang();
-            round_result[i]["delta_score"] += score;
-            game_state_.addPlayerScore(i, score);
+        }
+      }
+
+      {
+        auto const [from, to] = checkDaSixiPao_();
+        if (from != static_cast<std::uint_fast8_t>(-1) && to == seat_) {
+          // 大四喜の包が発生している．
+          KANACHAN_ASSERT((from < 4u));
+
+          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+            // 包がある場合，本場は包の対象者が全額を払う．
+            if (i == from) {
+              std::int_fast32_t const score = -64000 - 200 * getBenChang();
+              round_result[i]["delta_score"] += score;
+              game_state_.addPlayerScore(i, score);
+            }
+            else if (i != seat_) {
+              std::int_fast32_t const score = 32000 + 100 * getBenChang();
+              round_result[i]["delta_score"] += score;
+              game_state_.addPlayerScore(i, score);
+            }
           }
         }
       }
@@ -1713,37 +1832,77 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
           << static_cast<unsigned>(fu) << ')';
       }
 
-      auto const [from, to] = checkDaSanyuanPao();
-      if (from != std::numeric_limits<std::uint_fast8_t>::max() && to == seat_) {
-        // 大三元の包が発生している．
-        KANACHAN_ASSERT((from < 4u));
+      {
+        auto const [from, to] = checkDaSanyuanPao_();
+        if (from != static_cast<std::uint_fast8_t>(-1) && to == seat_) {
+          // 大三元の包が発生している．
+          KANACHAN_ASSERT((from < 4u));
 
-        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-          // 包がある場合，本場は包の対象者が全額を払う．
-          if (i == from) {
-            if (i == getJu()) {
-              // 包の対象者が親の場合．
-              std::int_fast32_t const score = -16000 - 200 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
+          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+            // 包がある場合，本場は包の対象者が全額を払う．
+            if (i == from) {
+              if (i == getJu()) {
+                // 包の対象者が親の場合．
+                std::int_fast32_t const score = -16000 - 200 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
+              else {
+                // 包の対象者が子の場合．
+                std::int_fast32_t const score = -24000 - 200 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
             }
-            else {
-              // 包の対象者が子の場合．
-              std::int_fast32_t const score = -24000 - 200 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
+            else if (i != seat_) {
+              if (i == getJu()) {
+                std::int_fast32_t const score = 16000 + 100 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
+              else {
+                std::int_fast32_t const score = 8000 + 100 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
             }
           }
-          else if (i != seat_) {
-            if (i == getJu()) {
-              std::int_fast32_t const score = 16000 + 100 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
+        }
+      }
+
+      {
+        auto const [from, to] = checkDaSixiPao_();
+        if (from != static_cast<std::uint_fast8_t>(-1) && to == seat_) {
+          // 大四喜の包が発生している．
+          KANACHAN_ASSERT((from < 4u));
+
+          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+            // 包がある場合，本場は包の対象者が全額を払う．
+            if (i == from) {
+              if (i == getJu()) {
+                // 包の対象者が親の場合．
+                std::int_fast32_t const score = -32000 - 200 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
+              else {
+                // 包の対象者が子の場合．
+                std::int_fast32_t const score = -48000 - 200 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
             }
-            else {
-              std::int_fast32_t const score = 8000 + 100 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
+            else if (i != seat_) {
+              if (i == getJu()) {
+                std::int_fast32_t const score = 32000 + 100 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
+              else {
+                std::int_fast32_t const score = 16000 + 100 * getBenChang();
+                round_result[i]["delta_score"] += score;
+                game_state_.addPlayerScore(i, score);
+              }
             }
           }
         }
@@ -1970,26 +2129,6 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
             << '(' << static_cast<unsigned>(fan) << ", "
             << static_cast<unsigned>(fu) << ')';
         }
-
-        auto const [from, to] = checkDaSanyuanPao();
-        if (from != std::numeric_limits<std::uint_fast8_t>::max() && to == seat) {
-          // 大三元の包が発生している．
-          KANACHAN_ASSERT((from < 4u));
-
-          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-            // 包がある場合，本場は包の対象者が全額を払う．
-            if (i == from) {
-              std::int_fast32_t const score = -24000 - 300 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
-            }
-            if (i == dapai_seat){
-              std::int_fast32_t const score = 24000 + 300 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
-            }
-          }
-        }
       }
       else {
         // 子の栄和
@@ -2124,29 +2263,113 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
             << '(' << static_cast<unsigned>(fan) << ", "
             << static_cast<unsigned>(fu) << ')';
         }
-
-        auto const [from, to] = checkDaSanyuanPao();
-        if (from != std::numeric_limits<std::uint_fast8_t>::max() && to == seat) {
-          // 大三元の包が発生している．
-          KANACHAN_ASSERT((from < 4u));
-
-          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-            // 包がある場合，本場は包の対象者が全額を払う．
-            if (i == from) {
-              std::int_fast32_t const score = -16000 - 300 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
-            }
-            if (i == dapai_seat){
-              std::int_fast32_t const score = 16000 + 300 * getBenChang();
-              round_result[i]["delta_score"] += score;
-              game_state_.addPlayerScore(i, score);
-            }
-          }
-        }
       }
 
       flag = false;
+    }
+
+    for (;;) {
+      auto const [from, to] = checkDaSanyuanPao_();
+      if (from == static_cast<std::uint_fast8_t>(-1)) {
+        break;
+      }
+      KANACHAN_ASSERT((from < 4u));
+      KANACHAN_ASSERT((to < 4u));
+      if (!rong_delayed_[to]) {
+        break;
+      }
+
+      // 大三元の包が発生している．
+      std::int_fast32_t const score_base
+        = (to == game_state_.getJu() ? 24000 : 16000);
+      bool const flag0 = [&]() -> bool {
+        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+          if (i == from && rong_delayed_[i]) {
+            return true;
+          }
+        }
+        return false;
+      }();
+      bool flag1 = false;
+      for (std::uint_fast8_t i = 4u; i > 0u;) {
+        --i;
+        // 包がある場合，本場分の点数は包の対象者が全額を支払う．ただし，包の
+        // 対象者が和了している場合は起家から一番遠い席が本場分の点数を支払う．
+        if (i == from) {
+          if (rong_delayed_[i]) {
+            std::int_fast32_t const score
+              = -score_base + (flag1 ? 0 : -300 * getBenChang());
+            round_result[i]["delta_score"] += score;
+            game_state_.addPlayerScore(i, score);
+            flag1 = true;
+          }
+          else {
+            std::int_fast32_t const score = -score_base - 300 * getBenChang();
+            round_result[i]["delta_score"] += score;
+            game_state_.addPlayerScore(i, score);
+          }
+        }
+        if (i == dapai_seat){
+          std::int_fast32_t const score
+            = score_base + (flag0 && !flag1 ? 0 : 300 * getBenChang());
+          round_result[i]["delta_score"] += score;
+          game_state_.addPlayerScore(i, score);
+          flag1 = true;
+        }
+      }
+      break;
+    }
+
+    for (;;) {
+      auto const [from, to] = checkDaSixiPao_();
+      if (from == static_cast<std::uint_fast8_t>(-1)) {
+        break;
+      }
+      KANACHAN_ASSERT((from < 4u));
+      KANACHAN_ASSERT((to < 4u));
+      if (!rong_delayed_[to]) {
+        break;
+      }
+
+      // 大四喜の包が発生している．
+      std::int_fast32_t const score_base
+        = (to == game_state_.getJu() ? 48000 : 32000);
+      bool const flag0 = [&]() -> bool {
+        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+          if (i == from && rong_delayed_[i]) {
+            return true;
+          }
+        }
+        return false;
+      }();
+      bool flag1 = false;
+      for (std::uint_fast8_t i = 4u; i > 0u;) {
+        --i;
+        // 包がある場合，本場分の点数は包の対象者が全額を支払う．ただし，包の
+        // 対象者が和了している場合は起家から一番遠い席が本場分の点数を支払う．
+        if (i == from) {
+          if (rong_delayed_[i]) {
+            std::int_fast32_t const score
+              = -score_base + (flag1 ? 0 : -300 * getBenChang());
+            round_result[i]["delta_score"] += score;
+            game_state_.addPlayerScore(i, score);
+            flag1 = true;
+          }
+          else {
+            std::int_fast32_t const score = -score_base - 300 * getBenChang();
+            round_result[i]["delta_score"] += score;
+            game_state_.addPlayerScore(i, score);
+          }
+        }
+        if (i == dapai_seat){
+          std::int_fast32_t const score
+            = score_base + (flag0 && !flag1 ? 0 : 300 * getBenChang());
+          round_result[i]["delta_score"] += score;
+          game_state_.addPlayerScore(i, score);
+          flag1 = true;
+        }
+      }
+      break;
     }
   }
 
@@ -2195,7 +2418,7 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
       return true;
     }
     if (chang == 0u && ju == 3u || chang == 1u) {
-      // 東3局または南入
+      // 東4局または南入
       bool suddendeath = false;
       for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
         if (getPlayerScore(i) >= 30000) {

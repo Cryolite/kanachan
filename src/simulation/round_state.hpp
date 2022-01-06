@@ -80,7 +80,9 @@ private:
 
   boost::python::list constructDoraIndicators_(std::uint_fast8_t seat) const;
 
-  std::pair<std::uint_fast8_t, std::uint_fast8_t> checkDaSanyuanPao() const;
+  std::pair<std::uint_fast8_t, std::uint_fast8_t> checkDaSanyuanPao_() const;
+
+  std::pair<std::uint_fast8_t, std::uint_fast8_t> checkDaSixiPao_() const;
 
   std::pair<std::uint_fast8_t, std::uint_fast8_t> calculateHand_(
     std::uint_fast8_t seat, std::uint_fast8_t hupai, long config) const;
