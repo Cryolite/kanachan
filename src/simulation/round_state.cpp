@@ -832,8 +832,8 @@ RoundState::onDapai(
     features.append(progression_);
     Kanachan::Shoupai const &shoupai = shoupai_list_[calling_seat];
     long const tool_config = encodeToolConfig_(calling_seat, /*rong = */true);
-    python::list candidates
-      = shoupai.getCandidatesOnDapai(2u - i, tile, tool_config);
+    python::list candidates = shoupai.getCandidatesOnDapai(
+      2u - i, tile, lingshang_zimo_count_ == 4u, tool_config);
     KANACHAN_ASSERT((python::len(candidates) != 1));
     if (checkSigangSanle()) {
       // 4つ目の槓に対する打牌の場合，その打牌に対する他家の選択肢から

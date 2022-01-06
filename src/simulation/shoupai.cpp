@@ -1181,7 +1181,7 @@ python::list Shoupai::getCandidatesOnZimo(
 
 python::list Shoupai::getCandidatesOnDapai(
   std::uint_fast8_t const relseat, std::uint_fast8_t const dapai,
-  long const tool_config) const
+  bool const gang_prohibited, long const tool_config) const
 {
   KANACHAN_ASSERT(
     (kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
@@ -1259,28 +1259,30 @@ python::list Shoupai::getCandidatesOnDapai(
       }
     }
 
-    // Check for Da Ming Gang (大明槓)
-    for (std::uint_fast8_t i = 0u; i <= 20u; i += 10u) {
-      if (dapai == i + 0u && shoupai_[i + 5u] == 3u) {
-        candidates.append(432 + relseat * 37 + i);
-      }
-      for (std::uint_fast8_t j = i + 1u; j <= i + 4u; ++j) {
-        if (dapai == j && shoupai_[j] == 3u) {
-          candidates.append(432 + relseat * 37 + j);
+    if (!gang_prohibited) {
+      // Check for Da Ming Gang (大明槓)
+      for (std::uint_fast8_t i = 0u; i <= 20u; i += 10u) {
+        if (dapai == i + 0u && shoupai_[i + 5u] == 3u) {
+          candidates.append(432 + relseat * 37 + i);
+        }
+        for (std::uint_fast8_t j = i + 1u; j <= i + 4u; ++j) {
+          if (dapai == j && shoupai_[j] == 3u) {
+            candidates.append(432 + relseat * 37 + j);
+          }
+        }
+        if (dapai == i + 5u && shoupai_[i + 0u] == 1u && shoupai_[i + 5u] == 2u) {
+          candidates.append(432 + relseat * 37 + i + 5);
+        }
+        for (std::uint_fast8_t j = i + 6u; j <= i + 9u; ++j) {
+          if (dapai == j && shoupai_[j] == 3u) {
+            candidates.append(432 + relseat * 37 + j);
+          }
         }
       }
-      if (dapai == i + 5u && shoupai_[i + 0u] == 1u && shoupai_[i + 5u] == 2u) {
-        candidates.append(432 + relseat * 37 + i + 5);
-      }
-      for (std::uint_fast8_t j = i + 6u; j <= i + 9u; ++j) {
-        if (dapai == j && shoupai_[j] == 3u) {
-          candidates.append(432 + relseat * 37 + j);
+      for (std::uint_fast8_t i = 30u; i < 37u; ++i) {
+        if (dapai == i && shoupai_[i] == 3u) {
+          candidates.append(432 + relseat * 37 + i);
         }
-      }
-    }
-    for (std::uint_fast8_t i = 30u; i < 37u; ++i) {
-      if (dapai == i && shoupai_[i] == 3u) {
-        candidates.append(432 + relseat * 37 + i);
       }
     }
   }

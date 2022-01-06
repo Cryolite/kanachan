@@ -7,7 +7,6 @@
 #include <vector>
 #include <array>
 #include <utility>
-#include <limits>
 #include <cstdint>
 
 
@@ -61,7 +60,8 @@ public:
     bool gang_prohibited, long tool_config) const;
 
   boost::python::list getCandidatesOnDapai(
-    std::uint_fast8_t relseat, std::uint_fast8_t dapai, long tool_config) const;
+    std::uint_fast8_t relseat, std::uint_fast8_t dapai, bool gang_prohibited,
+    long tool_config) const;
 
   boost::python::list getCandidatesOnChiPeng() const;
 
@@ -106,19 +106,19 @@ private:
   // 暗槓: [321, 355) = 321 + tile'
   // 加槓: [355, 392) = 355 + tile
   std::array<std::uint_fast16_t, 4u> fulu_list_ = {
-    std::numeric_limits<std::uint_fast16_t>::max(),
-    std::numeric_limits<std::uint_fast16_t>::max(),
-    std::numeric_limits<std::uint_fast16_t>::max(),
-    std::numeric_limits<std::uint_fast16_t>::max()
+    static_cast<std::uint_fast16_t>(-1),
+    static_cast<std::uint_fast16_t>(-1),
+    static_cast<std::uint_fast16_t>(-1),
+    static_cast<std::uint_fast16_t>(-1)
   };
 
-  std::uint_fast16_t kuikae_delayed_ = std::numeric_limits<std::uint_fast16_t>::max();
+  std::uint_fast16_t kuikae_delayed_ = -1;
 
   boost::python::object external_tool_;
 
   std::vector<std::uint_fast8_t> he_;
   mutable bool tingpai_cache_ = false;
-  mutable std::uint_fast8_t xiangting_lower_bound_ = std::numeric_limits<std::uint_fast8_t>::max();
+  mutable std::uint_fast8_t xiangting_lower_bound_ = -1;
   std::vector<std::uint_fast8_t> hupai_list_{};
   mutable bool zhenting_ = false;
 }; // class Shoupai
