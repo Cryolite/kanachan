@@ -742,15 +742,23 @@ void Shoupai::updateHupaiList_()
       KANACHAN_THROW<std::logic_error>("A logic error.");
     }();
     if (shoupai34[hupai34] == 4u) {
-      continue;
+      shoupai34[hupai34] -= 2u;
+      std::uint_fast8_t const xiangting
+        = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu - 1u);
+      if (xiangting == 0u) {
+        hupai_list_.push_back(i);
+      }
+      shoupai34[hupai34] += 2u;
     }
-    ++shoupai34[hupai34];
-    std::uint_fast8_t const xiangting
-      = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
-    if (xiangting == 0u) {
-      hupai_list_.push_back(i);
+    else {
+      ++shoupai34[hupai34];
+      std::uint_fast8_t const xiangting
+        = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
+      if (xiangting == 0u) {
+        hupai_list_.push_back(i);
+      }
+      --shoupai34[hupai34];
     }
-    --shoupai34[hupai34];
   }
 
   KANACHAN_ASSERT((hupai_list_.size() >= 1u));
@@ -998,7 +1006,7 @@ python::list Shoupai::getCandidatesOnZimo(
 
       std::vector<std::uint_fast8_t> new_hupai_list;
       for (std::uint_fast8_t i = 0u; i < 37u; ++i) {
-        std::uint_fast8_t const hupai34 = [i]() -> long{
+        std::uint_fast8_t const hupai34 = [i]() -> std::uint_fast8_t {
           if (i == 0u) {
             return 4u;
           }
@@ -1020,15 +1028,23 @@ python::list Shoupai::getCandidatesOnZimo(
           KANACHAN_THROW<std::logic_error>("A logic error.");
         }();
         if (new_shoupai34[hupai34] == 4u) {
-          continue;
+          new_shoupai34[hupai34] -= 2u;
+          std::uint_fast8_t const xiangting
+            = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 2u);
+          if (xiangting == 0u) {
+            new_hupai_list.push_back(i);
+          }
+          new_shoupai34[hupai34] += 2u;
         }
-        ++new_shoupai34[hupai34];
-        std::uint_fast8_t const xiangting
-          = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 1u);
-        if (xiangting == 0u) {
-          new_hupai_list.push_back(i);
+        else {
+          ++new_shoupai34[hupai34];
+          std::uint_fast8_t const xiangting
+            = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 1u);
+          if (xiangting == 0u) {
+            new_hupai_list.push_back(i);
+          }
+          --new_shoupai34[hupai34];
         }
-        --new_shoupai34[hupai34];
       }
       if (new_hupai_list != hupai_list_) {
         // 暗槓すると待ちが変わるので送り槓になる．
