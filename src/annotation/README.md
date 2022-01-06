@@ -19,7 +19,7 @@ A *decision-making point* is defined by a point in a game at which a player is f
 * Immediately after other player's kong:
   * whether or not declare to win (qiang gang, 槍槓) if possible.
 
-However, decision-making points in the following relatively rare situations cannot be extracted, because they are not recorded in game records even if the player makes a choice, or the GUI disappears before the player makes a choice:
+However, decision-making points in the following relatively rare situations cannot be extracted and are assumed to be skipped, because they are not recorded in game records even if the player makes a choice, or the GUI disappears before the player makes a choice:
 
 * A player is forced to choose whether or not to chow, but pon, kong, or rong by another player takes precedence, or
 * a player is forced to choose whether or not to pon or kong, but rong by another player takes precedence.
@@ -43,7 +43,7 @@ kanachan$ docker build -f annotate/Dockerfile -t cryolite/kanachan.annotate .
 Let `/path/to/data` be the path to the directory you have prepared according to the description in the [Data Preparation](#data-preparation) section. The following command line
 
 ```bash
-$ docker run -i -v /path/to/data:/data:ro --rm cryolite/kanachan.annotate
+$ docker run -v /path/to/data:/data:ro --rm cryolite/kanachan.annotate
 ```
 
 prints the annotations converted from the game records in `/path/to/data` to the standard output.

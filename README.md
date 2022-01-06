@@ -53,11 +53,27 @@ The idea behind this project is to learn mappings from action selections to thes
 
 ### [prerequisites](prerequisites) (For developers only)
 
-Make various prerequisite packages and tools available for use in [annotate](#annotate). This component is built and available as a [public Docker image](https://hub.docker.com/r/cryolite/kanachan.prerequisites), and implicitly used by annotate. Therefore, there is no need for non-developers to build or directly use this component.
+Make various prerequisite packages and tools available for use in other components. This component is built and available as a [public Docker image](https://hub.docker.com/r/cryolite/kanachan.prerequisites), and implicitly used by other components. Therefore, there is no need for non-developers to build or directly use this component.
 
-### [annotate](annotate)
+### [src/annotation](src/annotation)
 
 A C++ program that extracts almost all the *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's action and round's/game's final results into annotations suitable to learning.
+
+### [src/xiangting](src/xiangting)
+
+A C++ program that generates a [LOUDS-based TRIE data structure](https://github.com/s-yata/marisa-trie) used to calculate shanten (xiang ting, 向聴) numbers.
+
+### [src/simulation](src/simulation)
+
+A C++ library implementing a Mahjong simulator that perfectly mimics the standard game rule of Mahjong Soul, including even many unstated corner cases of the rule. The functionality of this library can be also accessed via the `kanachan.simulation.simulate` Python function.
+
+### [src/paishan](src/paishan)
+
+A C++ program that restores the entire tile wall (pai shan, 牌山) from a game record of Mahjong Soul. Note that the tile wall restored by this program can be used for testing purposes (input to [test/simulation_vs_annotation](test/simulation_vs_annotation)) only, and not for any other purpose.
+
+### [test/annotation_vs_simulation](test/annotation_vs_simulation)
+
+A testing framework called *annotation-vs-simulation* that checks if there is any discrepancy between the annotation implementation and the simulation implementation.
 
 ### [kanachan](kanachan)
 
