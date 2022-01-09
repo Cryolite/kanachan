@@ -74,10 +74,10 @@ if [[ ${version-NOT-DEFINED} == NOT-DEFINED ]]; then
                | grep -Eo 'Version[[:space:]]+[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+' \
                | grep -Eo '[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+'                    \
                | LANG=C.UTF-8 sort -Vu                                                  \
-               | tail -n 1)" \
+               | tail -n 1)"                                                            \
     || die_with_runtime_error "$PROGRAM_NAME" "Failed to guess Boost latest release version."
   if [[ ! $version =~ ^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$ ]]; then
-    die_with_runtime_error "$PROGRAM_NAME" "Failed to eguess Boost latest release version."
+    die_with_runtime_error "$PROGRAM_NAME" "Failed to guess Boost latest release version."
   fi
 fi
 if [[ ! $version =~ ^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$ ]]; then
