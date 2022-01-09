@@ -1482,6 +1482,8 @@ python::list Shoupai::getCandidatesOnAngang(
   python::list candidate;
   candidate.append(221);
   candidate.append(543 + relseat);
+  // 槍槓を見逃した場合のフリテン
+  zhenting_ = true;
   return candidate;
 }
 
@@ -1511,6 +1513,8 @@ python::list Shoupai::getCandidatesOnJiagang(
   if (python::len(candidates) >= 1u) {
     // Skip
     candidates.append(221);
+    // 槍槓を見逃した場合のフリテン
+    zhenting_ = true;
   }
 
   candidates.attr("sort")();
