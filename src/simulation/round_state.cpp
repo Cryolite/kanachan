@@ -2282,39 +2282,32 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
       // 大三元の包が発生している．
       std::int_fast32_t const score_base
         = (to == game_state_.getJu() ? 24000 : 16000);
-      bool const flag0 = [&]() -> bool {
-        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-          if (i == from && rong_delayed_[i]) {
-            return true;
+      // 包を伴う和了に本場分の点数が付帯しているかどうかのフラグ．
+      bool const flag = [&]() -> bool {
+        for (std::uint_fast8_t i = dapai_seat + 1u; i < dapai_seat + 4u; ++i) {
+          std::uint_fast8_t const seat = i % 4u;
+          if (rong_delayed_[seat]) {
+            return seat == to;
           }
         }
-        return false;
+        KANACHAN_THROW<std::logic_error>("A logic error.");
       }();
-      bool flag1 = false;
-      for (std::uint_fast8_t i = 4u; i > 0u;) {
-        --i;
-        // 包がある場合，本場分の点数は包の対象者が全額を支払う．ただし，包の
-        // 対象者が和了している場合は起家から一番遠い席が本場分の点数を支払う．
+      for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+        // 包を伴う和了に本場分の点数が付帯する場合，包の対象者が本場分の点数の
+        // 全額を支払う．ただし， `flag == false` の場合，
+        // ダブロン・トリプルロンによる上家取りにより包を伴う和了に本場分の
+        // 点数が付帯していないことに注意する．
         if (i == from) {
-          if (rong_delayed_[i]) {
-            std::int_fast32_t const score
-              = -score_base + (flag1 ? 0 : -300 * getBenChang());
-            round_result[i]["delta_score"] += score;
-            game_state_.addPlayerScore(i, score);
-            flag1 = true;
-          }
-          else {
-            std::int_fast32_t const score = -score_base - 300 * getBenChang();
-            round_result[i]["delta_score"] += score;
-            game_state_.addPlayerScore(i, score);
-          }
+          std::int_fast32_t const score
+            = -score_base + (flag ? -300 * getBenChang() : 0);
+          round_result[i]["delta_score"] += score;
+          game_state_.addPlayerScore(i, score);
         }
         if (i == dapai_seat){
           std::int_fast32_t const score
-            = score_base + (flag0 && !flag1 ? 0 : 300 * getBenChang());
+            = score_base + (flag ? 300 * getBenChang() : 0);
           round_result[i]["delta_score"] += score;
           game_state_.addPlayerScore(i, score);
-          flag1 = true;
         }
       }
       break;
@@ -2334,39 +2327,32 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
       // 大四喜の包が発生している．
       std::int_fast32_t const score_base
         = (to == game_state_.getJu() ? 48000 : 32000);
-      bool const flag0 = [&]() -> bool {
-        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-          if (i == from && rong_delayed_[i]) {
-            return true;
+      // 包を伴う和了に本場分の点数が付帯しているかどうかのフラグ．
+      bool const flag = [&]() -> bool {
+        for (std::uint_fast8_t i = dapai_seat + 1u; i < dapai_seat + 4u; ++i) {
+          std::uint_fast8_t const seat = i % 4u;
+          if (rong_delayed_[seat]) {
+            return seat == to;
           }
         }
-        return false;
+        KANACHAN_THROW<std::logic_error>("A logic error.");
       }();
-      bool flag1 = false;
-      for (std::uint_fast8_t i = 4u; i > 0u;) {
-        --i;
-        // 包がある場合，本場分の点数は包の対象者が全額を支払う．ただし，包の
-        // 対象者が和了している場合は起家から一番遠い席が本場分の点数を支払う．
+      for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+        // 包を伴う和了に本場分の点数が付帯する場合，包の対象者が本場分の点数の
+        // 全額を支払う．ただし， `flag == false` の場合，
+        // ダブロン・トリプルロンによる上家取りにより包を伴う和了に本場分の
+        // 点数が付帯していないことに注意する．
         if (i == from) {
-          if (rong_delayed_[i]) {
-            std::int_fast32_t const score
-              = -score_base + (flag1 ? 0 : -300 * getBenChang());
-            round_result[i]["delta_score"] += score;
-            game_state_.addPlayerScore(i, score);
-            flag1 = true;
-          }
-          else {
-            std::int_fast32_t const score = -score_base - 300 * getBenChang();
-            round_result[i]["delta_score"] += score;
-            game_state_.addPlayerScore(i, score);
-          }
+          std::int_fast32_t const score
+            = -score_base + (flag ? -300 * getBenChang() : 0);
+          round_result[i]["delta_score"] += score;
+          game_state_.addPlayerScore(i, score);
         }
         if (i == dapai_seat){
           std::int_fast32_t const score
-            = score_base + (flag0 && !flag1 ? 0 : 300 * getBenChang());
+            = score_base + (flag ? 300 * getBenChang() : 0);
           round_result[i]["delta_score"] += score;
           game_state_.addPlayerScore(i, score);
-          flag1 = true;
         }
       }
       break;
