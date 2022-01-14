@@ -2587,11 +2587,13 @@ bool RoundState::onHuangpaiPingju(python::dict result)
       if (i == getJu()) {
         for (std::uint_fast8_t j = 0u; j < 4u; ++j) {
           if (j == i) {
-            round_result[j]["delta_score"] += getPlayerDeltaScore(j) + 12000;
+            round_result[j]["delta_score"]
+              += (liuju_manguan ? 0 : getPlayerDeltaScore(j)) + 12000;
             game_state_.addPlayerScore(j, 12000);
           }
           else {
-            round_result[j]["delta_score"] += getPlayerDeltaScore(j) - 4000;
+            round_result[j]["delta_score"]
+              += (liuju_manguan ? 0 : getPlayerDeltaScore(j)) - 4000;
             game_state_.addPlayerScore(j, -4000);
           }
         }
@@ -2599,15 +2601,18 @@ bool RoundState::onHuangpaiPingju(python::dict result)
       else {
         for (std::uint_fast8_t j = 0u; j < 4u; ++j) {
           if (j == i) {
-            round_result[j]["delta_score"] += getPlayerDeltaScore(j) + 8000;
+            round_result[j]["delta_score"]
+              += (liuju_manguan ? 0 : getPlayerDeltaScore(j)) + 8000;
             game_state_.addPlayerScore(j, 8000);
           }
           else if (j == getJu()) {
-            round_result[j]["delta_score"] += getPlayerDeltaScore(j) - 4000;
+            round_result[j]["delta_score"]
+              += (liuju_manguan ? 0 : getPlayerDeltaScore(j)) - 4000;
             game_state_.addPlayerScore(j, -4000);
           }
           else {
-            round_result[j]["delta_score"] += getPlayerDeltaScore(j) - 2000;
+            round_result[j]["delta_score"]
+              += (liuju_manguan ? 0 : getPlayerDeltaScore(j)) - 2000;
             game_state_.addPlayerScore(j, -2000);
           }
         }
