@@ -136,51 +136,55 @@ This testing framework is very powerful and has allowed me to find many bugs in 
             }
           },
           "decisions": {
-            "type": "object",
-            "required": [
-              "sparse",
-              "numeric",
-              "progression",
-              "candidates",
-              "index"
-            ],
-            "properties": {
-              "sparse": {
-                "type": "array",
-                "minItems": 16,
-                "maxItems": 21,
-                "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "sparse",
+                "numeric",
+                "progression",
+                "candidates",
+                "index"
+              ],
+              "properties": {
+                "sparse": {
+                  "type": "array",
+                  "minItems": 16,
+                  "maxItems": 21,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "numeric": {
+                  "type": "array",
+                  "minItems": 6,
+                  "maxItems": 6,
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "progression": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "index": {
                   "type": "integer",
                   "minimum": 0
                 }
-              },
-              "numeric": {
-                "type": "array",
-                "minItems": 6,
-                "maxItems": 6,
-                "items": {
-                  "type": "integer"
-                }
-              },
-              "progression": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "candidates": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "index": {
-                "type": "integer",
-                "minimum": 0
               }
             }
           },
