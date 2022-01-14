@@ -8,7 +8,7 @@ message("PYTHON_VERSION=${PYTHON_VERSION}")
 message("CMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
 message("CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 include_directories(
   "/usr/include/python${PYTHON_VERSION}"
@@ -100,3 +100,4 @@ find_package(Boost
 add_compile_definitions(BOOST_STACKTRACE_USE_BACKTRACE)
 
 add_subdirectory(src)
+add_subdirectory(test/annotation_vs_simulation)
