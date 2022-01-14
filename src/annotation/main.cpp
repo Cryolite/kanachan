@@ -751,11 +751,13 @@ void convert(std::filesystem::path const &ph) {
         player_states[3u].getCurrentScore()
       };
       if (record.scores()[0u].delta_scores().size() != 0u) {
-        if (record.scores()[0u].delta_scores().size() != 4u) {
-          KANACHAN_THROW<std::runtime_error>("A broken data.");
-        }
-        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-          scores[i] += record.scores()[0u].delta_scores()[i];
+        for (auto const &score : record.scores()) {
+          if (score.delta_scores().size() != 4u) {
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+            scores[i] += score.delta_scores()[i];
+          }
         }
       }
 
