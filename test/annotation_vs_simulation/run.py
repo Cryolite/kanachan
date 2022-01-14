@@ -68,7 +68,7 @@ def _on_leaf(test_file_path: Path):
 def main():
     if len(sys.argv) < 2:
         raise RuntimeError('Too few arguments.')
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 3:
         raise RuntimeError('Too many arguments.')
 
     path = Path(sys.argv[1])
@@ -79,6 +79,19 @@ def main():
         _on_leaf(path)
         return
 
+    skip_list_path = None
+    if len(sys.argv) == 3:
+        skip_list_path = Path(sys.argv[2])
+        if not skip_list_path.is_file():
+            raise RuntimeError(f'{skip_list_path}: Not a file.')
+
+    skip_list = set()
+    if skip_list_path is not None:
+        with open(skip_list_path) as f:
+            for line in f:
+                line = line.rstrip('\n')
+                skip_list.add(line)
+
     if not path.is_dir():
         raise RuntimeError(f'{path}: Neither a file nor a directory.')
     for dirpath, dirnames, filenames in os.walk(path):
@@ -86,6 +99,9 @@ def main():
             if not filename.endswith('.json'):
                 continue
             test_file_path = Path(dirpath) / filename
+            if test_file_path.stem in skip_list:
+                print(f'{test_file_path}: SKIP')
+                continue
             _on_leaf(test_file_path)
 
 
