@@ -9,7 +9,7 @@ from kanachan.bert import training
 
 
 if __name__ == '__main__':
-    loss_function = nn.MSELoss()
+    loss_function = nn.HuberLoss()
     training.main(
         program_description='BERT training phase 2 - maximize round delta of score.',
         decoder_type=Decoder, model_type=Model, default_optimizer='lamb',
