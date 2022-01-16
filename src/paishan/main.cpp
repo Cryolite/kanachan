@@ -200,13 +200,55 @@ void process(std::filesystem::path const &ph, std::mt19937 &urng) {
   lq::GameDetailRecords msg1;
   msg1.ParseFromString(wrapper.data());
 
+  std::uint_fast32_t const game_record_version = msg1.version();
+  if (game_record_version == 0u) {
+    // The version of game records before the maintenance on 2021/07/28 (JST).
+  }
+  else if (game_record_version == 210715u) {
+    // The version of game records after the maintenance on 2021/07/28 (JST).
+  }
+  else {
+    KANACHAN_THROW<std::runtime_error>(_1)
+      << game_record_version << ": An unsupported game record version.";
+  }
+
+  auto const &records_0 = msg1.records();
+  auto const &records_210715 = msg1.actions();
+  std::size_t const record_size = [&]() -> std::size_t
+  {
+    if (game_record_version == 0u) {
+      if (records_210715.size() != 0u) {
+        KANACHAN_THROW<std::runtime_error>("A broken data.");
+      }
+      return records_0.size();
+    }
+    if (game_record_version == 210715u) {
+      if (records_0.size() != 0u) {
+        KANACHAN_THROW<std::runtime_error>("A broken data.");
+      }
+      return records_210715.size();
+    }
+    KANACHAN_THROW<std::logic_error>("A logic error.");
+  }();
+
   std::string chang;
   std::size_t ju;
   std::size_t ben;
 
-  bool flag = false;
-
-  for (auto const &r : msg1.records()) {
+  for (std::size_t record_count = 0u; record_count < record_size; ++record_count) {
+    std::string const &r = [&]() -> std::string const &
+    {
+      if (game_record_version == 0u) {
+        return records_0[record_count];
+      }
+      if (game_record_version == 210715u) {
+        return records_210715[record_count].result();
+      }
+      KANACHAN_THROW<std::logic_error>("A logic error.");
+    }();
+    if (game_record_version == 210715u && r.empty()) {
+      continue;
+    }
     wrapper.ParseFromString(r);
     if (wrapper.name() == ".lq.RecordAnGangAddGang") {
       lq::RecordAnGangAddGang record;

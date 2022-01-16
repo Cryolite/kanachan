@@ -187,9 +187,51 @@ void convert(std::filesystem::path const &ph) {
   Kanachan::RoundProgress round_progress;
   std::array<std::vector<Kanachan::Annotation>, 4u> player_annotations;
 
-  auto const &records = msg1.records();
-  for (std::size_t record_count = 0u; record_count < records.size(); ++record_count) {
-    std::string const &r = records[record_count];
+  std::uint_fast32_t const game_record_version = msg1.version();
+  if (game_record_version == 0u) {
+    // The version of game records before the maintenance on 2021/07/28 (JST).
+  }
+  else if (game_record_version == 210715u) {
+    // The version of game records after the maintenance on 2021/07/28 (JST).
+  }
+  else {
+    KANACHAN_THROW<std::runtime_error>(_1)
+      << game_record_version << ": An unsupported game record version.";
+  }
+
+  auto const &records_0 = msg1.records();
+  auto const &records_210715 = msg1.actions();
+  std::size_t const record_size = [&]() -> std::size_t
+  {
+    if (game_record_version == 0u) {
+      if (records_210715.size() != 0u) {
+        KANACHAN_THROW<std::runtime_error>("A broken data.");
+      }
+      return records_0.size();
+    }
+    if (game_record_version == 210715u) {
+      if (records_0.size() != 0u) {
+        KANACHAN_THROW<std::runtime_error>("A broken data.");
+      }
+      return records_210715.size();
+    }
+    KANACHAN_THROW<std::logic_error>("A logic error.");
+  }();
+
+  for (std::size_t record_count = 0u; record_count < record_size; ++record_count) {
+    std::string const &r = [&]() -> std::string const &
+    {
+      if (game_record_version == 0u) {
+        return records_0[record_count];
+      }
+      if (game_record_version == 210715u) {
+        return records_210715[record_count].result();
+      }
+      KANACHAN_THROW<std::logic_error>("A logic error.");
+    }();
+    if (game_record_version == 210715u && r.empty()) {
+      continue;
+    }
     wrapper.ParseFromString(r);
     if (wrapper.name() == ".lq.RecordAnGangAddGang") {
       // 暗槓または加槓
@@ -594,7 +636,7 @@ void convert(std::filesystem::path const &ph) {
           seat, player_states, round_progress, prev_action_candidates, record);
       }
 
-      if (record_count + 1u >= records.size()) {
+      if (record_count + 1u >= record_size) {
         KANACHAN_THROW<std::runtime_error>("A broken data.");
       }
       // 四風連打もしくは四槓散了を確定させる打牌が立直宣言だった場合で，
@@ -603,7 +645,22 @@ void convert(std::filesystem::path const &ph) {
       // (現在の点数より1000点減っているかどうか) を見る以外に方法が無い．
       lq::RecordNewRound next_record;
       {
-        std::string const &rr = records[record_count + 1u];
+        std::string const &rr = [&]() -> std::string const &
+        {
+          if (game_record_version == 0u) {
+            return records_0[record_count + 1u];
+          }
+          if (game_record_version == 210715u) {
+            for (std::size_t i = record_count + 1u; record_count < record_size; ++i) {
+              std::string const &rr_ = records_210715[i].result();
+              if (!rr_.empty()) {
+                return rr_;
+              }
+            }
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          KANACHAN_THROW<std::logic_error>("A logic error.");
+        }();
         lq::Wrapper next_wrapper;
         next_wrapper.ParseFromString(rr);
         if (next_wrapper.name() != ".lq.RecordNewRound") {

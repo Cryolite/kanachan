@@ -1008,6 +1008,20 @@ message Friend {
   PlayerBaseView base = 1;
   AccountActiveState state = 2;
 }
+message GameAction {
+  uint32 passed = 1;
+  uint32 type = 2;
+  bytes result = 3;
+  GameUserInput user_input = 4;
+  GameUserEvent user_event = 5;
+  uint32 game_event = 6;
+}
+message GameChiPengGang {
+  uint32 type = 1;
+  uint32 index = 2;
+  bool cancel_operation = 3;
+  uint32 timeuse = 6;
+}
 message GameConfig {
   uint32 category = 1;
   GameMode mode = 2;
@@ -1020,6 +1034,9 @@ message GameConnectInfo {
 }
 message GameDetailRecords {
   repeated bytes records = 1;
+  uint32 version = 2;
+  repeated GameAction actions = 3;
+  bytes bar = 4;
 }
 message GameDetailRule {
   uint32 time_fixed = 1;
@@ -1229,6 +1246,18 @@ message GameRuleSetting {
   bool use_detail_rule = 5;
   ContestDetailRuleV2 detail_rule_v2 = 6;
 }
+message GameSelfOperation {
+  uint32 type = 1;
+  uint32 index = 2;
+  string tile = 3;
+  bool cancel_operation = 4;
+  bool moqie = 5;
+  uint32 timeuse = 6;
+  int32 tile_state = 7;
+  repeated string change_tiles = 8;
+  repeated int32 tile_states = 9;
+  uint32 gap_type = 10;
+}
 message GameSetting {
   uint32 emoji_switch = 1;
 }
@@ -1259,6 +1288,21 @@ message GameSnapshot {
 message GameTestingEnvironmentSet {
   uint32 paixing = 1;
   uint32 left_count = 2;
+}
+message GameUserEvent {
+  uint32 seat = 1;
+  uint32 type = 2;
+}
+message GameUserInput {
+  uint32 seat = 1;
+  uint32 type = 2;
+  uint32 emo = 3;
+  GameSelfOperation operation = 10;
+  GameChiPengGang cpg = 11;
+  GameVoteGameEnd vote = 12;
+}
+message GameVoteGameEnd {
+  bool yes = 1;
 }
 message HuInfoXueZhanMid {
   uint32 seat = 1;
