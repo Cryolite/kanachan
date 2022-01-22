@@ -17,6 +17,8 @@ RUN pip3 install -U \
       setuptools \
       wheel
 
+RUN pip3 install torch==1.10.1+cpu torchvision==0.11.2+cpu torchaudio==0.10.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+
 # `marisa-trie` only supports for in-tree build.
 RUN pushd /home/ubuntu/.local/src/marisa-trie && \
     autoreconf -i && \
@@ -33,7 +35,9 @@ COPY --chown=ubuntu . /opt/kanachan
 
 WORKDIR /opt/kanachan
 
-RUN cp /opt/kanachan-prerequisites/mahjongsoul.pb.{h,cc} src/common && \
+RUN pushd src/common && \
+    protoc -I. --cpp_out=. mahjongsoul.proto && \
+    popd && \
     mkdir -p build && \
     pushd build && \
     cmake -DPYTHON_VERSION="$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \

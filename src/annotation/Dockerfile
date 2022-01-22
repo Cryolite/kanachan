@@ -8,7 +8,9 @@ USER ubuntu
 
 WORKDIR /opt/kanachan
 
-RUN cp /opt/kanachan-prerequisites/mahjongsoul.pb.{h,cc} src/common && \
+RUN pushd src/common && \
+    protoc -I. --cpp_out=. mahjongsoul.proto && \
+    popd && \
     mkdir build && \
     pushd build && \
     cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \

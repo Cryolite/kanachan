@@ -63,6 +63,4 @@ RUN mkdir -p /home/ubuntu/.local/src && \
     popd && \
     popd
 
-RUN cd /opt/kanachan-prerequisites && protoc -I. --cpp_out=. mahjongsoul.proto
-
 USER root

@@ -8,7 +8,9 @@ USER ubuntu
 
 WORKDIR /opt/kanachan
 
-RUN cp /opt/kanachan-prerequisites/mahjongsoul.pb.{h,cc} src/common && \
+RUN pushd src/common && \
+    protoc -I. --cpp_out=. mahjongsoul.proto && \
+    popd && \
     mkdir build && \
     pushd build && \
     cmake -DPYTHON_VERSION="$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
