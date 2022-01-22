@@ -37,7 +37,8 @@ std::any chi(
     return next_step;
   }
 
-  KANACHAN_THROW<std::logic_error>(_1) << action << ": An invalid action.";
+  KANACHAN_THROW<std::logic_error>(_1)
+    << action << ": An invalid dapai action after chi.";
 }
 
 } // namespace Kanachan

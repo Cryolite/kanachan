@@ -37,7 +37,8 @@ std::any peng(
     return next_step;
   }
 
-  KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action.";
+  KANACHAN_THROW<std::runtime_error>(_1)
+    << action << ": An invalid dapai action after peng.";
 }
 
 } // namespace Kanachan

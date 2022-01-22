@@ -41,7 +41,8 @@ std::any angang(
     return next_step;
   }
 
-  KANACHAN_THROW<std::logic_error>(_1) << action << ": An invalid action.";
+  KANACHAN_THROW<std::logic_error>(_1)
+    << action << ": An invalid action on an gang.";
 }
 
 } // namespace Kanachan

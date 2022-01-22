@@ -871,7 +871,8 @@ std::pair<std::uint_fast16_t, std::uint_fast8_t> RoundState::onZimo()
   }
 
   if (221u <= action && action != std::numeric_limits<std::uint_fast16_t>::max()) {
-    KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action.";
+    KANACHAN_THROW<std::runtime_error>(_1)
+      << action << ": An invalid action on zimo.";
   }
 
   return { action, tile };
@@ -1000,7 +1001,7 @@ RoundState::onDapai(
       }
       KANACHAN_THROW<std::runtime_error>(_1)
         << static_cast<unsigned>(j) << ": " << actions[j]
-        << ": An invalid action.";
+        << ": An invalid rong action.";
     }
 
     seat_ = std::numeric_limits<std::uint_fast8_t>::max();
@@ -1056,7 +1057,7 @@ RoundState::onDapai(
       }
       KANACHAN_THROW<std::runtime_error>(_1)
         << static_cast<unsigned>(j) << ": " << actions[j]
-        << ": An invalid action.";
+        << ": An invalid peng or da ming gang action.";
     }
 
     first_zimo_ = { false, false, false, false };
@@ -1093,7 +1094,7 @@ RoundState::onDapai(
       }
       KANACHAN_THROW<std::runtime_error>(_1)
         << static_cast<unsigned>(j) << ": " << actions[j]
-        << ": An invalid action.";
+        << ": An invalid chi action.";
     }
 
     first_zimo_ = { false, false, false, false };
@@ -1159,7 +1160,8 @@ std::uint_fast16_t RoundState::onChi(std::uint_fast8_t const encode)
 
   std::uint_fast16_t const action = selectAction_(seat_, features);
   if (action >= 148u) {
-    KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action.";
+    KANACHAN_THROW<std::runtime_error>(_1)
+      << action << ": An invalid dapai action after chi.";
   }
 
   {
@@ -1211,7 +1213,8 @@ std::uint_fast16_t RoundState::onPeng(std::uint_fast8_t const encode)
 
   std::uint_fast16_t const action = selectAction_(seat_, features);
   if (action >= 148u) {
-    KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action.";
+    KANACHAN_THROW<std::runtime_error>(_1)
+      << action << ": An invalid dapai action after peng.";
   }
 
   {
@@ -1315,7 +1318,8 @@ std::uint_fast16_t RoundState::onAngang(
       // Skip
       continue;
     }
-    KANACHAN_THROW<std::logic_error>(_1) << action << ": An invalid action.";
+    KANACHAN_THROW<std::logic_error>(_1)
+      << action << ": An invalid action on an gang.";
   }
 
   if (qianggang) {
@@ -1404,7 +1408,8 @@ std::uint_fast16_t RoundState::onJiagang(
       continue;
     }
 
-    KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action.";
+    KANACHAN_THROW<std::runtime_error>(_1)
+      << action << ": An invalid action on jia gang.";
   }
 
   if (qianggang) {

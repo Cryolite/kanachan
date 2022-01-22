@@ -74,7 +74,8 @@ std::any dapai(
       std::function<std::any()> next_step(std::move(daminggang));
       return next_step;
     }
-    KANACHAN_THROW<std::logic_error>(_1) << action << ": An invalid action.";
+    KANACHAN_THROW<std::logic_error>(_1)
+      << action << ": An invalid action on dapai.";
   }
 
   if (action == 543u) {
@@ -113,7 +114,8 @@ std::any dapai(
     }
   }
 
-  KANACHAN_THROW<std::logic_error>(_1) << action << ": An invalid action.";
+  KANACHAN_THROW<std::logic_error>(_1)
+    << action << ": An invalid action on dapai.";
 }
 
 } // namespace Kanachan

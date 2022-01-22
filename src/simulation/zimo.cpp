@@ -93,7 +93,8 @@ std::any zimo(Kanachan::RoundState &round_state, python::dict result)
     return next_step;
   }
 
-  KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action.";
+  KANACHAN_THROW<std::runtime_error>(_1)
+    << action << ": An invalid action on zimo.";
 }
 
 } // namespace Kanachan
