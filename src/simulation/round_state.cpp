@@ -991,6 +991,18 @@ RoundState::onDapai(
       if (actions[j] == 221) {
         continue;
       }
+      if (222u <= actions[j] && actions[j] <= 311u) {
+        // Chi that is being canceled by rong.
+        continue;
+      }
+      if (312u <= actions[j] && actions[j] <= 431u) {
+        // Peng that is being canceled by rong.
+        continue;
+      }
+      if (432u <= actions[j] && actions[j] <= 542u) {
+        // Da ming gang that is being canceled by rong.
+        continue;
+      }
       if (543u <= actions[j] && actions[j] <= 545u) {
         std::uint_fast8_t const calling_seat = (seat_ + j + 1u) % 4u;
         rong_delayed_[calling_seat] = true;
@@ -1050,6 +1062,10 @@ RoundState::onDapai(
         continue;
       }
       if (actions[j] == 221) {
+        continue;
+      }
+      if (222u <= actions[j] && actions[j] <= 311u) {
+        // Chi that is being canceled by peng or da ming gang.
         continue;
       }
       if (actions[j] == std::numeric_limits<std::uint_fast16_t>::max()) {
