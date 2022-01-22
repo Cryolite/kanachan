@@ -75,7 +75,7 @@ A C++ program that restores the entire tile wall (pai shan, 牌山) from a game 
 
 A testing framework called *annotation-vs-simulation* that checks if there is any discrepancy between the annotation implementation and the simulation implementation.
 
-### [kanachan](kanachan)
+### [kanachan/training](kanachan/training)
 
 Implementations of learning programs and prediction modules with [PyTorch](https://pytorch.org/).
 
@@ -306,7 +306,7 @@ The 4th field consists of all the possible actions at that decision-making point
 | Pon, (peng, ポン, 碰)        | `312` ~ `431` | `312 + relseat * 40 + peng`                                               |
 | Da Ming Gang (大明槓)        | `432` ~ `542` | Represented by the discarded tile.<br/>`432 + relseat * 37 + tile`        |
 | Rong (栄和)                  | `543` ~ `545` | `543`: from xia jia (下家から)<br/>`535`: from dui mian (対面から)<br/>`536`: from shang Jia (上家から) |
-| &lt;NULL&gt;                 | `546`         | (does not appear in annotation)                                           |
+| &lt;VALUE&gt;                | `546`         | (does not appear in annotation)                                           |
 | &lt;PADDING&gt;              | `547`         | (does not appear in annotation)                                           |
 
 ### 5th Field: Actual Action
