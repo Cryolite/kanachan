@@ -2,10 +2,10 @@
 
 import sys
 from torch import nn
-from kanachan.bert.phase2.decoder import Decoder
-from kanachan.bert.phase2.model import Model
-from kanachan.bert.phase2.iterator_adaptor import IteratorAdaptor
-from kanachan.bert import training
+from kanachan.training.bert.phase2.decoder import Decoder
+from kanachan.training.bert.phase2.model import Model
+from kanachan.training.bert.phase2.iterator_adaptor import IteratorAdaptor
+from kanachan.training.bert import training
 
 
 if __name__ == '__main__':

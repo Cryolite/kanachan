@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 from torch import nn
-from kanachan.pretraining.encoder import Encoder
-from kanachan.pretraining.decoder import Decoder
+from kanachan.training.aiayn.encoder import Encoder
+from kanachan.training.aiayn.decoder import Decoder
 
 
 class Model(nn.Module):

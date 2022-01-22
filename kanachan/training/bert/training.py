@@ -17,11 +17,10 @@ from torch.optim import (Optimizer, RAdam,)
 from torch.utils.data import DataLoader
 from torch.distributed import (init_process_group, all_reduce,)
 from torch.utils.tensorboard.writer import SummaryWriter
-from kanachan import common
-from kanachan.iterator_adaptor_base import IteratorAdaptorBase
-from kanachan.common import Dataset
-from kanachan.bert.encoder import Encoder
-from kanachan.bert.model_mode import ModelMode
+from kanachan.training.common import (initialize_logging, Dataset,)
+from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
+from kanachan.training.bert.encoder import Encoder
+from kanachan.training.bert.model_mode import ModelMode
 from apex import amp
 from apex.parallel import (DistributedDataParallel, convert_syncbn_model,)
 from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
@@ -562,7 +561,7 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
             num_samples_to_skip = num_samples - progress_data['num_samples']
 
     experiment_path.mkdir(parents=True, exist_ok=True)
-    common.initialize_logging(experiment_path, rank)
+    initialize_logging(experiment_path, rank)
 
     if world_size is None:
         assert(rank is None)

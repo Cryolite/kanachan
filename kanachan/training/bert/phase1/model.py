@@ -2,14 +2,14 @@
 
 import torch
 from torch import nn
-from kanachan.bert.encoder import Encoder
-from kanachan.bert.phase1.decoder import Decoder
+from kanachan.training.bert.encoder import Encoder
+from kanachan.training.bert.phase1.decoder import Decoder
 
 
 class Model(nn.Module):
     def __init__(
             self, encoder: Encoder, decoder: Decoder,
-            *, freeze_encoder: bool) -> None:
+            *, freeze_encoder: bool=False) -> None:
         super(Model, self).__init__()
         self.__encoder = encoder
         self.__decoder = decoder

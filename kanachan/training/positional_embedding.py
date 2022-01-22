@@ -2,7 +2,7 @@
 
 from typing import Optional
 from torch import nn
-from kanachan.positional_encoding import PositionalEncoding
+from kanachan.training.positional_encoding import PositionalEncoding
 
 
 class PositionalEmbedding(nn.Module):

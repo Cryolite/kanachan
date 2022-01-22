@@ -2,7 +2,7 @@
 
 import torch
 from torch import nn
-from kanachan.constants import (NUM_ACTIONS,)
+from kanachan.training.constants import (NUM_TYPES_OF_ACTIONS,)
 
 
 class Decoder(nn.Module):
@@ -13,8 +13,8 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         self.__candidates_embedding = nn.Embedding(
-            NUM_ACTIONS + 1, num_dimensions, padding_idx=NUM_ACTIONS,
-            sparse=sparse)
+            NUM_TYPES_OF_ACTIONS + 2, num_dimensions,
+            padding_idx=NUM_TYPES_OF_ACTIONS + 1, sparse=sparse)
         self.__candidates_dropout = nn.Dropout(p=dropout)
 
         decoder_layer = nn.TransformerDecoderLayer(

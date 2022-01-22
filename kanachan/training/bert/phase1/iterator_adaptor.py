@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
-from kanachan.iterator_adaptor_base import IteratorAdaptorBase
+from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
 
 
 class IteratorAdaptor(IteratorAdaptorBase):

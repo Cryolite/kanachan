@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import torch
-from kanachan.iterator_adaptor_base import IteratorAdaptorBase
+from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
 
 
 class IteratorAdaptor(IteratorAdaptorBase):

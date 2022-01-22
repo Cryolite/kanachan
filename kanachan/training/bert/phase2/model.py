@@ -2,8 +2,8 @@
 
 import torch
 from torch import nn
-from kanachan.bert.encoder import Encoder
-from kanachan.bert.phase2.decoder import Decoder
+from kanachan.training.bert.encoder import Encoder
+from kanachan.training.bert.phase2.decoder import Decoder
 
 
 class Model(nn.Module):

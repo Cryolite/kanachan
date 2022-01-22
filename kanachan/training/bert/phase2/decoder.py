@@ -2,7 +2,7 @@
 
 import torch
 from torch import nn
-from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
+from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
 
 
 class Decoder(nn.Module):

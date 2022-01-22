@@ -2,13 +2,13 @@
 
 import torch
 from torch import nn
-from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
+from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
 
 
 class Decoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_final_feedforward: int,
-            dropout: float, activation_function, **kwargs) -> None:
+            dropout: float, activation_function: str, **kwargs) -> None:
         super(Decoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.

@@ -16,14 +16,11 @@ from torch.utils.data import DataLoader
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils import tensorboard
-from kanachan.constants import (
-    MAX_LENGTH_OF_POSITIONAL_FEATURES, NUM_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
-from kanachan import common
-from kanachan.common import (Dataset,)
-from kanachan.pretraining.iterator_adaptor import IteratorAdaptor
-from kanachan.pretraining.encoder import Encoder
-from kanachan.pretraining.decoder import Decoder
-from kanachan.pretraining.model import Model
+from kanachan.training.common import (initialize_logging, Dataset,)
+from kanachan.training.aiayn.iterator_adaptor import IteratorAdaptor
+from kanachan.training.aiayn.encoder import Encoder
+from kanachan.training.aiayn.decoder import Decoder
+from kanachan.training.aiayn.model import Model
 from apex import amp
 from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 
@@ -278,7 +275,7 @@ if __name__ == '__main__':
             f'{config.snapshot_interval}: invalid value for `--snapshot-interval`')
 
     experiment_path.mkdir(parents=True, exist_ok=True)
-    common.initialize_logging(experiment_path, rank)
+    initialize_logging(experiment_path, rank)
 
     logging.info(f'Training data: {config.training_data}')
     logging.info(f'# of workers: {config.num_workers}')

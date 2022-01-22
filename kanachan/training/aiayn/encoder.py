@@ -2,10 +2,10 @@
 
 import torch
 from torch import nn
-from kanachan.constants import (
-    NUM_SPARSE_FEATURES, NUM_TYPES_OF_POSITIONAL_FEATURES,
-    MAX_LENGTH_OF_POSITIONAL_FEATURES,)
-from kanachan.positional_embedding import PositionalEmbedding
+from kanachan.training.constants import (
+    NUM_TYPES_OF_SPARSE_FEATURES, NUM_TYPES_OF_PROGRESSION_FEATURES,
+    MAX_LENGTH_OF_PROGRESSION_FEATURES,)
+from kanachan.training.positional_embedding import PositionalEmbedding
 
 
 class Encoder(nn.Module):
@@ -15,14 +15,14 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
 
         self.__sparse_embedding = nn.Embedding(
-            NUM_SPARSE_FEATURES + 1, num_dimensions,
-            padding_idx=NUM_SPARSE_FEATURES, sparse=sparse)
+            NUM_TYPES_OF_SPARSE_FEATURES + 1, num_dimensions,
+            padding_idx=NUM_TYPES_OF_SPARSE_FEATURES, sparse=sparse)
         self.__sparse_dropout = nn.Dropout(p=dropout)
 
         self.__positional_embedding = PositionalEmbedding(
-            NUM_TYPES_OF_POSITIONAL_FEATURES + 1, num_dimensions,
-            padding_idx=NUM_TYPES_OF_POSITIONAL_FEATURES,
-            max_length=MAX_LENGTH_OF_POSITIONAL_FEATURES, dropout=dropout,
+            NUM_TYPES_OF_PROGRESSION_FEATURES + 1, num_dimensions,
+            padding_idx=NUM_TYPES_OF_PROGRESSION_FEATURES,
+            max_length=MAX_LENGTH_OF_PROGRESSION_FEATURES, dropout=dropout,
             sparse=sparse)
 
         encoder_layer = nn.TransformerEncoderLayer(
