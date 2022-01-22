@@ -20,8 +20,7 @@ class Shoupai
 {
 public:
   Shoupai(
-    std::uint_fast8_t index, Kanachan::Paishan const &paishan,
-    boost::python::object external_tool);
+    std::uint_fast8_t index, Kanachan::Paishan const &paishan);
 
   Shoupai(Shoupai const &rhs) = default;
 

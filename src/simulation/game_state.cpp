@@ -1,18 +1,11 @@
 #include "simulation/game_state.hpp"
 
-#include "simulation/utility.hpp"
+#include "simulation/model_wrapper.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
-#include <boost/python/import.hpp>
-#include <boost/python/extract.hpp>
-#include <boost/python/list.hpp>
-#include <boost/python/str.hpp>
-#include <boost/python/long.hpp>
 #include <boost/python/object.hpp>
-#include <boost/python/handle.hpp>
-#include <Python.h>
-#include <functional>
 #include <array>
+#include <functional>
 #include <stdexcept>
 #include <cstdint>
 
@@ -101,60 +94,13 @@ GameState::getPlayerRanking(std::uint_fast8_t const seat) const
 }
 
 std::uint_fast16_t GameState::selectAction(
-  std::uint_fast8_t const seat, python::list features) const
+  std::uint_fast8_t const seat, python::object features) const
 {
   KANACHAN_ASSERT((seat < 4u));
   KANACHAN_ASSERT((!features.is_none()));
   KANACHAN_ASSERT((python::len(features) == 4));
-
-  python::object model = seats_[seat].second;
-  python::object action;
-  try {
-    action = model(features);
-  }
-  catch (python::error_already_set const &) {
-    auto const [type, value, traceback] = [](){
-      PyObject *p_type = nullptr;
-      PyObject *p_value = nullptr;
-      PyObject *p_traceback = nullptr;
-      PyErr_Fetch(&p_type, &p_value, &p_traceback);
-      python::object type_{python::handle<>(p_type)};
-      python::object value_;
-      if (p_value != nullptr) {
-        value_ = python::object{python::handle<>(p_value)};
-      }
-      else {
-        value_ = python::object();
-      }
-      python::object traceback_;
-      if (p_traceback != nullptr) {
-        traceback_ = python::object{python::handle<>(p_traceback)};
-      }
-      else {
-        traceback_ = python::object();
-      }
-      return std::tuple(type_, value_, traceback_);
-    }();
-
-    python::object m = python::import("traceback");
-    python::object o = m.attr("format_exception")(type, value, traceback);
-    o = python::str("").attr("join")(o);
-    python::extract<std::string> str(o);
-    KANACHAN_ASSERT((str.check()));
-    KANACHAN_THROW<std::runtime_error>(str());
-  }
-  python::extract<python::list> candidates(features[3]);
-  KANACHAN_ASSERT((candidates.check()));
-  python::list candidates_ = candidates();
-  python::extract<python::long_> action_(action);
-  if (!action_.check()) {
-    KANACHAN_THROW<std::runtime_error>("A type error.");
-  }
-  if (candidates_.count(action_()) != 1) {
-    KANACHAN_THROW<std::runtime_error>(_1)
-      << python::extract<long>(action_())() << ": An invalid action.";
-  }
-  return python::extract<long>(action_());
+  Kanachan::ModelWrapper const &model = seats_[seat].second;
+  return model(features);
 }
 
 void GameState::onSuccessfulLizhi(std::uint_fast8_t const seat)

@@ -27,14 +27,14 @@ namespace python = boost::python;
 
 RoundState::RoundState(
   std::mt19937 &urng, Kanachan::GameState &game_state,
-  Kanachan::Paishan const *p_test_paishan, python::object external_tool)
+  Kanachan::Paishan const *p_test_paishan)
   : game_state_(game_state),
     paishan_(p_test_paishan == nullptr ? Kanachan::Paishan(urng) : *p_test_paishan),
     shoupai_list_({
-        Kanachan::Shoupai((4u - getJu()) % 4u, paishan_, external_tool),
-        Kanachan::Shoupai((5u - getJu()) % 4u, paishan_, external_tool),
-        Kanachan::Shoupai((6u - getJu()) % 4u, paishan_, external_tool),
-        Kanachan::Shoupai((7u - getJu()) % 4u, paishan_, external_tool)
+        Kanachan::Shoupai((4u - getJu()) % 4u, paishan_),
+        Kanachan::Shoupai((5u - getJu()) % 4u, paishan_),
+        Kanachan::Shoupai((6u - getJu()) % 4u, paishan_),
+        Kanachan::Shoupai((7u - getJu()) % 4u, paishan_)
       }),
     seat_(getJu()),
     progression_()

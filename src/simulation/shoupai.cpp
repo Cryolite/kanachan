@@ -4,6 +4,7 @@
 #include "simulation/paishan.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
+#include <boost/python/import.hpp>
 #include <boost/python/extract.hpp>
 #include <boost/python/list.hpp>
 #include <boost/python/tuple.hpp>
@@ -218,12 +219,10 @@ void swap(Shoupai &lhs, Shoupai &rhs) noexcept
 }
 
 Shoupai::Shoupai(
-  std::uint_fast8_t const index, Kanachan::Paishan const &paishan,
-  python::object external_tool)
-  : external_tool_(external_tool)
+  std::uint_fast8_t const index, Kanachan::Paishan const &paishan)
+  : external_tool_()
 {
   KANACHAN_ASSERT((index < 4u));
-  KANACHAN_ASSERT((!external_tool.is_none()));
 
   for (std::uint_fast8_t i = 0u; i < 3u; ++i) {
     for (std::uint_fast8_t j = 0u; j < 4u; ++j) {
@@ -235,6 +234,10 @@ Shoupai::Shoupai(
   std::uint_fast8_t const tile = paishan[48u + index];
   KANACHAN_ASSERT((tile < 37u));
   ++shoupai_[tile];
+
+  python::object o = python::import("kanachan.simulation");
+  o = o.attr("Tool");
+  external_tool_ = o();
 
   if (isTingpai()) {
     updateHupaiList_();

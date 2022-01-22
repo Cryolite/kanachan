@@ -1,7 +1,7 @@
 #if !defined(KANACHAN_SIMULATION_GAME_STATE_HPP_INCLUDE_GUARD)
 #define KANACHAN_SIMULATION_GAME_STATE_HPP_INCLUDE_GUARD
 
-#include <boost/python/list.hpp>
+#include "simulation/model_wrapper.hpp"
 #include <boost/python/object.hpp>
 #include <array>
 #include <utility>
@@ -13,7 +13,7 @@ namespace Kanachan{
 class GameState
 {
 public:
-  using Seat = std::pair<std::uint_fast8_t, boost::python::object>;
+  using Seat = std::pair<std::uint_fast8_t, Kanachan::ModelWrapper>;
 
 public:
   GameState(
@@ -49,7 +49,7 @@ public:
 
 public:
   std::uint_fast16_t selectAction(
-    std::uint_fast8_t seat, boost::python::list features) const;
+    std::uint_fast8_t seat, boost::python::object features) const;
 
 public:
   void onSuccessfulLizhi(std::uint_fast8_t seat);

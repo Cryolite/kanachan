@@ -25,6 +25,7 @@ add_library(_simulation SHARED
   xiangting_calculator.cpp
   paishan.cpp
   game_state.cpp
+  model_wrapper.cpp
   utility.cpp)
 target_link_libraries(_simulation
   PRIVATE common

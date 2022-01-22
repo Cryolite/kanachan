@@ -6,7 +6,6 @@
 #include "simulation/game_state.hpp"
 #include <boost/python/dict.hpp>
 #include <boost/python/list.hpp>
-#include <boost/python/object.hpp>
 #include <random>
 #include <array>
 #include <utility>
@@ -21,8 +20,7 @@ class RoundState
 public:
   RoundState(
     std::mt19937 &urng, Kanachan::GameState &game_state,
-    Kanachan::Paishan const *p_test_paishan,
-    boost::python::object external_tool);
+    Kanachan::Paishan const *p_test_paishan);
 
   RoundState(RoundState const &) = delete;
 

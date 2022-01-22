@@ -7,7 +7,6 @@
 #include "common/assert.hpp"
 #include "common/throw.hpp"
 #include <boost/python/dict.hpp>
-#include <boost/python/object.hpp>
 #include <random>
 #include <functional>
 #include <any>
@@ -20,14 +19,11 @@ namespace python = boost::python;
 
 bool simulateRound(
   std::mt19937 &urng, Kanachan::GameState &game_state,
-  python::object external_tool, Kanachan::Paishan const *p_test_paishan,
-  python::dict result)
+  Kanachan::Paishan const *p_test_paishan, python::dict result)
 {
-  KANACHAN_ASSERT((!external_tool.is_none()));
   KANACHAN_ASSERT((!result.is_none()));
 
-  Kanachan::RoundState round_state(
-    urng, game_state, p_test_paishan, external_tool);
+  Kanachan::RoundState round_state(urng, game_state, p_test_paishan);
 
   std::function<std::any()> next_step = std::bind(
     &Kanachan::zimo, std::ref(round_state), result);

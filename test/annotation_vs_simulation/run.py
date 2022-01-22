@@ -4,9 +4,7 @@ from pathlib import Path
 import os
 import json
 import sys
-from kanachan.simulation.test_model import TestModel
-from kanachan.simulation.tool import Tool
-from kanachan.simulation import test
+from kanachan.simulation import (TestModel, test,)
 
 
 def _on_leaf(test_file_path: Path):
@@ -35,8 +33,7 @@ def _on_leaf(test_file_path: Path):
 
     test_model = TestModel(rounds)
 
-    result = test(
-        simulation_mode, player_grades, test_model, Tool(), paishan_list)
+    result = test(simulation_mode, player_grades, test_model, paishan_list)
 
     if len(result['rounds']) != len(test_data['rounds']):
         raise RuntimeError(f'{result["rounds"]} != {test_data["rounds"]}')
