@@ -29,7 +29,7 @@ However, decision-making points in the following relatively rare situations cann
 Non-developers do not need to run the following command to build the Docker image because it built and available as a [public Docker image](https://hub.docker.com/r/cryolite/kanachan.annotate).
 
 ```bash
-kanachan$ docker build -f annotate/Dockerfile -t cryolite/kanachan.annotate .
+kanachan$ docker build -f src/annotate/Dockerfile -t cryolite/kanachan.annotate .
 ```
 
 ## How to Use
