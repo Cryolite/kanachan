@@ -6,8 +6,8 @@ from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
 
 
 class IteratorAdaptor(IteratorAdaptorBase):
-    def __init__(self, path: Path, num_dimensions: int) -> None:
-        super(IteratorAdaptor, self).__init__(path, num_dimensions)
+    def __init__(self, path: Path) -> None:
+        super(IteratorAdaptor, self).__init__(path)
 
     def __next__(self):
         sparse, numeric, positional, candidates, index, results = super(IteratorAdaptor, self).__next__()

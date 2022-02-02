@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import pathlib
+from pathlib import Path
 import torch
 import torch.nn.functional
 from torch.utils.data import get_worker_info
@@ -12,9 +12,8 @@ from kanachan.training.constants import (
 
 
 class IteratorAdaptorBase(object):
-    def __init__(self, path: pathlib.Path, dimension: int) -> None:
+    def __init__(self, path: Path) -> None:
         self.__fp = open(path)
-        self.__dimension = dimension
 
         if get_worker_info() is not None:
             try:

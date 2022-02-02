@@ -35,7 +35,7 @@ def _validate(
 
     # Prepare the validation data loader. Note that this data loader must
     # iterate the validation data set only once.
-    iterator_adaptor = lambda path: iterator_adaptor_type(path, dimension)
+    iterator_adaptor = lambda path: iterator_adaptor_type(path)
     dataset = Dataset(validation_data, iterator_adaptor)
     data_loader = DataLoader(
         dataset, batch_size=validation_batch_size, num_workers=num_workers,
@@ -92,7 +92,7 @@ def _training_epoch(
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: iterator_adaptor_type(path, dimension)
+    iterator_adaptor = lambda path: iterator_adaptor_type(path)
     dataset = Dataset(training_data, iterator_adaptor)
     data_loader = DataLoader(
         dataset, batch_size=training_batch_size, num_workers=num_workers,
