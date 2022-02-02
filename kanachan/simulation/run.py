@@ -285,7 +285,7 @@ def main():
         r = game['ranking']
         s = game['score']
         ranking += r
-        grading_point += [125, 60, -5, -255][r] + (30000 - s) / 1000
+        grading_point += [125, 60, -5, -255][r] + (s - 25000) // 1000
         jade_point += [0.5, 0.2, -0.2, -0.5][r]
         num_tops += 1 if r == 0 else 0
         num_games += 1

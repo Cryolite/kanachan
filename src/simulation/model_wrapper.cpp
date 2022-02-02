@@ -71,55 +71,56 @@ std::uint_fast16_t ModelWrapper::operator()(python::object features) const
   python::object torch = python::import("torch");
   python::object constants = python::import("kanachan.training.constants");
 
+  python::object candidates;
   python::object prediction;
   try {
-    python::object tensor = python::getattr(torch, "tensor");
+    python::object tensor = torch.attr("tensor");
     python::dict kwargs;
 
     python::object sparse = features[0];
-    while (python::len(sparse) < python::getattr(constants, "MAX_NUM_ACTIVE_SPARSE_FEATURES")) {
+    while (python::len(sparse) < constants.attr("MAX_NUM_ACTIVE_SPARSE_FEATURES")) {
       // Padding.
-      python::getattr(sparse, "append")(
+      sparse.attr("append")(
         python::getattr(constants, "NUM_TYPES_OF_SPARSE_FEATURES"));
     }
     kwargs["device"] = device_;
-    kwargs["dtype"] = python::getattr(torch, "int");
+    kwargs["dtype"] = torch.attr("int");
     sparse = tensor(*python::make_tuple(sparse), **kwargs);
-    sparse = python::getattr(torch, "unsqueeze")(sparse, 0);
+    sparse = torch.attr("unsqueeze")(sparse, 0);
 
     python::object numeric = features[1];
-    for (long i = 2; i < python::getattr(constants, "NUM_NUMERIC_FEATURES"); ++i) {
+    for (long i = 2; i < constants.attr("NUM_NUMERIC_FEATURES"); ++i) {
       // Scaling.
       numeric[i] /= 10000.0;
     }
     kwargs["device"] = device_;
     kwargs["dtype"] = dtype_;
     numeric = tensor(*python::make_tuple(numeric), **kwargs);
-    numeric = python::getattr(torch, "unsqueeze")(numeric, 0);
+    numeric = torch.attr("unsqueeze")(numeric, 0);
 
     // `progression` must be deep-copied since `features[2]` refers to the
     // `progression_` data member of the `RoundState` class.
     python::object progression = python::list(features[2]);
-    while (python::len(progression) < python::getattr(constants, "MAX_LENGTH_OF_PROGRESSION_FEATURES")) {
+    while (python::len(progression) < constants.attr("MAX_LENGTH_OF_PROGRESSION_FEATURES")) {
       // Padding.
-      python::getattr(progression, "append")(
+      progression.attr("append")(
         python::getattr(constants, "NUM_TYPES_OF_PROGRESSION_FEATURES"));
     }
     kwargs["device"] = device_;
-    kwargs["dtype"] = python::getattr(torch, "int");
+    kwargs["dtype"] = torch.attr("int");
     progression = tensor(*python::make_tuple(progression), **kwargs);
-    progression = python::getattr(torch, "unsqueeze")(progression, 0);
+    progression = torch.attr("unsqueeze")(progression, 0);
 
-    python::object candidates = features[3];
-    while (python::len(candidates) < python::getattr(constants, "MAX_NUM_ACTION_CANDIDATES")) {
+    candidates = features[3];
+    while (python::len(candidates) < constants.attr("MAX_NUM_ACTION_CANDIDATES")) {
       // Padding.
-      python::getattr(candidates, "append")(
+      candidates.attr("append")(
         python::getattr(constants, "NUM_TYPES_OF_ACTIONS") + 1);
     }
     kwargs["device"] = device_;
-    kwargs["dtype"] = python::getattr(torch, "int");
+    kwargs["dtype"] = torch.attr("int");
     candidates = tensor(*python::make_tuple(candidates), **kwargs);
-    candidates = python::getattr(torch, "unsqueeze")(candidates, 0);
+    candidates = torch.attr("unsqueeze")(candidates, 0);
 
     prediction = model_(
       python::make_tuple(sparse, numeric, progression, candidates));
@@ -151,44 +152,49 @@ std::uint_fast16_t ModelWrapper::operator()(python::object features) const
     python::object m = python::import("traceback");
 
     if (python::extract<std::string>(value).check()) {
-      python::object o = python::getattr(m, "format_tb")(traceback);
-      o = python::getattr(python::str(""), "join")(o);
+      python::object o = m.attr("format_tb")(traceback);
+      o = python::str("").attr("join")(o);
       std::string message = python::extract<std::string>(o);
       message += python::extract<std::string>(value);
       KANACHAN_THROW<std::runtime_error>(message);
     }
 
-    python::object o = python::getattr(m, "format_exception")(type, value, traceback);
-    o = python::getattr(python::str(""), "join")(o);
+    python::object o = m.attr("format_exception")(type, value, traceback);
+    o = python::str("").attr("join")(o);
     python::extract<std::string> str(o);
     KANACHAN_ASSERT((str.check()));
     KANACHAN_THROW<std::runtime_error>(str());
   }
 
-  python::object candidates = features[3];
-  //prediction = python::getattr(nn, "softmax")(prediction, 1);
-  prediction = python::getattr(torch, "squeeze")(prediction);
-  prediction = python::getattr(torch, "argmax")(prediction);
-  prediction = python::getattr(prediction, "item")();
+  python::object mask = torch.attr("lt")(
+    candidates, python::getattr(constants, "NUM_TYPES_OF_ACTIONS"));
+  candidates = torch.attr("squeeze")(candidates);
+  candidates = torch.attr("masked_select")(candidates, mask);
+  prediction = torch.attr("squeeze")(prediction);
+  prediction = torch.attr("masked_select")(prediction, mask);
+  //prediction = nn.attr("softmax")(prediction, 1);
+  prediction = torch.attr("argmax")(prediction);
+  prediction = prediction.attr("item")();
   python::extract<long> prediction_(prediction);
   if (!prediction_.check()) {
     KANACHAN_THROW<std::runtime_error>(_1)
-      << python::getattr(python::getattr(prediction, "__class__"), "__name__")
+      << prediction.attr("__class__").attr("__name__")
       << ": An invalid type of `prediction`.";
   }
-  if (prediction >= python::len(candidates)) {
+  if (prediction >= candidates.attr("size")(0)) {
     KANACHAN_THROW<std::runtime_error>(_1)
       << prediction_() << ": `prediction` is out-of-range.";
   }
 
   python::object action = candidates[prediction];
+  action = action.attr("item")();
   python::extract<long> action_(action);
   if (!action_.check()) {
     KANACHAN_THROW<std::runtime_error>(_1)
-      << python::getattr(python::getattr(prediction, "__class__"), "__name__")
+      << prediction.attr("__class__").attr("__name__")
       << ": An invalid type of `action`.";
   }
-  if (action_() >= python::getattr(constants, "NUM_TYPES_OF_ACTIONS")) {
+  if (action_() >= constants.attr("NUM_TYPES_OF_ACTIONS")) {
     KANACHAN_THROW<std::runtime_error>(_1)
       << action_() << ": `action` is out-of-range.";
   }
