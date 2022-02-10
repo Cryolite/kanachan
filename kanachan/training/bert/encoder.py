@@ -20,7 +20,6 @@ class Encoder(nn.Module):
         self.__sparse_embedding = nn.Embedding(
             NUM_TYPES_OF_SPARSE_FEATURES + 1, dimension,
             padding_idx=NUM_TYPES_OF_SPARSE_FEATURES)
-        self.__sparse_dropout = nn.Dropout(p=dropout)
 
         numeric_embedding_initial = torch.normal(
             0.0, 1.0, size=(NUM_NUMERIC_FEATURES, dimension - 1))
@@ -30,12 +29,11 @@ class Encoder(nn.Module):
         self.__progression_embedding = PositionalEmbedding(
             NUM_TYPES_OF_PROGRESSION_FEATURES + 1, dimension,
             padding_idx=NUM_TYPES_OF_PROGRESSION_FEATURES,
-            max_length=MAX_LENGTH_OF_PROGRESSION_FEATURES, dropout=dropout)
+            max_length=MAX_LENGTH_OF_PROGRESSION_FEATURES)
 
         self.__candidates_embedding = nn.Embedding(
             NUM_TYPES_OF_ACTIONS + 2, dimension,
             padding_idx=NUM_TYPES_OF_ACTIONS + 1)
-        self.__candidates_dropout = nn.Dropout(p=dropout)
 
         encoder_layer = nn.TransformerEncoderLayer(
             dimension, num_heads, dim_feedforward=dim_feedforward,
@@ -48,7 +46,6 @@ class Encoder(nn.Module):
     def forward(self, x):
         sparse, numeric, progression, candidates = x
         sparse = self.__sparse_embedding(sparse)
-        sparse = self.__sparse_dropout(sparse)
         numeric = torch.unsqueeze(numeric, -1)
         numeric_embedding = torch.unsqueeze(self.__numeric_embedding, 0)
         numeric_embedding = numeric_embedding.expand(numeric.size(0), -1, -1)
@@ -56,7 +53,6 @@ class Encoder(nn.Module):
         numeric = torch.cat((numeric, numeric_embedding), -1)
         progression = self.__progression_embedding(progression)
         candidates = self.__candidates_embedding(candidates)
-        candidates = self.__candidates_dropout(candidates)
         embedding = torch.cat(
             (sparse, numeric, progression, candidates), dim=1)
         if self.__checkpointing:

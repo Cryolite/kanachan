@@ -9,7 +9,7 @@ class PositionalEmbedding(nn.Module):
     def __init__(
             self, num_embeddings: int, embedding_dim:int,
             padding_idx: Optional[int]=None, max_length: int=10000,
-            dropout: float=0.1, sparse: bool=False):
+            sparse: bool=False):
         super(PositionalEmbedding, self).__init__()
         self.__embedding = nn.Embedding(
             num_embeddings, embedding_dim, padding_idx=padding_idx,
