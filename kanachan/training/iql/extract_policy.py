@@ -14,7 +14,7 @@ from torch import backends
 from torch import nn
 from torch.optim import (Optimizer, RAdam,)
 from torch.utils.data import DataLoader
-from torch.distributed import (init_process_group, all_reduce,)
+from torch.distributed import (init_process_group, all_reduce, ReduceOp)
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
 from apex.parallel import (DistributedDataParallel, convert_syncbn_model,)
@@ -33,6 +33,9 @@ def _take_snapshot(
         *, snapshots_path: Path, policy_model: nn.Module, optimizer: Optimizer,
         num_samples: Optional[int]) -> None:
     snapshots_path.mkdir(parents=False, exist_ok=True)
+
+    if isinstance(policy_model, DistributedDataParallel):
+        policy_model = policy_model.module
 
     if num_samples is not None:
         infix = f'.{num_samples}'
@@ -101,9 +104,9 @@ def _training(
 
         with torch.no_grad():
             q1 = q1_model(annotation[:4])
-            q1 = q1[torch.arange(batch_size), annotation[4]]
+            q1 = q1[torch.arange(annotation[4].size(0)), annotation[4]]
             q2 = q2_model(annotation[:4])
-            q2 = q2[torch.arange(batch_size), annotation[4]]
+            q2 = q2[torch.arange(annotation[4].size(0)), annotation[4]]
             q = torch.minimum(q1, q2)
             q *= inverse_temperature
             q = torch.exp(q)
@@ -112,11 +115,13 @@ def _training(
             value = torch.exp(value)
             advantage = q / value
             max_advantage = torch.max(advantage)
+            if is_multiprocess:
+                all_reduce(max_advantage, op=ReduceOp.MAX)
             max_advantage = max_advantage.item()
             advantage = torch.clamp(advantage, max=advantage_threshold)
         policy = policy_model(annotation[:4])
         policy = nn.LogSoftmax(dim=1)(policy)
-        policy = policy[torch.arange(batch_size), annotation[4]]
+        policy = policy[torch.arange(annotation[4].size(0)), annotation[4]]
         loss = -advantage.detach() * policy
         loss = torch.mean(loss)
         if math.isnan(loss.item()):
@@ -139,6 +144,8 @@ def _training(
             gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(optimizer) if x.grad is not None]
             gradient = torch.cat(gradient)
+            if is_multiprocess:
+                all_reduce(gradient)
             gradient_norm = torch.linalg.vector_norm(gradient)
             gradient_norm = gradient_norm.item()
             nn.utils.clip_grad_norm_(
@@ -224,6 +231,10 @@ def main() -> None:
         '--dropout', default=0.1, type=float, help='defaults to `0.1`',
         metavar='DROPOUT')
     ap_model.add_argument(
+        '--initial-encoder', type=Path,
+        help='path to the initial encoder; mutually exclusive to `--resume`',
+        metavar='PATH')
+    ap_model.add_argument(
         '--value-model', type=Path, required=True,
         help='path to the value model; mutually exclusive to `--resume`',
         metavar='PATH')
@@ -234,10 +245,6 @@ def main() -> None:
     ap_model.add_argument(
         '--q2-model', type=Path, required=True,
         help='path to the Q2 model; mutually exclusive to `--resume`',
-        metavar='PATH')
-    ap_model.add_argument(
-        '--initial-encoder', type=Path,
-        help='path to the initial encoder; mutually exclusive to `--resume`',
         metavar='PATH')
 
     ap_training = ap.add_argument_group(title='Training')
@@ -368,6 +375,14 @@ def main() -> None:
     if config.dropout < 0.0 or 1.0 <= config.dropout:
         raise RuntimeError(f'{config.dropout}: An invalid value for `--dropout`.')
 
+    if config.initial_encoder is not None and not config.initial_encoder.exists():
+        raise RuntimeError(f'{config.initial_encoder}: Does not exist.')
+    if config.initial_encoder is not None and not config.initial_encoder.is_file():
+        raise RuntimeError(f'{config.initial_encoder}: Not a file.')
+    if config.initial_encoder is not None and config.resume:
+        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`.')
+    initial_encoder = config.initial_encoder
+
     if config.value_model is not None and not config.value_model.exists():
         raise RuntimeError(f'{config.value_model}: Does not exist.')
     if config.value_model is not None and not config.value_model.is_file():
@@ -385,14 +400,6 @@ def main() -> None:
     if config.q2_model is not None and not config.q2_model.is_file():
         raise RuntimeError(f'{config.q2_model}: Not a file.')
     q2_model = config.q2_model
-
-    if config.initial_encoder is not None and not config.initial_encoder.exists():
-        raise RuntimeError(f'{config.initial_encoder}: Does not exist.')
-    if config.initial_encoder is not None and not config.initial_encoder.is_file():
-        raise RuntimeError(f'{config.initial_encoder}: Not a file.')
-    if config.initial_encoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`.')
-    initial_encoder = config.initial_encoder
 
     if config.inverse_temperature < 0.0:
         raise RuntimeError(
@@ -528,6 +535,9 @@ def main() -> None:
         logging.info(f'Initial encoder: (initialized randomly)')
     elif initial_encoder is not None:
         logging.info(f'Initial encoder: {initial_encoder}')
+    logging.info(f'Value model: {value_model}')
+    logging.info(f'Q1 model: {q1_model}')
+    logging.info(f'Q2 model: {q2_model}')
     logging.info(f'Inverse temperature: {config.inverse_temperature}')
     logging.info(f'Advantage threshold: {config.advantage_threshold}')
     logging.info(f'Batch size: {config.batch_size}')
