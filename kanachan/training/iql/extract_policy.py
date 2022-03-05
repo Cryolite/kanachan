@@ -31,17 +31,11 @@ from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 
 def _take_snapshot(
         *, snapshots_path: Path, policy_model: nn.Module, optimizer: Optimizer,
-        num_samples: Optional[int]) -> None:
-    snapshots_path.mkdir(parents=False, exist_ok=True)
-
+        num_samples: int, infix: str) -> None:
     if isinstance(policy_model, DistributedDataParallel):
         policy_model = policy_model.module
 
-    if num_samples is not None:
-        infix = f'.{num_samples}'
-    else:
-        infix = ''
-
+    snapshots_path.mkdir(parents=False, exist_ok=True)
     torch.save(
         policy_model.encoder.state_dict(),
         snapshots_path / f'policy-encoder{infix}.pth')
@@ -54,17 +48,22 @@ def _take_snapshot(
     torch.save(
         amp.state_dict(),
         snapshots_path / f'policy-amp{infix}.pth')
+    with open(snapshots_path / f'policy-progress{infix}.yaml', 'w') as f:
+        print(f'''---
+num_samples: {num_samples}''', file=f)
 
 
-def _training(
+def _training_epoch(
         *, is_multiprocess: bool, world_size: Optional[int],
         rank: Optional[int], is_main_process: bool, training_data: Path,
         num_workers: int, device: str, value_model: nn.Module,
         q1_model: nn.Module, q2_model: nn.Module, policy_model: nn.Module,
         inverse_temperature: float, advantage_threshold: float, batch_size: int,
         gradient_accumulation_steps: int, max_gradient_norm: float,
-        optimizer: Optimizer, snapshots_path: Path, snapshot_interval: int,
-        num_samples: int, writer: SummaryWriter, **kwargs) -> None:
+        optimizer: Optimizer, snapshots_path: Path, num_epoch_digits: int,
+        snapshot_interval: int, epoch: int, epoch_sample_offset,
+        num_samples: int, num_samples_to_skip: int, writer: SummaryWriter,
+        **kwargs) -> int:
     start_time = datetime.datetime.now()
 
     # Prepare the training data loader. Note that this data loader must iterate
@@ -85,7 +84,7 @@ def _training(
     for annotation in data_loader:
         batch_size = len(annotation[0])
 
-        if skipped_samples < num_samples:
+        if skipped_samples < num_samples_to_skip:
             skipped_samples += batch_size
             continue
 
@@ -173,19 +172,24 @@ f' loss = {batch_loss}')
                 writer.add_scalar('Loss', batch_loss, num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
+            epoch_str = str(epoch).zfill(num_epoch_digits)
+            infix = f'.{epoch_str}.{num_samples - epoch_sample_offset}'
             _take_snapshot(
                 snapshots_path=snapshots_path, policy_model=policy_model,
-                optimizer=optimizer, num_samples=num_samples)
+                optimizer=optimizer, num_samples=num_samples, infix=infix)
             last_snapshot = num_samples
 
     elapsed_time = datetime.datetime.now() - start_time
     logging.info(
-        f'A training has finished (elapsed time = {elapsed_time}).')
+        f'The {epoch}-th training epoch has finished (elapsed time = {elapsed_time}).')
 
     if is_main_process:
+        infix = '.' + str(epoch + 1).zfill(num_epoch_digits)
         _take_snapshot(
             snapshots_path=snapshots_path, policy_model=policy_model,
-            optimizer=optimizer, num_samples=None)
+            optimizer=optimizer, num_samples=num_samples, infix=infix)
+
+    return num_samples
 
 
 def main() -> None:
@@ -283,11 +287,18 @@ def main() -> None:
         '--max-gradient-norm', default=10.0, type=float,
         help='norm threshold for gradient clipping (defaults to `10.0`)',
         metavar='NORM')
+    ap_training.add_argument(
+        '--num-epochs', default=1, type=int,
+        help='number of epochs to iterate (defaults to `1`)', metavar='N')
 
     ap_output = ap.add_argument_group(title='Output')
     ap_output.add_argument(
         '--output-prefix', type=Path, required=True, metavar='PATH')
     ap_output.add_argument('--experiment-name', metavar='NAME')
+    ap_output.add_argument(
+        '--num-epoch-digits', default=2, type=int,
+        help='number of digits to index epochs (defaults to `2`)',
+        metavar='NDIGITS')
     ap_output.add_argument(
         '--snapshot-interval', default=0, type=int,
         help='take a snapshot every specified number of samples (disabled by default)',
@@ -448,6 +459,10 @@ def main() -> None:
         raise RuntimeError(
             f'{config.max_gradient_norm}: An invalid norm for `--max-gradient-norm`.')
 
+    if config.num_epochs <= -2:
+        raise RuntimeError(f'{config.num_epochs}: invalid number of epochs')
+    num_epochs = config.num_epochs
+
     if config.experiment_name is None:
         now = datetime.datetime.now()
         experiment_name = now.strftime('%Y-%m-%d-%H-%M-%S')
@@ -464,43 +479,80 @@ def main() -> None:
     snapshots_path = experiment_path / 'snapshots'
     tensorboard_path = experiment_path / 'tensorboard'
 
+    if config.num_epoch_digits < 1:
+        raise RuntimeError(
+            f'{config.num_epoch_digits}: invalid number of epoch digits')
+
     if config.snapshot_interval < 0:
         raise RuntimeError(
             f'{config.snapshot_interval}: An invalid value for `--snapshot-interval`.')
 
     resume = config.resume
 
+    epoch = 0
     num_samples = 0
+    num_samples_to_skip = 0
     if resume:
         assert(initial_encoder is None)
         if not snapshots_path.exists():
             raise RuntimeError(f'{snapshots_path}: Does not exist.')
+        snapshot_index = 0
         for child in os.listdir(snapshots_path):
-            m = re.search('^policy-(?:encoder|decoder|optimizer|amp)\\.(\\d+)\\.pth$', child)
+            m = re.search('^policy-(?:encoder|decoder|optimizer|amp)\\.(\\d+)(?:\\.(\\d+))?\\.pth$', child)
             if m is None:
                 continue
-            if int(m[1]) > num_samples:
-                num_samples = int(m[1])
-        encoder_snapshot_path = snapshots_path / f'policy-encoder.{num_samples}.pth'
+            tmp = m[1].lstrip('0')
+            if tmp == '':
+                tmp = '0'
+            tmp = int(tmp)
+            if tmp > epoch:
+                epoch = tmp
+                snapshot_index = 0
+            if tmp == epoch and m[2] is not None:
+                tmp = int(m[2])
+                if tmp > snapshot_index:
+                    snapshot_index = tmp
+        epoch_str = str(epoch).zfill(config.num_epoch_digits)
+        snapshot_index_str = ''
+        if snapshot_index != 0:
+            snapshot_index_str = f'.{snapshot_index}'
+        infix = f'.{epoch_str}{snapshot_index_str}'
+        encoder_snapshot_path = snapshots_path / f'policy-encoder{infix}.pth'
         if not encoder_snapshot_path.exists():
             raise RuntimeError(f'{encoder_snapshot_path}: Does not exist.')
         if not encoder_snapshot_path.is_file():
             raise RuntimeError(f'{encoder_snapshot_path}: Not a file.')
-        decoder_snapshot_path = snapshots_path / f'policy-decoder.{num_samples}.pth'
+        decoder_snapshot_path = snapshots_path / f'policy-decoder{infix}.pth'
         if not decoder_snapshot_path.exists():
             raise RuntimeError(f'{decoder_snapshot_path}: Does not exist.')
         if not decoder_snapshot_path.is_file():
             raise RuntimeError(f'{decoder_snapshot_path}: Not a file.')
-        optimizer_snapshot_path = snapshots_path / f'policy-optimizer.{num_samples}.pth'
+        optimizer_snapshot_path = snapshots_path / f'policy-optimizer{infix}.pth'
         if not optimizer_snapshot_path.exists():
             raise RuntimeError(f'{optimizer_snapshot_path}: Does not exist.')
         if not optimizer_snapshot_path.is_file():
             raise RuntimeError(f'{optimizer_snapshot_path}: Not a file.')
-        amp_snapshot_path = snapshots_path / f'policy-amp.{num_samples}.pth'
+        amp_snapshot_path = snapshots_path / f'policy-amp{infix}.pth'
         if not amp_snapshot_path.exists():
             raise RuntimeError(f'{amp_snapshot_path}: Does not exist.')
         if not amp_snapshot_path.is_file():
             raise RuntimeError(f'{amp_snapshot_path}: Not a file.')
+        progress_file_path = snapshots_path / f'policy-progress{infix}.yaml'
+        if not progress_file_path.exists():
+            raise RuntimeError(f'{progress_file_path}: Does not exist.')
+        if not progress_file_path.is_file():
+            raise RuntimeError(f'{progress_file_path}: Not a file.')
+
+        with open(progress_file_path) as f:
+            progress_data = yaml.load(f, Loader=yaml.Loader)
+        num_samples = progress_data['num_samples']
+
+        if epoch == 0:
+            num_samples_to_skip = num_samples
+        else:
+            with open(snapshots_path / f'progress.{epoch_str}.yaml') as f:
+                progress_data = yaml.load(f, Loader=yaml.Loader)
+            num_samples_to_skip = num_samples - progress_data['num_samples']
 
     experiment_path.mkdir(parents=True, exist_ok=True)
     initialize_logging(experiment_path, rank)
@@ -554,6 +606,10 @@ def main() -> None:
         f'Virtual batch size: {config.batch_size * config.gradient_accumulation_steps}')
     logging.info(
         f'Norm threshold for gradient clipping: {config.max_gradient_norm}')
+    if num_epochs == -1:
+        logging.info('Number of epochs to iterate: INFINITY')
+    else:
+        logging.info(f'Number of epochs to iterate: {num_epochs}')
     if resume:
         logging.info(f'Resume from {experiment_path}')
         logging.info(f'Policy encoder snapshot: {encoder_snapshot_path}')
@@ -561,8 +617,10 @@ def main() -> None:
         logging.info(f'Policy optimizer snapshot: {optimizer_snapshot_path}')
         logging.info(f'Policy AMP snapshot: {amp_snapshot_path}')
         logging.info(f'# of training samples so far: {num_samples}')
+        logging.info(f'# of samples to skip: {num_samples_to_skip}')
     else:
         logging.info(f'Experiment output: {experiment_path}')
+    logging.info(f'# of digits to index epochs: {config.num_epoch_digits}')
     if config.snapshot_interval == 0:
         logging.info(f'Snapshot interval: N/A')
     else:
@@ -594,8 +652,11 @@ def main() -> None:
         'experiment_path': experiment_path,
         'snapshots_path': snapshots_path,
         'tensorboard_path': tensorboard_path,
+        'num_epoch_digits': config.num_epoch_digits,
         'snapshot_interval': config.snapshot_interval,
+        'epoch': epoch,
         'num_samples': num_samples,
+        'num_samples_to_skip': num_samples_to_skip,
     }
 
     value_model = load_model(value_model)
@@ -671,7 +732,11 @@ def main() -> None:
     config['optimizer'] = optimizer
 
     with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
-        _training(**config, writer=writer)
+        while num_epochs == -1 or config['epoch'] < num_epochs:
+            assert(config['num_samples'] >= config['num_samples_to_skip'])
+            config['epoch_sample_offset'] = config['num_samples'] - config['num_samples_to_skip']
+            config['num_samples'] = _training_epoch(**config, writer=writer)
+            config['epoch'] += 1
 
 
 if __name__ == '__main__':
