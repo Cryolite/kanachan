@@ -97,7 +97,6 @@ _ENCODER_DECODER_SNAPSHOTS_CONFIG_SCHEMA = {
         'encoder',
         'decoder',
         'model',
-        'grade',
     ],
     'properties': {
         'encoder': {
@@ -159,11 +158,6 @@ _ENCODER_DECODER_SNAPSHOTS_CONFIG_SCHEMA = {
                 },
             },
             'additionalProperties': False,
-        },
-        'grade': {
-            'type': 'integer',
-            'minimum': 0,
-            'maximum': 15,
         },
     },
     'additionalProperties': False,
@@ -176,7 +170,6 @@ _MODEL_SNAPSHOT_CONFIG_SCHEMA = {
         'encoder',
         'decoder',
         'model',
-        'grade',
     ],
     'properties': {
         'encoder': {
@@ -234,11 +227,6 @@ _MODEL_SNAPSHOT_CONFIG_SCHEMA = {
                 },
             },
             'additionalProperties': False,
-        },
-        'grade': {
-            'type': 'integer',
-            'minimum': 0,
-            'maximum': 15,
         },
     },
     'additionalProperties': False,
