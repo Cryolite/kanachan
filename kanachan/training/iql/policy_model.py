@@ -62,6 +62,10 @@ class PolicyModel(nn.Module):
     def decoder(self) -> nn.Module:
         return self.__decoder
 
+    def mode(self, mode: str) -> None:
+        if mode not in ('training', 'validation', 'prediction'):
+            raise ValueError(mode)
+
     def forward(self, x) -> torch.Tensor:
         encode = self.__encoder(x)
         decode = self.__decoder((x[3], encode))
