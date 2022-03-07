@@ -15,7 +15,7 @@ class Model(nn.Module):
         self.__decoder = decoder
         self.__freeze_encoder = freeze_encoder
 
-    def mode(self, mode: bool) -> None:
+    def mode(self, mode: str) -> None:
         if mode not in ('training', 'validation', 'prediction'):
             raise ValueError(mode)
 
