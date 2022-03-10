@@ -38,11 +38,11 @@ namespace Kanachan{
 using std::placeholders::_1;
 namespace python = boost::python;
 
-void simulate(
+python::list simulate(
   std::string const &device, python::object dtype,
   python::long_ simulation_mode, python::long_ baseline_grade,
   python::object baseline_model, python::long_ proposed_grade,
-  python::object proposed_model, python::dict result)
+  python::object proposed_model)
 try {
   if (simulation_mode.is_none()) {
     KANACHAN_THROW<std::invalid_argument>(_1) << "`simulation_mode` is `None`.";
@@ -118,10 +118,6 @@ try {
   }
   Kanachan::ModelWrapper proposed_model_wrapper(device, dtype, proposed_model);
 
-  if (result.is_none()) {
-    KANACHAN_THROW<std::invalid_argument>(_1) << "`result` is `None`.";
-  }
-
   std::vector<Kanachan::Paishan> test_paishan_list;
 
   if (no_duplicate) {
@@ -140,41 +136,24 @@ try {
       flags[3u] ? Seat(proposed_grade_, proposed_model_wrapper) : Seat(baseline_grade_, baseline_model_wrapper)
     };
 
-    python::dict game_result = Kanachan::simulateGame(
+    python::dict result = Kanachan::simulateGame(
       urng, room, dong_feng_zhan, seats, test_paishan_list);
 
-    for (long i = 0; i < python::len(game_result["rounds"]); ++i) {
-      python::object round = game_result["rounds"][i];
-      KANACHAN_ASSERT((python::len(round) == 4));
-      for (long j = 0; j < 4; ++j) {
-        python::object e = round[j];
-        if (flags[j]) {
-          result["proposed"]["rounds"].attr("append")(e);
-        }
-        else {
-          result["baseline"]["rounds"].attr("append")(e);
-        }
-      }
-    }
-    KANACHAN_ASSERT((python::len(game_result["final_ranking"]) == 4));
-    KANACHAN_ASSERT((python::len(game_result["final_scores"]) == 4));
-    for (long i = 0; i < 4; ++i) {
-      python::dict game;
-      game["ranking"] = game_result["final_ranking"][i];
-      game["score"] = game_result["final_scores"][i];
-      if (flags[i]) {
-        result["proposed"]["games"].attr("append")(game);
-      }
-      else {
-        result["baseline"]["games"].attr("append")(game);
-      }
-    }
+    result["proposed"] = python::list();
+    result["proposed"].attr("append")(flags[0u] ? 1 : 0);
+    result["proposed"].attr("append")(flags[1u] ? 1 : 0);
+    result["proposed"].attr("append")(flags[2u] ? 1 : 0);
+    result["proposed"].attr("append")(flags[3u] ? 1 : 0);
+
+    python::list results;
+    results.attr("append")(result);
+    return results;
   }
 
-  Kanachan::simulateDuplicatedGames(
+  return Kanachan::simulateDuplicatedGames(
     room, dong_feng_zhan, one_versus_three, baseline_grade_,
     baseline_model_wrapper, proposed_grade_, proposed_model_wrapper,
-    test_paishan_list, result);
+    test_paishan_list);
 }
 catch (std::exception const &) {
   throw;

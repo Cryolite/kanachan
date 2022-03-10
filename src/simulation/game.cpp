@@ -62,13 +62,13 @@ python::dict simulateGame(
     }
   }
 
-  result["final_ranking"] = python::list();
-  result["final_scores"] = python::list();
+  result["ranking"] = python::list();
+  result["scores"] = python::list();
   for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
     std::uint_fast8_t const final_ranking = game_state.getPlayerRanking(i);
     std::int_fast32_t const final_score = game_state.getPlayerScore(i);
-    python::extract<python::list>(result["final_ranking"])().append(final_ranking);
-    python::extract<python::list>(result["final_scores"])().append(final_score);
+    python::extract<python::list>(result["ranking"])().append(final_ranking);
+    python::extract<python::list>(result["scores"])().append(final_score);
   }
 
   return result;

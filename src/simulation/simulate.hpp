@@ -13,11 +13,11 @@
 
 namespace Kanachan{
 
-void simulate(
+boost::python::list simulate(
   std::string const &device, boost::python::object dtype,
   boost::python::long_ simulation_mode, boost::python::long_ baseline_grade,
   boost::python::object baseline_model, boost::python::long_ proposed_grade,
-  boost::python::object proposed_model, boost::python::dict result);
+  boost::python::object proposed_model);
 
 boost::python::dict test(
   boost::python::long_ simulation_mode, boost::python::tuple grades,
