@@ -589,7 +589,7 @@ def main() -> None:
         q2_optimizer_snapshot_path = snapshots_path / f'q2-optimizer.{num_samples}.pth'
         if not q2_optimizer_snapshot_path.exists():
             raise RuntimeError(f'{q2_optimizer_snapshot_path}: Does not exist.')
-        amp_snapshot_path = snapshots_path / f'amp.{num_samples}.path'
+        amp_snapshot_path = snapshots_path / f'amp.{num_samples}.pth'
         if not amp_snapshot_path.exists():
             raise RuntimeError(f'{amp_snapshot_path}: Does not exist.')
 
@@ -794,10 +794,10 @@ def main() -> None:
         assert(q2_optimizer_snapshot_path.is_file())
         assert(amp_snapshot_path.exists())
         assert(amp_snapshot_path.is_file())
-        value_optimizer_state.load_state_dict(
+        value_optimizer.load_state_dict(
             torch.load(value_optimizer_snapshot_path))
-        q1_optimizer_state.load_state_dict(torch.load(q1_optimizer_snapshot_path))
-        q2_optimizer_state.load_state_dict(torch.load(q2_optimizer_snapshot_path))
+        q1_optimizer.load_state_dict(torch.load(q1_optimizer_snapshot_path))
+        q2_optimizer.load_state_dict(torch.load(q2_optimizer_snapshot_path))
         amp.load_state_dict(torch.load(amp_snapshot_path))
 
     if config['is_multiprocess']:
