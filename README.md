@@ -69,7 +69,7 @@ A C++ library implementing a Mahjong simulator that perfectly mimics the standar
 
 ### [src/paishan](src/paishan)
 
-A C++ program that restores the entire tile wall (pai shan, 牌山) from a game record of Mahjong Soul. Note that the tile wall restored by this program can be used for testing purposes (input to [test/simulation_vs_annotation](test/simulation_vs_annotation)) only, and not for any other purpose.
+A C++ program that restores the entire tile wall (pai shan, 牌山) from a game record of Mahjong Soul. Note that the tile wall restored by this program can be used for testing purposes (input to [test/annotation_vs_simulation](test/annotation_vs_simulation)) only, and not for any other purpose.
 
 ### [test/annotation_vs_simulation](test/annotation_vs_simulation)
 
