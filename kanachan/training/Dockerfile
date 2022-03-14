@@ -22,7 +22,7 @@ ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
 RUN pip3 install -U \
       mahjong \
-      setuptools==59.5.0 \
+      setuptools \
       wheel
 
 # `marisa-trie` only supports for in-tree build.
@@ -47,7 +47,7 @@ RUN mkdir -p /home/ubuntu/.local/src && \
 
 RUN git clone https://github.com/NVIDIA/apex.git && \
     (cd apex && \
-     pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./) && \
+     MAX_JOBS=$(nproc) pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./) && \
     rm -rf apex
 
 COPY --chown=ubuntu . /workspace/kanachan

@@ -3,9 +3,10 @@
 import re
 from pathlib import Path
 from argparse import ArgumentParser
-import yaml
+from typing import (Tuple, List, Callable,)
 import sys
 import importlib
+import yaml
 import jsonschema
 import torch
 from torch import backends
@@ -104,41 +105,186 @@ def main():
     if config.n < 1:
         raise RuntimeError(f'{config.n}: An invalid value for the `-n` option.')
 
-    result = {
-        'baseline': {
-            'rounds': [],
-            'games': []
-        },
-        'proposed': {
-            'rounds': [],
-            'games': []
-        }
-    }
+    results = []
     with ModelMode(baseline_model, 'prediction'), ModelMode(proposed_model, 'prediction'):
         for i in range(config.n):
-            simulate(
+            r = simulate(
                 device, dtype, mode, config.baseline_grade, baseline_model,
-                config.proposed_grade, proposed_model, result)
+                config.proposed_grade, proposed_model)
+            results.extend(r)
 
-    num_games = 0
-    ranking = 0.0
-    grading_point = 0.0
-    jade_point = 0.0
-    num_tops = 0.0
-    for game in result['proposed']['games']:
-        r = game['ranking']
-        s = game['score']
-        ranking += r
-        grading_point += [125, 60, -5, -255][r] + (s - 25000) // 1000
-        jade_point += [0.5, 0.2, -0.2, -0.5][r]
-        num_tops += 1 if r == 0 else 0
-        num_games += 1
+    num_games = len(results)
 
-    print(f'# of games: {num_games}')
-    print(f'Average ranking: {ranking / num_games + 1.0}')
-    print(f'Average delta of grading points: {grading_point / num_games}')
-    print(f'Average delta of jade points: {jade_point / num_games}')
-    print(f'Top ratio: {num_tops / num_games}')
+    def get_grading_point(ranking: int, score: int) -> int:
+        return [125, 60, -5, -255][ranking] + (score - 25000) // 1000
+
+    def get_soul_point(ranking: int, score: int) -> float:
+        return [0.5, 0.2, -0.2, -0.5][ranking]
+
+    Statistic = Tuple[float, float]
+
+    def get_statistic(
+            results: List[object], proposed: int,
+            f: Callable[[int, int], float]) -> Statistic:
+        assert(proposed in (0, 1))
+        average = 0.0
+        n = 0
+        for game in results:
+            assert(len(game['proposed']) == 4)
+            assert(len(game['ranking']) == 4)
+            for i in range(4):
+                assert(game['proposed'][i] in (0, 1))
+                ranking = game['ranking'][i]
+                score = game['scores'][i]
+                if game['proposed'][i] == proposed:
+                    average += f(ranking, score)
+                    n += 1
+        assert(n >= 1)
+        average /= n
+
+        variance = 0.0
+        n = 0
+        for game in results:
+            for i in range(4):
+                ranking = game['ranking'][i]
+                score = game['scores'][i]
+                if game['proposed'][i] == proposed:
+                    variance += (f(ranking, score) - average) ** 2.0
+                    n += 1
+        assert(n >= 1)
+        # Unbiased sample variance.
+        variance /= (n - 1)
+
+        return average, variance
+
+    Statistics = Tuple[Statistic, Statistic, Statistic, Statistic, Statistic]
+
+    def get_statistics(results: List[object], proposed: int) -> Statistics:
+        ranking_statistic = get_statistic(results, proposed, lambda r, s: r)
+        grading_point_statistic = get_statistic(
+            results, proposed, get_grading_point)
+        soul_point_statistic = get_statistic(results, proposed, get_soul_point)
+
+        top_rate = 0.0
+        n = 0
+        for game in results:
+            for i in range(4):
+                if game['proposed'][i] == proposed:
+                    n += 1
+                    if game['ranking'][i] == 0:
+                        top_rate += 1.0
+        top_rate /= n
+        # Unbiased sample variance.
+        top_rate_variance = top_rate * (1.0 - top_rate) / (n - 1)
+
+        quinella_rate = 0.0
+        n = 0
+        for game in results:
+            for i in range(4):
+                if game['proposed'][i] == proposed:
+                    n += 1
+                    if game['ranking'][i] <= 1:
+                        quinella_rate += 1.0
+        quinella_rate /= n
+        # Unbiased sample variance.
+        quinella_rate_variance = quinella_rate * (1.0 - quinella_rate) / (n - 1)
+
+        return (
+            ranking_statistic,
+            grading_point_statistic,
+            soul_point_statistic,
+            (top_rate, top_rate_variance),
+            (quinella_rate, quinella_rate_variance),)
+
+    baseline_statistics = get_statistics(results, 0)
+    proposed_statistics = get_statistics(results, 1)
+
+    ranking_diff_average = 0.0
+    for game in results:
+        num_baseline = 0
+        baseline_ranking = 0.0
+        num_proposed = 0
+        proposed_ranking = 0.0
+        for i in range(4):
+            ranking = game['ranking'][i]
+            if game['proposed'][i] == 0:
+                num_baseline += 1
+                baseline_ranking += ranking
+            else:
+                assert(game['proposed'][i] == 1)
+                num_proposed += 1
+                proposed_ranking += ranking
+        assert(num_baseline >= 1)
+        assert(num_proposed >= 1)
+        baseline_ranking /= num_baseline
+        proposed_ranking /= num_proposed
+        diff = proposed_ranking - baseline_ranking
+        ranking_diff_average += diff
+    ranking_diff_average /= num_games
+
+    ranking_diff_variance = 0.0
+    for game in results:
+        num_baseline = 0
+        baseline_ranking = 0.0
+        num_proposed = 0
+        proposed_ranking = 0.0
+        for i in range(4):
+            ranking = game['ranking'][i]
+            if game['proposed'][i] == 0:
+                num_baseline += 1
+                baseline_ranking += ranking
+            else:
+                assert(game['proposed'][i] == 1)
+                num_proposed += 1
+                proposed_ranking += ranking
+        assert(num_baseline >= 1)
+        assert(num_proposed >= 1)
+        baseline_ranking /= num_baseline
+        proposed_ranking /= num_proposed
+        diff = proposed_ranking - baseline_ranking
+        ranking_diff_variance += (diff - ranking_diff_average) ** 2.0
+    # Unbiased sample variance.
+    ranking_diff_variance /= (num_games - 1)
+
+    print(f'''---
+num_games: {num_games}
+baseline:
+  ranking:
+    average: {baseline_statistics[0][0] + 1.0}
+    variance: {baseline_statistics[0][1]}
+  grading_point:
+    average: {baseline_statistics[1][0]}
+    variance: {baseline_statistics[1][1]}
+  soul_point:
+    average: {baseline_statistics[2][0]}
+    variance: {baseline_statistics[2][1]}
+  top_rate:
+    average: {baseline_statistics[3][0]}
+    variance: {baseline_statistics[3][1]}
+  quinella_rate:
+    average: {baseline_statistics[4][0]}
+    variance: {baseline_statistics[4][1]}
+proposed:
+  ranking:
+    average: {proposed_statistics[0][0] + 1.0}
+    variance: {proposed_statistics[0][1]}
+  grading_point:
+    average: {proposed_statistics[1][0]}
+    variance: {proposed_statistics[1][1]}
+  soul_point:
+    average: {proposed_statistics[2][0]}
+    variance: {proposed_statistics[2][1]}
+  top_rate:
+    average: {proposed_statistics[3][0]}
+    variance: {proposed_statistics[3][1]}
+  quinella_rate:
+    average: {proposed_statistics[4][0]}
+    variance: {proposed_statistics[4][1]}
+difference:
+  ranking:
+    average: {ranking_diff_average}
+    variance: {ranking_diff_variance}
+''')
 
 
 if __name__ == '__main__':
