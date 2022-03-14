@@ -551,7 +551,7 @@ def main() -> None:
         if epoch == 0:
             num_samples_to_skip = num_samples
         else:
-            with open(snapshots_path / f'progress.{epoch_str}.yaml') as f:
+            with open(snapshots_path / f'policy-progress.{epoch_str}.yaml') as f:
                 progress_data = yaml.load(f, Loader=yaml.Loader)
             num_samples_to_skip = num_samples - progress_data['num_samples']
 
@@ -738,6 +738,7 @@ def main() -> None:
             config['epoch_sample_offset'] = config['num_samples'] - config['num_samples_to_skip']
             config['num_samples'] = _training_epoch(**config, writer=writer)
             config['epoch'] += 1
+            config['num_samples_to_skip'] = 0
 
 
 if __name__ == '__main__':
