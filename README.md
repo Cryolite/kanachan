@@ -9,7 +9,7 @@ This repository provides an annotation tool for game records of Mahjong Soul, an
 
 The first thing users should do in order to use this repository is to collect game records of Mahjong Soul. The format of game records must be the same as the WebSocket response message that is returned from the Mahjong Soul API server when you hit a URL of the format `https://game.mahjongsoul.com/?paipu=YYMMDD-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`. Data in this format can be obtained by capturing WebSocket messages exchanged with the Mahjong Soul's API server, using a network sniffering tools such as [mitmproxy](https://mitmproxy.org/) or [Wireshark](https://www.wireshark.org/), browser extensions, or other tools. Again, this repository does not include such a tool. Therefore, please look for one on code hosting services including GitHub, or implement one yourself.
 
-After collecting game records, the next step is to use [annotate](annotate) to convert the game records into annotations in a format suitable for learning.
+After collecting game records, the next step is to use [annotate](src/annotation) to convert the game records into annotations in a format suitable for learning.
 
 Finally, the trained model can be obtained by running the training programs under the [kanachan](kanachan) Python module with the annotations as input.
 
@@ -69,7 +69,7 @@ A C++ library implementing a Mahjong simulator that perfectly mimics the standar
 
 ### [src/paishan](src/paishan)
 
-A C++ program that restores the entire tile wall (pai shan, 牌山) from a game record of Mahjong Soul. Note that the tile wall restored by this program can be used for testing purposes (input to [test/simulation_vs_annotation](test/simulation_vs_annotation)) only, and not for any other purpose.
+A C++ program that restores the entire tile wall (pai shan, 牌山) from a game record of Mahjong Soul. Note that the tile wall restored by this program can be used for testing purposes (input to [test/annotation_vs_simulation](test/annotation_vs_simulation)) only, and not for any other purpose.
 
 ### [test/annotation_vs_simulation](test/annotation_vs_simulation)
 

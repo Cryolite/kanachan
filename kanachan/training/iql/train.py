@@ -24,110 +24,9 @@ from kanachan.training.constants import (
     MAX_NUM_ACTION_CANDIDATES,)
 from kanachan.training.common import (initialize_logging, Dataset,)
 from kanachan.training.bert.encoder import Encoder
+from kanachan.training.iql.value_model import (ValueDecoder, ValueModel,)
+from kanachan.training.iql.q_model import (QDecoder, QModel,)
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
-
-
-class ValueDecoder(nn.Module):
-    def __init__(
-            self, *, dimension: int, dim_final_feedforward: int,
-            dropout: float, activation_function: str, **kwargs) -> None:
-        super(ValueDecoder, self).__init__()
-
-        # The final layer is position-wise feed-forward network.
-        self.__semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
-        if activation_function == 'relu':
-            self.__semifinal_activation = nn.ReLU()
-        elif activation_function == 'gelu':
-            self.__semifinal_activation = nn.GELU()
-        else:
-            raise ValueError(
-                f'{activation_function}: An invalid activation function.')
-        self.__semifinal_dropout = nn.Dropout(p=dropout)
-        self.__final_linear = nn.Linear(dim_final_feedforward, 1)
-
-    def forward(self, x) -> torch.Tensor:
-        candidates, encode = x
-
-        indices = torch.nonzero(candidates == NUM_TYPES_OF_ACTIONS)
-
-        encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
-        encode = encode[indices[:, 0], indices[:, 1]]
-        decode = self.__semifinal_linear(encode)
-        decode = self.__semifinal_activation(decode)
-        decode = self.__semifinal_dropout(decode)
-
-        prediction = self.__final_linear(decode)
-        prediction = torch.squeeze(prediction, dim=1)
-        return prediction
-
-
-class ValueModel(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: ValueDecoder) -> None:
-        super(ValueModel, self).__init__()
-        self.__encoder = encoder
-        self.__decoder = decoder
-
-    def forward(self, x) -> torch.Tensor:
-        encode = self.__encoder(x)
-        prediction = self.__decoder((x[3], encode))
-        return prediction
-
-
-class QDecoder(nn.Module):
-    def __init__(
-            self, *, dimension: int, dim_final_feedforward: int,
-            dropout: float, activation_function: str, **kwargs) -> None:
-        super(QDecoder, self).__init__()
-
-        self.__dimension = dimension
-
-        self.__value_decoder = ValueDecoder(
-            dimension=dimension, dim_final_feedforward=dim_final_feedforward,
-            dropout=dropout, activation_function=activation_function, **kwargs)
-
-        # The final layer is position-wise feed-forward network.
-        self.__semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
-        if activation_function == 'relu':
-            self.__semifinal_activation = nn.ReLU()
-        elif activation_function == 'gelu':
-            self.__semifinal_activation = nn.GELU()
-        else:
-            raise ValueError(
-                f'{activation_function}: An invalid activation function.')
-        self.__semifinal_dropout = nn.Dropout(p=dropout)
-        self.__final_linear = nn.Linear(dim_final_feedforward, 1)
-
-    def forward(self, x) -> torch.Tensor:
-        candidates, encode = x
-
-        mask = (candidates < NUM_TYPES_OF_ACTIONS)
-        value_decode = self.__value_decoder(x)
-        value_decode = torch.unsqueeze(value_decode, dim=1)
-        value_decode = value_decode.expand(-1, MAX_NUM_ACTION_CANDIDATES)
-        value_decode = value_decode * mask
-
-        mask = torch.unsqueeze(mask, dim=2)
-        mask = mask.expand(-1, -1, self.__dimension)
-        advantage_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:] * mask
-        advantage_decode = self.__semifinal_linear(advantage_encode)
-        advantage_decode = self.__semifinal_activation(advantage_decode)
-        advantage_decode = self.__semifinal_dropout(advantage_decode)
-        advantage_decode = self.__final_linear(advantage_decode)
-        advantage_decode = torch.squeeze(advantage_decode, dim=2)
-
-        return value_decode + advantage_decode
-
-
-class QModel(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: QDecoder) -> None:
-        super(QModel, self).__init__()
-        self.__encoder = encoder
-        self.__decoder = decoder
-
-    def forward(self, x) -> torch.Tensor:
-        encode = self.__encoder(x)
-        decode = self.__decoder((x[3], encode))
-        return decode
 
 
 def _training(
@@ -161,6 +60,7 @@ def _training(
     batch_count = 0
     for annotation in data_loader:
         batch_size = len(annotation[0])
+        local_batch_size = batch_size
 
         if skipped_samples < num_samples:
             skipped_samples += batch_size
@@ -173,25 +73,25 @@ def _training(
                 if batch_size % world_size != 0:
                     raise RuntimeError(
                         'Batch size must be divisible by the world size.')
-                first = (batch_size // world_size) * rank
-                last = (batch_size // world_size) * (rank + 1)
+                local_batch_size //= world_size
+                first = local_batch_size * rank
+                last = local_batch_size * (rank + 1)
                 annotation = tuple(x[first:last].cuda() for x in annotation)
             else:
                 annotation = tuple(x.cuda() for x in annotation)
 
         with torch.no_grad():
             q1 = q_target1_model(annotation[:4])
-            q1 = q1[torch.arange(batch_size), annotation[4]]
+            q1 = q1[torch.arange(local_batch_size), annotation[4]]
             q2 = q_target2_model(annotation[:4])
-            q2 = q2[torch.arange(batch_size), annotation[4]]
+            q2 = q2[torch.arange(local_batch_size), annotation[4]]
             q = torch.minimum(q1, q2)
         value = value_model(annotation[:4])
         value_loss = q.detach() - value
         value_loss = torch.where(
             value_loss < 0.0, (1.0 - expectile) * (value_loss ** 2.0),
             expectile * (value_loss ** 2.0))
-        value_loss = torch.sum(value_loss)
-        value_loss /= batch_size
+        value_loss = torch.mean(value_loss)
         if math.isnan(value_loss.item()):
             raise RuntimeError('Value loss becomes NaN.')
 
@@ -205,7 +105,7 @@ def _training(
         with amp.scale_loss(value_loss, value_optimizer) as scaled_value_loss:
             scaled_value_loss.backward()
 
-        mask = [0.0 if annotation[5][i][0].item() == NUM_TYPES_OF_SPARSE_FEATURES else 1.0 for i in range(batch_size)]
+        mask = [0.0 if annotation[5][i][0].item() == NUM_TYPES_OF_SPARSE_FEATURES else 1.0 for i in range(local_batch_size)]
         mask = torch.tensor(mask, device=annotation[5].device, dtype=torch.float32)
         reward = annotation[9]
         with torch.no_grad():
@@ -213,20 +113,18 @@ def _training(
             value *= discount_factor
             value *= mask
         q1 = q_source1_model(annotation[:4])
-        q1 = q1[torch.arange(batch_size), annotation[4]]
+        q1 = q1[torch.arange(local_batch_size), annotation[4]]
         q1_loss = reward + value - q1
         q1_loss = q1_loss ** 2.0
         q2 = q_source2_model(annotation[:4])
-        q2 = q2[torch.arange(batch_size), annotation[4]]
+        q2 = q2[torch.arange(local_batch_size), annotation[4]]
         q2_loss = reward + value - q2
         q2_loss = q2_loss ** 2.0
 
-        q1_loss = torch.sum(q1_loss)
-        q1_loss /= batch_size
+        q1_loss = torch.mean(q1_loss)
         if math.isnan(q1_loss.item()):
             raise RuntimeError('Q1 loss becomes NaN.')
-        q2_loss = torch.sum(q2_loss)
-        q2_loss /= batch_size
+        q2_loss = torch.mean(q2_loss)
         if math.isnan(q2_loss.item()):
             raise RuntimeError('Q2 loss becomes NaN.')
 
@@ -249,11 +147,14 @@ def _training(
             scaled_q2_loss.backward()
 
         num_samples += batch_size
+        batch_count += 1
 
-        if (batch_count + 1) % gradient_accumulation_steps == 0:
+        if batch_count % gradient_accumulation_steps == 0:
             value_gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(value_optimizer) if x.grad is not None]
             value_gradient = torch.cat(value_gradient)
+            if is_multiprocess:
+                all_reduce(value_gradient)
             value_gradient_norm = torch.linalg.vector_norm(value_gradient)
             value_gradient_norm = value_gradient_norm.item()
             nn.utils.clip_grad_norm_(
@@ -265,6 +166,8 @@ def _training(
             q1_gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(q1_optimizer) if x.grad is not None]
             q1_gradient = torch.cat(q1_gradient)
+            if is_multiprocess:
+                all_reduce(q1_gradient)
             q1_gradient_norm = torch.linalg.vector_norm(q1_gradient)
             q1_gradient_norm = q1_gradient_norm.item()
             nn.utils.clip_grad_norm_(
@@ -276,6 +179,8 @@ def _training(
             q2_gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(q2_optimizer) if x.grad is not None]
             q2_gradient = torch.cat(q2_gradient)
+            if is_multiprocess:
+                all_reduce(q2_gradient)
             q2_gradient_norm = torch.linalg.vector_norm(q2_gradient)
             q2_gradient_norm = q2_gradient_norm.item()
             nn.utils.clip_grad_norm_(
@@ -284,7 +189,7 @@ def _training(
             q2_optimizer.step()
             q2_optimizer.zero_grad()
 
-            if (batch_count + 1) % (gradient_accumulation_steps * target_update_interval) == 0:
+            if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 param_source1_iter = amp.master_params(q1_optimizer)
                 param_target1_iter = q_target1_model.parameters()
                 for param_source1, param_target1 in zip(param_source1_iter, param_target1_iter):
@@ -354,8 +259,6 @@ f' Q1 loss = {q1_batch_loss}, Q2 loss = {q2_batch_loss}')
             torch.save(
                 amp.state_dict(), snapshots_path / f'amp.{num_samples}.pth')
             last_snapshot = num_samples
-
-        batch_count += 1
 
     elapsed_time = datetime.datetime.now() - start_time
     logging.info(
@@ -686,7 +589,7 @@ def main() -> None:
         q2_optimizer_snapshot_path = snapshots_path / f'q2-optimizer.{num_samples}.pth'
         if not q2_optimizer_snapshot_path.exists():
             raise RuntimeError(f'{q2_optimizer_snapshot_path}: Does not exist.')
-        amp_snapshot_path = snapshots_path / f'amp.{num_samples}.path'
+        amp_snapshot_path = snapshots_path / f'amp.{num_samples}.pth'
         if not amp_snapshot_path.exists():
             raise RuntimeError(f'{amp_snapshot_path}: Does not exist.')
 
@@ -891,10 +794,10 @@ def main() -> None:
         assert(q2_optimizer_snapshot_path.is_file())
         assert(amp_snapshot_path.exists())
         assert(amp_snapshot_path.is_file())
-        value_optimizer_state.load_state_dict(
+        value_optimizer.load_state_dict(
             torch.load(value_optimizer_snapshot_path))
-        q1_optimizer_state.load_state_dict(torch.load(q1_optimizer_snapshot_path))
-        q2_optimizer_state.load_state_dict(torch.load(q2_optimizer_snapshot_path))
+        q1_optimizer.load_state_dict(torch.load(q1_optimizer_snapshot_path))
+        q2_optimizer.load_state_dict(torch.load(q2_optimizer_snapshot_path))
         amp.load_state_dict(torch.load(amp_snapshot_path))
 
     if config['is_multiprocess']:

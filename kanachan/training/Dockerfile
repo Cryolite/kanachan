@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:21.10-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.02-py3
 FROM $BASE_IMAGE
 
 RUN apt-get update && \
