@@ -36,12 +36,12 @@ class QDecoder(nn.Module):
     def forward(self, x) -> torch.Tensor:
         candidates, encode = x
 
+        mask = (candidates < NUM_TYPES_OF_ACTIONS)
         value_decode = self.__value_decoder(x)
         value_decode = torch.unsqueeze(value_decode, dim=1)
         value_decode = value_decode.expand(-1, MAX_NUM_ACTION_CANDIDATES)
-        value_decode = value_decode * (candidates < NUM_TYPES_OF_ACTIONS)
+        value_decode = value_decode * mask
 
-        mask = (candidates < NUM_TYPES_OF_ACTIONS)
         mask = torch.unsqueeze(mask, dim=2)
         mask = mask.expand(-1, -1, self.__dimension)
         advantage_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:] * mask
