@@ -524,6 +524,8 @@ def main() -> None:
             epsilon = 1.0e-8
         elif config.optimizer == 'lamb':
             epsilon = 1.0e-6
+    else:
+        epsilon = config.epsilon
     if epsilon is not None and epsilon <= 0.0:
         raise RuntimeError(f'{epsilon}: An invalid value for `--epsilon`.')
 
