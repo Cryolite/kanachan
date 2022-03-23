@@ -91,7 +91,7 @@ std::uint_fast16_t ModelWrapper::operator()(python::object features) const
     python::object numeric = features[1];
     for (long i = 2; i < constants.attr("NUM_NUMERIC_FEATURES"); ++i) {
       // Scaling.
-      numeric[i] /= 10000.0;
+      numeric[i] = double(python::extract<long>(numeric[i])()) / 10000.0;
     }
     kwargs["device"] = device_;
     kwargs["dtype"] = dtype_;

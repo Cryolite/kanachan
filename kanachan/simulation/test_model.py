@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 
+import math
 from typing import List
 import sys
 from traceback import print_exc
+import torch
+from kanachan.training.constants import (
+    NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTIVE_SPARSE_FEATURES,
+    NUM_TYPES_OF_PROGRESSION_FEATURES, MAX_LENGTH_OF_PROGRESSION_FEATURES,
+    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
 
 
 class TestModel(object):
@@ -11,7 +17,7 @@ class TestModel(object):
         self.__round_index = 0
         self.__decision_index = 0
 
-    def __call__(self, features: List[List[int]]) -> int:
+    def __call__(self, features: List[List[int]]) -> torch.Tensor:
         if len(features) != 4:
             raise ValueError(len(features))
         sparse = features[0]
@@ -35,24 +41,56 @@ class TestModel(object):
                 continue
             decision = decisions[self.__decision_index]
             error = False
-            if sparse != decision['sparse']:
+            message = ''
+            sparse = torch.squeeze(sparse)
+            sparse_ = list(decision['sparse'])
+            for i in range(len(sparse_), MAX_NUM_ACTIVE_SPARSE_FEATURES):
+                # Padding.
+                sparse_.append(NUM_TYPES_OF_SPARSE_FEATURES)
+            sparse_ = torch.tensor(
+                sparse_, device=sparse.device, dtype=sparse.dtype)
+            if torch.any(sparse != sparse_).item():
                 error = True
-            if numeric != decision['numeric']:
+                message += "sparse != decision['sparse']\n"
+            numeric = torch.squeeze(numeric)
+            numeric_ = list(decision['numeric'])
+            numeric_[2:] = [float(x) / 10000.0 for x in numeric_[2:]]
+            numeric_ = torch.tensor(
+                numeric_, device=numeric.device, dtype=numeric.dtype)
+            if torch.any(numeric != numeric_).item():
                 error = True
-            if progression != decision['progression']:
+                message += "numeric != decision['numeric']\n"
+            progression = torch.squeeze(progression)
+            progression_ = list(decision['progression'])
+            for i in range(len(progression_), MAX_LENGTH_OF_PROGRESSION_FEATURES):
+                # Padding.
+                progression_.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
+            progression_ = torch.tensor(
+                progression_, device=progression.device,
+                dtype=progression.dtype)
+            if torch.any(progression != progression_).item():
                 error = True
-            if candidates != decision['candidates']:
+                message += "progression != decision['progression']\n"
+            candidates = torch.squeeze(candidates)
+            candidates_ = list(decision['candidates'])
+            for i in range(len(candidates_), MAX_NUM_ACTION_CANDIDATES):
+                # Padding.
+                candidates_.append(NUM_TYPES_OF_ACTIONS + 1)
+            candidates_ = torch.tensor(
+                candidates_, device=candidates.device, dtype=candidates.dtype)
+            if torch.any(candidates != candidates_).item():
                 error = True
+                message += "candidates != decision['candidates']\n"
             if error:
-                message = f'''Decision error:
+                message += f'''Decision error:
 sparse: {sparse}
-sparse: {decision["sparse"]}
+sparse: {sparse_}
 numeric: {numeric}
-numeric: {decision["numeric"]}
+numeric: {numeric_}
 progression: {progression}
-progression: {decision["progression"]}
+progression: {progression_}
 candidates: {candidates}
-candidates: {decision["candidates"]}
+candidates: {candidates_}
 index: {decision["index"]}
 '''
                 if self.__decision_index >= 1:
@@ -80,6 +118,11 @@ index: {next_decision["index"]}
             if index >= len(decision['candidates']):
                 raise RuntimeError('Out of index.')
             self.__decision_index += 1
-            return decision['candidates'][index]
+            prediction = torch.full(
+                (MAX_NUM_ACTION_CANDIDATES,), -math.inf, device=numeric.device,
+                dtype=numeric.dtype)
+            prediction[index] = 0.0
+            prediction = torch.unsqueeze(prediction, dim=0)
+            return prediction
 
         raise RuntimeError('No more decision.')

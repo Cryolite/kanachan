@@ -52,12 +52,12 @@ def _on_leaf(test_file_path: Path):
 {round_data["delta_scores"]}''')
 
     final_ranking = [test_data['players'][i]['final_ranking'] for i in range(4)]
-    if result['final_ranking'] != final_ranking:
-        raise RuntimeError(f'{result["final_ranking"]} != {final_ranking}')
+    if result['ranking'] != final_ranking:
+        raise RuntimeError(f'{result["ranking"]} != {final_ranking}')
 
     final_scores = [test_data['players'][i]['final_score'] for i in range(4)]
-    if result['final_scores'] != final_scores:
-        raise RuntimeError(f'{result["final_scores"]} != {final_scores}')
+    if result['scores'] != final_scores:
+        raise RuntimeError(f'{result["scores"]} != {final_scores}')
 
     print('PASS')
 
