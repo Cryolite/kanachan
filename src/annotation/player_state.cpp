@@ -225,7 +225,30 @@ PlayerState::PlayerState(
     level_ = 14u;
     break;
   case 10601u:
-    // 四麻魂天
+    // 四麻魂天 (2021/08/26 魂珠導入以前)
+    level_ = 15u;
+    break;
+  case 10701u:
+  case 10702u:
+  case 10703u:
+  case 10704u:
+  case 10705u:
+  case 10706u:
+  case 10707u:
+  case 10708u:
+  case 10709u:
+  case 10710u:
+  case 10711u:
+  case 10712u:
+  case 10713u:
+  case 10714u:
+  case 10715u:
+  case 10716u:
+  case 10717u:
+  case 10718u:
+  case 10719u:
+  case 10720u:
+    // 四麻魂天 (2021/08/26 魂珠導入以降)
     level_ = 15u;
     break;
   default:
