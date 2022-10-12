@@ -17,7 +17,7 @@ RUN pip3 install -U \
       setuptools \
       wheel
 
-RUN pip3 install torch==1.10.1+cpu torchvision==0.11.2+cpu torchaudio==0.10.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+RUN pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
 # `marisa-trie` only supports for in-tree build.
 RUN pushd /home/ubuntu/.local/src/marisa-trie && \
