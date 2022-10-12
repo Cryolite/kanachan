@@ -32,4 +32,6 @@ target_link_libraries(_simulation
   PRIVATE marisa
   PRIVATE Boost::python
   PRIVATE Boost::headers
-  PRIVATE "python${PYTHON_VERSION}")
+  PRIVATE "python${PYTHON_VERSION}"
+  PRIVATE util
+  PRIVATE dl)
