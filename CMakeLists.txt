@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20.5)
+cmake_minimum_required(VERSION 3.16.3)
 project(kanachan)
 
 enable_testing()
@@ -8,7 +8,7 @@ message("PYTHON_VERSION=${PYTHON_VERSION}")
 message("CMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
 message("CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 20)
 
 include_directories(
   "/usr/include/python${PYTHON_VERSION}"
