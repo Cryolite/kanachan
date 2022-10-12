@@ -4,6 +4,7 @@ project(kanachan)
 enable_testing()
 
 message("PYTHON_VERSION=${PYTHON_VERSION}")
+message("PYTHON_INCLUDE_PATH=${PYTHON_INCLUDE_PATH}")
 
 message("CMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
 message("CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
@@ -11,7 +12,7 @@ message("CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
 set(CMAKE_CXX_STANDARD 20)
 
 include_directories(
-  "/usr/include/python${PYTHON_VERSION}"
+  "${PYTHON_INCLUDE_PATH}"
   src)
 
 if (("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang"))

@@ -58,6 +58,7 @@ RUN pushd /workspace/kanachan/src/common && \
     mkdir -p /workspace/kanachan/build && \
     pushd /workspace/kanachan/build && \
     cmake -DPYTHON_VERSION="$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
+          -DPYTHON_INCLUDE_PATH=/usr/include/python"$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
           -DCMAKE_BUILD_TYPE=Release \
           .. && \
     VERBOSE=1 make -j make_trie _simulation && \
