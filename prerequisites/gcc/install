@@ -142,11 +142,7 @@ key_ids=(B215C1633BCA0477615F1B35A5B3A004745C015A  \
          7F74F97C103468EE5D750B583AB00996FC26A641  \
          33C235A34C46AA3FFB293709A328C3A2C3C45C06  \
          D3A93CAD751C2AF4F8C7AD516C35B99309B5FA62)
-key_servers=('hkp://keys.gnupg.net:80'               \
-             'hkp://zimmermann.mayfirst.org:80'      \
-             'hkp://pgp.key-server.io:80'            \
-             'hkp://keyserver.ubuntu.com:80'         \
-             'hkp://p80.pool.sks-keyservers.net:80')
+key_servers=('hkp://keyserver.ubuntu.com:80')
 for key_server in "${key_servers[@]}"; do
   gpg --homedir "$temp_dir/.gnupg" --batch --keyserver "$key_server" --recv-keys "${key_ids[@]}" || true
 done
@@ -163,7 +159,7 @@ tar -xf "$temp_dir/gcc-$version.tar.xz" -C "$source_dir" --strip-components=1 \
   || die_with_runtime_error "$PROGRAM_NAME" "Failed to expand \`gcc-$version.tar.xz'."
 rm "$temp_dir/gcc-$version.tar.xz"
 
-(cd "$source_dir" && timeout 60 ./contrib/download_prerequisites) \
+(cd "$source_dir" && ./contrib/download_prerequisites) \
   || die_with_runtime_error "$PROGRAM_NAME" "Failed to download the prerequisites to build GCC."
 rm "$source_dir"/*.tar.*
 

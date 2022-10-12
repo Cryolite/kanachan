@@ -6,6 +6,7 @@ RUN apt-get update && \
     apt-get -y dist-upgrade && \
     apt-get -y install \
       autoconf \
+      bzip2 \
       curl \
       g++ \
       git \
@@ -45,8 +46,6 @@ RUN /opt/kanachan-prerequisites/boost/build --debug --source-dir /usr/local/src/
 RUN /opt/kanachan-prerequisites/boost/build --debug --source-dir /usr/local/src/boost -- \
   -d+2 --with-headers --with-stacktrace --with-python --build-type=complete --layout=tagged \
   toolset=gcc variant=release threading=multi link=shared runtime-link=shared
-RUN find /usr -name 'libboost_stacktrace_*.so.*' | xargs -I '{}' cp '{}' /usr/local/lib
-RUN cd /usr/local/lib && find -maxdepth 1 -name 'libboost_stacktrace_*' | xargs -I '{}' bash -c 'ln -s "$(basename {})" "$(basename {} | sed -e "s@\(\.[[:digit:]]\{1,\}\)\{3\}\$@@")"'
 
 USER ubuntu
 
