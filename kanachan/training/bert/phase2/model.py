@@ -11,26 +11,26 @@ class Model(nn.Module):
             self, encoder: Encoder, decoder: Decoder,
             *, freeze_encoder: bool) -> None:
         super(Model, self).__init__()
-        self._encoder = encoder
-        self._decoder = decoder
-        self.__freeze_encoder = freeze_encoder
-        self.__mode = 'training'
+        self.encoder = encoder
+        self.decoder = decoder
+        self.freeze_encoder = freeze_encoder
+        self.mode = 'training'
 
     def mode(self, mode: str) -> None:
         if mode not in ('training', 'validation', 'prediction'):
             raise ValueError(mode)
-        self._decoder.mode(mode)
-        self.__mode = mode
+        self.decoder.mode(mode)
+        self.mode = mode
 
     def forward(self, x):
-        if self.__mode == 'prediction':
-            encode = self._encoder(x)
+        if self.mode == 'prediction':
+            encode = self.encoder(x)
         else:
-            if self.__freeze_encoder:
+            if self.freeze_encoder:
                 with torch.no_grad():
-                    encode = self._encoder(x[:-1])
+                    encode = self.encoder(x[:-1])
             else:
-                encode = self._encoder(x[:-1])
+                encode = self.encoder(x[:-1])
             encode = (encode, x[-1])
-        prediction = self._decoder(encode)
+        prediction = self.decoder(encode)
         return prediction

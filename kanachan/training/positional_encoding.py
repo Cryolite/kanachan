@@ -8,7 +8,7 @@ from torch import nn
 class PositionalEncoding(nn.Module):
     def __init__(self, max_length: int, dimension: int, dropout: float=0.1):
         super().__init__()
-        self.__dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p=dropout)
 
         position = torch.arange(max_length).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, dimension, 2) * (-math.log(10000.0) / dimension))
@@ -19,4 +19,4 @@ class PositionalEncoding(nn.Module):
 
     def forward(self, x):
         x = x + self._pe[:x.size(1), :]
-        return self.__dropout(x)
+        return self.dropout(x)

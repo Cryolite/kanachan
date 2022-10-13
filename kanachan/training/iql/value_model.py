@@ -14,16 +14,16 @@ class ValueDecoder(nn.Module):
         super(ValueDecoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
-        self.__semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
+        self.semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
         if activation_function == 'relu':
-            self.__semifinal_activation = nn.ReLU()
+            self.semifinal_activation = nn.ReLU()
         elif activation_function == 'gelu':
-            self.__semifinal_activation = nn.GELU()
+            self.semifinal_activation = nn.GELU()
         else:
             raise ValueError(
                 f'{activation_function}: An invalid activation function.')
-        self.__semifinal_dropout = nn.Dropout(p=dropout)
-        self.__final_linear = nn.Linear(dim_final_feedforward, 1)
+        self.semifinal_dropout = nn.Dropout(p=dropout)
+        self.final_linear = nn.Linear(dim_final_feedforward, 1)
 
     def forward(self, x) -> torch.Tensor:
         candidates, encode = x
@@ -32,11 +32,11 @@ class ValueDecoder(nn.Module):
 
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         encode = encode[indices[:, 0], indices[:, 1]]
-        decode = self.__semifinal_linear(encode)
-        decode = self.__semifinal_activation(decode)
-        decode = self.__semifinal_dropout(decode)
+        decode = self.semifinal_linear(encode)
+        decode = self.semifinal_activation(decode)
+        decode = self.semifinal_dropout(decode)
 
-        prediction = self.__final_linear(decode)
+        prediction = self.final_linear(decode)
         prediction = torch.squeeze(prediction, dim=1)
         return prediction
 
@@ -44,10 +44,10 @@ class ValueDecoder(nn.Module):
 class ValueModel(nn.Module):
     def __init__(self, encoder: Encoder, decoder: ValueDecoder) -> None:
         super(ValueModel, self).__init__()
-        self.__encoder = encoder
-        self.__decoder = decoder
+        self.encoder = encoder
+        self.decoder = decoder
 
     def forward(self, x) -> torch.Tensor:
-        encode = self.__encoder(x)
-        prediction = self.__decoder((x[3], encode))
+        encode = self.encoder(x)
+        prediction = self.decoder((x[3], encode))
         return prediction
