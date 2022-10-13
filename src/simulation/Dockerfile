@@ -42,6 +42,8 @@ RUN pushd src/common && \
     pushd build && \
     cmake -DPYTHON_VERSION="$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
           -DPYTHON_INCLUDE_PATH=/usr/include/python"$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
+          -DMARISA_TRIE_ROOT=/home/ubuntu/.local \
+          -DSHANTEN_NUMBER_SOURCE_PATH=/home/ubuntu/.local/src/shanten-number \
           -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
           -DCMAKE_C_COMPILER=/usr/local/bin/gcc \
           -DCMAKE_CXX_COMPILER=/usr/local/bin/g++ \

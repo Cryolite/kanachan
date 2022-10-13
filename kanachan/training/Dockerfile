@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.02-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.09-py3
 FROM $BASE_IMAGE
 
 RUN apt-get update && \
@@ -59,6 +59,8 @@ RUN pushd /workspace/kanachan/src/common && \
     pushd /workspace/kanachan/build && \
     cmake -DPYTHON_VERSION="$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
           -DPYTHON_INCLUDE_PATH=/usr/include/python"$(python3 -V | sed -e 's@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@')" \
+          -DMARISA_TRIE_ROOT=/home/ubuntu/.local \
+          -DSHANTEN_NUMBER_SOURCE_PATH=/home/ubuntu/.local/src/shanten-number \
           -DCMAKE_BUILD_TYPE=Release \
           .. && \
     VERBOSE=1 make -j make_trie _simulation && \
