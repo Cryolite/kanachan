@@ -1,0 +1,9 @@
+{
+    "dimension": 768,
+    "num_heads": 12,
+    "dim_feedforward": 3072,
+    "num_layers": 12,
+    "dropout": 0.0,
+    "activation_function": "gelu",
+    "checkpointing": false
+}

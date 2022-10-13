@@ -1,0 +1,6 @@
+{
+    "dimension": 768,
+    "dim_final_feedforward": 3072,
+    "activation_function": "gelu",
+    "dropout": 0.0
+}

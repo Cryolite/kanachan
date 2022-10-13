@@ -6,3 +6,4 @@
 /annotate/Dockerfile
 /kanachan/Dockerfile
 /kanachan/**/__pycache__
+/mjai.app
