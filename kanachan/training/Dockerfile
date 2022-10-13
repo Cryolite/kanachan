@@ -65,7 +65,7 @@ RUN pushd /workspace/kanachan/src/common && \
           .. && \
     VERBOSE=1 make -j make_trie _simulation && \
     mkdir -p /home/ubuntu/.local/share/kanachan && \
-    src/xiangting/make_trie && \
+    src/xiangting/make_trie /home/ubuntu/.local/src/shanten-number /home/ubuntu/.local/share/kanachan && \
     popd && \
     pushd /workspace/kanachan && \
     cp build/src/simulation/lib_simulation.so kanachan/simulation/_simulation.so && \

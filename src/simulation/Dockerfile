@@ -50,7 +50,7 @@ RUN pushd src/common && \
           .. && \
     VERBOSE=1 make -j make_trie _simulation && \
     mkdir -p /home/ubuntu/.local/share/kanachan && \
-    ASAN_OPTIONS=handle_abort=1:allow_addr2line=1 src/xiangting/make_trie && \
+    ASAN_OPTIONS=handle_abort=1:allow_addr2line=1 src/xiangting/make_trie /home/ubuntu/.local/src/shanten-number /home/ubuntu/.local/share/kanachan && \
     popd && \
     cp build/src/simulation/lib_simulation.so kanachan/simulation/_simulation.so && \
     pip3 install .

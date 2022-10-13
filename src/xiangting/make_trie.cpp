@@ -60,10 +60,27 @@ void enumerate_zipai(
 
 } // namespace *unnamed*
 
-int main()
+int main(int argc, char const * const *argv)
 {
+  std::string input_prefix;
+  std::string output_prefix;
+  if (argc == 1) {
+    KANACHAN_THROW<std::runtime_error>("error: Too few arguments.");
+  }
+  else if (argc == 2) {
+    input_prefix = argv[1];
+    output_prefix = input_prefix;
+  }
+  else if (argc == 3) {
+    input_prefix = argv[1];
+    output_prefix = argv[2];
+  }
+  else {
+    KANACHAN_THROW<std::runtime_error>("error: Too many arguments.");
+  }
+
   Calsht calsht;
-  calsht.initialize("/home/ubuntu/.local/src/shanten-number");
+  calsht.initialize(input_prefix.c_str());
 
   {
     marisa::Keyset shupai_keyset;
@@ -75,7 +92,7 @@ int main()
     }
     marisa::Trie shupai_trie;
     shupai_trie.build(shupai_keyset);
-    shupai_trie.save("/home/ubuntu/.local/share/kanachan/shupai.trie");
+    shupai_trie.save((output_prefix + "/shupai.trie").c_str());
     std::vector<std::pair<int, int> > shupai_xiangting(
       shupai_keyset.size(),
       std::pair(std::numeric_limits<int>::max(), std::numeric_limits<int>::max()));
@@ -99,8 +116,7 @@ int main()
       }
     }
     std::ofstream ofs(
-      "/home/ubuntu/.local/share/kanachan/shupai.xiangting",
-      std::ios_base::out | std::ios_base::binary);
+      output_prefix + "/shupai.xiangting", std::ios_base::out | std::ios_base::binary);
     for (auto const [xiangting, xiangting_headless] : shupai_xiangting) {
       if (xiangting == std::numeric_limits<int>::max()) {
         KANACHAN_THROW<std::logic_error>("");
@@ -124,7 +140,7 @@ int main()
     }
     marisa::Trie zipai_trie;
     zipai_trie.build(zipai_keyset);
-    zipai_trie.save("/home/ubuntu/.local/share/kanachan/zipai.trie");
+    zipai_trie.save((output_prefix + "/zipai.trie").c_str());
     std::vector<std::pair<int, int> > zipai_xiangting(
       zipai_keyset.size(),
       std::pair(std::numeric_limits<int>::max(), std::numeric_limits<int>::max()));
@@ -148,8 +164,7 @@ int main()
       }
     }
     std::ofstream ofs(
-      "/home/ubuntu/.local/share/kanachan/zipai.xiangting",
-      std::ios_base::out | std::ios_base::binary);
+      output_prefix + "/zipai.xiangting", std::ios_base::out | std::ios_base::binary);
     for (auto const [xiangting, xiangting_headless] : zipai_xiangting) {
       if (xiangting == std::numeric_limits<int>::max()) {
         KANACHAN_THROW<std::logic_error>("");
