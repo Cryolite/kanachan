@@ -274,12 +274,27 @@ def load_model(config_path: Path) -> nn.Module:
             '^\\./', str(this_dir) + '/', encoder_config['snapshot'])
         decoder_config['snapshot'] = re.sub(
             '^\\./', str(this_dir) + '/', decoder_config['snapshot'])
-        encoder_instance.load_state_dict(torch.load(encoder_config['snapshot']))
-        decoder_instance.load_state_dict(torch.load(decoder_config['snapshot']))
+        encoder_state_dict = torch.load(encoder_config['snapshot'])
+        encoder_state_dict_fixed = {}
+        for k, v in encoder_state_dict.items():
+            k = re.sub('^module\\.', '', k)
+            encoder_state_dict_fixed[k] = v
+        encoder_instance.load_state_dict(encoder_state_dict_fixed)
+        decoder_state_dict = torch.load(decoder_config['snapshot'])
+        decoder_state_dict_fixed = {}
+        for k, v in decoder_state_dict.items():
+            k = re.sub('^module\\.', '', k)
+            decoder_state_dict_fixed[k] = v
+        decoder_instance.load_state_dict(decoder_state_dict_fixed)
     else:
         assert('snapshot' in model_config)
         model_config['snapshot'] = re.sub(
             '^\\./', str(this_dir) + '/', model_config['snapshot'])
-        model.load_state_dict(torch.load(model_config['snapshot']))
+        model_state_dict = torch.load(model_config['snapshot'])
+        model_state_dict_fixed = {}
+        for k, v in model_state_dict.items():
+            k = re.sub('^module\\.', '', k)
+            model_state_dict_fixed[k] = v
+        model.load_state_dict(model_state_dict_fixed)
 
     return model
