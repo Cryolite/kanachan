@@ -19,12 +19,12 @@ from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.policy_model import (PolicyDecoder, PolicyModel,)
 
 
-_NUM2TILE = [
+_NUM2TILE = (
     '5mr', '1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m',
     '5pr', '1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p',
     '5sr', '1s', '2s', '3s', '4s', '5s', '6s', '7s', '8s', '9s',
     'E', 'S', 'W', 'N', 'P', 'F', 'C'
-]
+)
 
 
 _TILE2NUM = {}
@@ -32,15 +32,15 @@ for i, tile in enumerate(_NUM2TILE):
     _TILE2NUM[tile] = i
 
 
-_TILE_OFFSETS = [
+_TILE_OFFSETS = (
       0,   1,   5,   9,  13,  17,  20,  24,  28,  32,
      36,  37,  41,  45,  49,  53,  56,  60,  64,  68,
      72,  73,  77,  81,  85,  89,  92,  96, 100, 104,
     108, 112, 116, 120, 124, 128, 132, 136
-]
+)
 
 
-_NUM2CHI = [
+_NUM2CHI = (
     ('1m',  ['2m', '3m']),
     ('2m',  ['1m', '3m']),
     ('2m',  ['3m', '4m']),
@@ -131,7 +131,7 @@ _NUM2CHI = [
     ('8s',  ['6s', '7s']),
     ('8s',  ['7s', '9s']),
     ('9s',  ['7s', '8s'])
-]
+)
 
 
 _CHI2NUM = {}
@@ -152,7 +152,101 @@ for tile, consumed in _NUM2CHI:
     _CHI_COUNTS.append((tile, counts))
 
 
-_NUM2PENG = [
+_CHI_TO_KUIKAE_TILES = (
+    ( 1,  4,),     # (2m, 3m, 1m) => 1m, 4m
+    ( 2,),         # (1m, 3m, 2m) => 2m
+    ( 2,  0,  5,), # (3m, 4m, 2m) => 2m, 0m, 5m
+    ( 3,),         # (1m, 2m, 3m) => 3m
+    ( 3,),         # (2m, 4m, 3m) => 3m
+    ( 3,  6,),     # (4m, 5m, 3m) => 3m, 6m
+    ( 3,  6,),     # (4m, 0m, 3m) => 3m, 6m
+    ( 1,  4,),     # (2m, 3m, 4m) => 1m, 4m
+    ( 4,),         # (3m, 5m, 4m) => 4m
+    ( 4,),         # (3m, 0m, 4m) => 4m
+    ( 4,  7,),     # (5m, 6m, 4m) => 4m, 7m
+    ( 4,  7,),     # (0m, 6m, 4m) => 4m, 7m
+    ( 0,  2,  5,), # (3m, 4m, 5m) => 2m, 0m, 5m
+    ( 2,  5,),     # (3m, 4m, 0m) => 2m, 5m
+    ( 0,  5,),     # (4m, 6m, 5m) => 0m, 5m
+    ( 5,),         # (4m, 6m, 0m) => 5m
+    ( 0,  5,  8,), # (6m, 7m, 5m) => 0m, 5m, 8m
+    ( 5,  8,),     # (6m, 7m, 0m) => 5m, 8m
+    ( 3,  6,),     # (4m, 5m, 6m) => 3m, 6m
+    ( 3,  6,),     # (4m, 0m, 6m) => 3m, 6m
+    ( 6,),         # (5m, 7m, 6m) => 6m
+    ( 6,),         # (0m, 7m, 6m) => 6m
+    ( 6,  9,),     # (7m, 8m, 6m) => 6m, 9m
+    ( 4,  7,),     # (5m, 6m, 7m) => 4m, 7m
+    ( 4,  7,),     # (0m, 6m, 7m) => 4m, 7m
+    ( 7,),         # (6m, 8m, 7m) => 7m
+    ( 7,),         # (8m, 9m, 7m) => 7m
+    ( 0,  5,  8,), # (6m, 7m, 8m) => 0m, 5m, 8m
+    ( 8,),         # (7m, 9m, 8m) => 8m
+    ( 6,  9,),     # (7m, 8m, 9m) => 9m
+    (11, 14,),     # (2p, 3p, 1p) => 1p, 4p
+    (12,),         # (1p, 3p, 2p) => 2p
+    (12, 10, 15,), # (3p, 4p, 2p) => 2p, 0p, 5p
+    (13,),         # (1p, 2p, 3p) => 3p
+    (13,),         # (2p, 4p, 3p) => 3p
+    (13, 16,),     # (4p, 5p, 3p) => 3p, 6p
+    (13, 16,),     # (4p, 0p, 3p) => 3p, 6p
+    (11, 14,),     # (2p, 3p, 4p) => 1p, 4p
+    (14,),         # (3p, 5p, 4p) => 4p
+    (14,),         # (3p, 0p, 4p) => 4p
+    (14, 17,),     # (5p, 6p, 4p) => 4p, 7p
+    (14, 17,),     # (0p, 6p, 4p) => 4p, 7p
+    (10, 12, 15,), # (3p, 4p, 5p) => 2p, 0p, 5p
+    (12, 15,),     # (3p, 4p, 0p) => 2p, 5p
+    (10, 15,),     # (4p, 6p, 5p) => 0p, 5p
+    (15,),         # (4p, 6p, 0p) => 5p
+    (10, 15, 18,), # (6p, 7p, 5p) => 0p, 5p, 8p
+    (15, 18,),     # (6p, 7p, 0p) => 5p, 8p
+    (13, 16,),     # (4p, 5p, 6p) => 3p, 6p
+    (13, 16,),     # (4p, 0p, 6p) => 3p, 6p
+    (16,),         # (5p, 7p, 6p) => 6p
+    (16,),         # (0p, 7p, 6p) => 6p
+    (16, 19,),     # (7p, 8p, 6p) => 6p, 9p
+    (14, 17,),     # (5p, 6p, 7p) => 4p, 7p
+    (14, 17,),     # (0p, 6p, 7p) => 4p, 7p
+    (17,),         # (6p, 8p, 7p) => 7p
+    (17,),         # (8p, 9p, 7p) => 7p
+    (10, 15, 18,), # (6p, 7p, 8p) => 0p, 5p, 8p
+    (18,),         # (7p, 9p, 8p) => 8p
+    (16, 19,),     # (7p, 8p, 9p) => 9p
+    (21, 24,),     # (2s, 3s, 1s) => 1s, 4s
+    (22,),         # (1s, 3s, 2s) => 2s
+    (22, 20, 25,), # (3s, 4s, 2s) => 2s, 0s, 5s
+    (23,),         # (1s, 2s, 3s) => 3s
+    (23,),         # (2s, 4s, 3s) => 3s
+    (23, 26,),     # (4s, 5s, 3s) => 3s, 6s
+    (23, 26,),     # (4s, 0s, 3s) => 3s, 6s
+    (21, 24,),     # (2s, 3s, 4s) => 1s, 4s
+    (24,),         # (3s, 5s, 4s) => 4s
+    (24,),         # (3s, 0s, 4s) => 4s
+    (24, 27,),     # (5s, 6s, 4s) => 4s, 7s
+    (24, 27,),     # (0s, 6s, 4s) => 4s, 7s
+    (20, 22, 25,), # (3s, 4s, 5s) => 2s, 0s, 5s
+    (22, 25,),     # (3s, 4s, 0s) => 2s, 5s
+    (20, 25,),     # (4s, 6s, 5s) => 0s, 5s
+    (25,),         # (4s, 6s, 0s) => 5s
+    (20, 25, 28,), # (6s, 7s, 5s) => 0s, 5s, 8s
+    (25, 28,),     # (6s, 7s, 0s) => 5s, 8s
+    (23, 26,),     # (4s, 5s, 6s) => 3s, 6s
+    (23, 26,),     # (4s, 0s, 6s) => 3s, 6s
+    (26,),         # (5s, 7s, 6s) => 6s
+    (26,),         # (0s, 7s, 6s) => 6s
+    (26, 29,),     # (7s, 8s, 6s) => 6s, 9s
+    (24, 27,),     # (5s, 6s, 7s) => 4s, 7s
+    (24, 27,),     # (0s, 6s, 7s) => 4s, 7s
+    (27,),         # (6s, 8s, 7s) => 7s
+    (27,),         # (8s, 9s, 7s) => 7s
+    (20, 25, 28,), # (6s, 7s, 8s) => 0s, 5s, 8s
+    (28,),         # (7s, 9s, 8s) => 8s
+    (26, 29,)      # (7s, 8s, 9s) => 9s
+)
+
+
+_NUM2PENG = (
     ('1m',  ['1m', '1m']),
     ('2m',  ['2m', '2m']),
     ('3m',  ['3m', '3m']),
@@ -193,7 +287,7 @@ _NUM2PENG = [
     ('P',   ['P', 'P']),
     ('F',   ['F', 'F']),
     ('C',   ['C', 'C'])
-]
+)
 
 
 _PENG2NUM = {}
@@ -214,7 +308,51 @@ for tile, consumed in _NUM2PENG:
     _PENG_COUNTS.append((tile, counts))
 
 
-_NUM2DAMINGGANG = [
+_PENG_TO_KUIKAE_TILE = (
+     1, # (1m, 1m, 1m) => 1m
+     2, # (2m, 2m, 2m) => 2m
+     3, # (3m, 3m, 3m) => 3m
+     4, # (4m, 4m, 4m) => 4m
+     0, # (5m, 5m, 5m) => 0m
+     5, # (0m, 5m, 5m) => 5m
+     5, # (5m, 5m, 0m) => 5m
+     6, # (6m, 6m, 6m) => 6m
+     7, # (7m, 7m, 7m) => 7m
+     8, # (8m, 8m, 8m) => 8m
+     9, # (9m, 9m, 9m) => 9m
+    11, # (1p, 1p, 1p) => 1p
+    12, # (2p, 2p, 2p) => 2p
+    13, # (3p, 3p, 3p) => 3p
+    14, # (4p, 4p, 4p) => 4p
+    10, # (5p, 5p, 5p) => 0p
+    15, # (0p, 5p, 5p) => 5p
+    15, # (5p, 5p, 0p) => 5p
+    16, # (6p, 6p, 6p) => 6p
+    17, # (7p, 7p, 7p) => 7p
+    18, # (8p, 8p, 8p) => 8p
+    19, # (9p, 9p, 9p) => 9p
+    21, # (1s, 1s, 1s) => 1s
+    22, # (2s, 2s, 2s) => 2s
+    23, # (3s, 3s, 3s) => 3s
+    24, # (4s, 4s, 4s) => 4s
+    20, # (5s, 5s, 5s) => 0s
+    25, # (0s, 5s, 5s) => 5s
+    25, # (5s, 5s, 0s) => 5s
+    26, # (6s, 6s, 6s) => 6s
+    27, # (7s, 7s, 7s) => 7s
+    28, # (8s, 8s, 8s) => 8s
+    29, # (9s, 9s, 9s) => 9s
+    30, # (1z, 1z, 1z) => 1z
+    31, # (2z, 2z, 2z) => 2z
+    32, # (3z, 3z, 3z) => 3z
+    33, # (4z, 4z, 4z) => 4z
+    34, # (5z, 5z, 5z) => 5z
+    35, # (6z, 6z, 6z) => 6z
+    36  # (7z, 7z, 7z) => 7z
+)
+
+
+_NUM2DAMINGGANG = (
     ('5mr', ['5m', '5m', '5m']),
     ('1m',  ['1m', '1m', '1m']),
     ('2m',  ['2m', '2m', '2m']),
@@ -252,7 +390,7 @@ _NUM2DAMINGGANG = [
     ('P',   ['P', 'P', 'P']),
     ('F',   ['F', 'F', 'F']),
     ('C',   ['C', 'C', 'C'])
-]
+)
 
 
 _DAMINGGANG2NUM = {}
@@ -272,7 +410,7 @@ for tile, consumed in _NUM2DAMINGGANG:
     _DAMINGGANG_COUNTS.append(counts)
 
 
-_NUM2ANGANG = [
+_NUM2ANGANG = (
     ['1m', '1m', '1m', '1m'],
     ['2m', '2m', '2m', '2m'],
     ['3m', '3m', '3m', '3m'],
@@ -307,7 +445,7 @@ _NUM2ANGANG = [
     ['P', 'P', 'P', 'P'],
     ['F', 'F', 'F', 'F'],
     ['C', 'C', 'C', 'C']
-]
+)
 
 
 _ANGANG2NUM = {}
@@ -371,7 +509,7 @@ _JIAGANG_LIST = (
 )
 
 
-_NUM2JIAGANG = [
+_NUM2JIAGANG = (
     ('5mr', ['5m', '5m', '5m']),
     ('1m',  ['1m', '1m', '1m']),
     ('2m',  ['2m', '2m', '2m']),
@@ -409,7 +547,7 @@ _NUM2JIAGANG = [
     ('P',   ['P', 'P', 'P']),
     ('F',   ['F', 'F', 'F']),
     ('C',   ['C', 'C', 'C'])
-]
+)
 
 
 _JIAGANG_TO_PENG_LIST = (
@@ -557,6 +695,8 @@ class RoundState:
         self.__liqi_to_be_accepted = None
         self.__my_liqi = None
         self.__my_lingshang_zimo = None
+        self.__my_kuikae_tiles = None
+        self.__my_zhenting = None
         self.__progression = None
 
     def on_new_round(
@@ -575,6 +715,10 @@ class RoundState:
         self.__liqi_to_be_accepted = [False, False, False, False]
         self.__my_liqi = False
         self.__my_lingshang_zimo = False
+        self.__my_kuikae_tiles = []
+        # self.__my_zhenting == 1: 非立直中の栄和拒否による一時的なフリテン
+        # self.__my_zhenting == 2: 立直中の栄和拒否による永続的なフリテン
+        self.__my_zhenting = 0
         self.__progression = [0]
 
     def get_chang(self) -> int:
@@ -604,6 +748,9 @@ class RoundState:
     def get_zimo_tile(self) -> Optional[int]:
         return self.__zimo_pai
 
+    def is_in_liqi(self) -> bool:
+        return self.__my_liqi
+
     def copy_progression(self) -> List[int]:
         return list(self.__progression)
 
@@ -629,6 +776,7 @@ class RoundState:
             raise AssertionError(f'self.__zimo_pai = {self.__zimo_pai}')
 
         self.__num_left_tiles -= 1
+        self.__my_kuikae_tiles = []
 
         if not mine:
             if tile is not None:
@@ -638,6 +786,10 @@ class RoundState:
         if tile is None:
             raise ValueError(f'TODO: (A suitable error message)')
         self.__zimo_pai = tile
+
+        # 非立直中の栄和拒否による一時的なフリテンを解消する．
+        if self.__my_zhenting == 1:
+            self.__my_zhenting = 0
 
         candidates = []
 
@@ -727,6 +879,36 @@ class RoundState:
         candidates.sort()
         return candidates
 
+    def __get_my_zhenting_tiles(self, seat: int) -> List[int]:
+        # 自分が捨てた牌を列挙する．
+        discarded_tiles = set()
+        for p in self.__progression:
+            if p < 5 or 596 < p:
+                continue
+            encode = p - 5
+            actor = encode // 148
+            encode = encode % 148
+            tile = encode // 4
+            if actor != seat:
+                continue
+            discarded_tiles.add(tile)
+
+        # 和牌の候補を列挙する．
+        hupai_candidates = []
+        for i in range(37):
+            combined_hand = self.__my_hand + [i]
+            xiangting_number = self.__xiangting_calculator.calculate(
+                combined_hand, 4 - len(self.__my_fulu_list))
+            if xiangting_number == 0:
+                hupai_candidates.append(i)
+
+        # 和牌の候補の中に自分が捨てた牌が1つでも含まれているならば，
+        # 和牌の候補全てがフリテンの対象でありロンできない．
+        for hupai_candidate in hupai_candidates:
+            if hupai_candidate in discarded_tiles:
+                return hupai_candidates
+        return []
+
     def on_dapai(
         self, seat: int, actor: int, tile: int,
         moqi: bool) -> Optional[List[int]]:
@@ -780,34 +962,62 @@ class RoundState:
 
         if not self.__my_liqi and relseat == 2:
             # チーができるかどうかチェックする．
+            # TODO: 河底牌に対するチーが可能かどうか確認する．
             for i, (t, consumed_counts) in enumerate(_CHI_COUNTS):
                 if tile != t:
                     continue
-                flag = True
+                new_hand_counts = Counter(hand_counts)
                 for k, v in consumed_counts.items():
                     if hand_counts[k] < v:
-                        flag = False
+                        new_hand_counts = None
                         break
-                if flag:
-                    candidates.append(222 + i)
-                    skippable = True
+                    new_hand_counts[k] -= v
+                if new_hand_counts is not None:
+                    # チーの後に食い替えによって打牌が禁止される牌のみが
+                    # 残る場合は，そのようなチー自体が禁止される．
+                    # 以下では，そのようなチーを候補から除去している．
+                    for kuikae_tile in _CHI_TO_KUIKAE_TILES[i]:
+                        new_hand_counts[kuikae_tile] = 0
+                    flag = False
+                    for count in new_hand_counts.values():
+                        if count >= 1:
+                            flag = True
+                            break
+                    if flag:
+                        self.__my_kuikae_tiles = list(_CHI_TO_KUIKAE_TILES[i])
+                        candidates.append(222 + i)
+                        skippable = True
 
         if not self.__my_liqi:
             # ポンができるかどうかチェックする．
+            # TODO: 河底牌に対するポンが可能かどうか確認する．
             for i, (t, consumed_counts) in enumerate(_PENG_COUNTS):
                 if tile != t:
                     continue
-                flag = True
+                new_hand_counts = Counter(hand_counts)
                 for k, v in consumed_counts.items():
                     if hand_counts[k] < v:
-                        flag = False
+                        new_hand_counts = None
                         break
-                if flag:
-                    candidates.append(312 + relseat * 40 + i)
-                    skippable = True
+                    new_hand_counts[k] -= v
+                if new_hand_counts is not None:
+                    # ポンの後に食い替えによって打牌が禁止される牌のみが
+                    # 残る場合は，そのようなポン自体が禁止される．
+                    # 以下では，そのようなポンを候補から除去している．
+                    new_hand_counts[_PENG_TO_KUIKAE_TILE[i]] = 0
+                    flag = False
+                    for count in new_hand_counts.values():
+                        if count >= 1:
+                            flag = True
+                            break
+                    if flag:
+                        self.__my_kuikae_tiles = [_PENG_TO_KUIKAE_TILE[i]]
+                        candidates.append(312 + relseat * 40 + i)
+                        skippable = True
 
         if not self.__my_liqi:
             # 大明槓ができるかどうかチェックする．
+            # TODO: 河底牌に対する大明槓が可能かどうか確認する．
             for t, consumed_counts in enumerate(_DAMINGGANG_COUNTS):
                 if tile != t:
                     continue
@@ -824,7 +1034,7 @@ class RoundState:
 
         xiangting_number = self.__xiangting_calculator.calculate(
             combined_hand, 4 - len(self.__my_fulu_list))
-        if xiangting_number == 0:
+        if xiangting_number == 0 and tile not in self.__get_my_zhenting_tiles(seat) and self.__my_zhenting == 0:
             # ロンが出来るかどうかチェックする．
             player_wind = (seat + 4 - self.__index) % 4
             has_yihan = self.__hand_calculator.has_yihan(
@@ -845,6 +1055,7 @@ class RoundState:
         self.__progression.append(597 + seat * 90 + chi)
 
         if not mine:
+            self.__my_kuikae_tiles = []
             return None
 
         my_hand_counts = self.__get_my_hand_counts()
@@ -861,7 +1072,9 @@ class RoundState:
 
         candidates = []
         for tile in self.__my_hand:
-            candidates.append(tile * 4 + 0 * 2 + 0)
+            if tile not in self.__my_kuikae_tiles:
+                candidates.append(tile * 4 + 0 * 2 + 0)
+        self.__my_kuikae_tiles = []
         return list(set(candidates))
 
     def on_peng(
@@ -871,6 +1084,7 @@ class RoundState:
         self.__progression.append(957 + seat * 120 + relseat * 40 + peng)
 
         if not mine:
+            self.__my_kuikae_tiles = []
             return None
 
         my_hand_counts = self.__get_my_hand_counts()
@@ -887,12 +1101,15 @@ class RoundState:
 
         candidates = []
         for tile in self.__my_hand:
-            candidates.append(tile * 4 + 0 * 2 + 0)
+            if tile not in self.__my_kuikae_tiles:
+                candidates.append(tile * 4 + 0 * 2 + 0)
+        self.__my_kuikae_tiles = []
         return list(set(candidates))
 
     def on_daminggang(
         self, mine: bool, seat: int, relseat: int, daminggang: int) -> None:
         self.__my_first_zimo = False
+        self.__my_kuikae_tiles = []
         self.__progression.append(1437 + seat * 111 + relseat * 37 + daminggang)
 
         if not mine:
@@ -1013,6 +1230,11 @@ class RoundState:
         if len(self.__dora_indicators) >= 5:
             raise RuntimeError(self.__dora_indicators)
         self.__dora_indicators.append(tile)
+
+    def set_zhenting(self, zhenting: int) -> None:
+        if zhenting not in (1, 2):
+            raise ValueError('TODO: (A suitable error message)')
+        self.__my_zhenting = zhenting
 
 
 class Kanachan:
@@ -1180,7 +1402,6 @@ class Kanachan:
         self.__round_state.on_new_round(chang, round_index, ben_chang, deposits, dora_indicator, hand)
 
     def __respond(self, dapai: Optional[int], candidates: List[int]) -> None:
-        num_candidates = len(candidates)
         seat = self.__game_state.get_seat()
 
         sparse = []
@@ -1237,19 +1458,20 @@ class Kanachan:
         progression = torch.tensor(progression, device='cpu', dtype=torch.int32)
         progression = torch.unsqueeze(progression, dim=0)
 
-        for i in range(len(candidates), MAX_NUM_ACTION_CANDIDATES):
-            candidates.append(NUM_TYPES_OF_ACTIONS + 1)
-        candidates = torch.tensor(candidates, device='cpu', dtype=torch.int32)
-        candidates = torch.unsqueeze(candidates, dim=0)
+        candidates_ = list(candidates)
+        for i in range(len(candidates_), MAX_NUM_ACTION_CANDIDATES):
+            candidates_.append(NUM_TYPES_OF_ACTIONS + 1)
+        candidates_ = torch.tensor(candidates_, device='cpu', dtype=torch.int32)
+        candidates_ = torch.unsqueeze(candidates_, dim=0)
 
         with torch.no_grad():
-            prediction = self.__model((sparse, numeric, progression, candidates))
+            prediction = self.__model((sparse, numeric, progression, candidates_))
             prediction = torch.squeeze(prediction, dim=0)
-            prediction = prediction[:num_candidates]
+            prediction = prediction[:len(candidates)]
             argmax = torch.argmax(prediction)
             argmax = argmax.item()
-        candidates = torch.squeeze(candidates, dim=0)
-        decision = candidates[argmax].item()
+        candidates_ = torch.squeeze(candidates_, dim=0)
+        decision = candidates_[argmax].item()
 
         if 0 <= decision and decision <= 147:
             tile = decision // 4
@@ -1316,6 +1538,13 @@ class Kanachan:
         if decision == 221:
             response = json.dumps({'type': 'none'})
             print(response, flush=True)
+            in_liqi = self.__round_state.is_in_liqi()
+            for i in (543, 544, 545):
+                if i in candidates:
+                    # 栄和が選択肢にあるにも関わらず見逃しを選択した．
+                    # この結果，フリテンが発生する．
+                    self.__round_state.set_zhenting(2 if in_liqi else 1)
+                    break
             return
 
         if 222 <= decision and decision <= 311:
