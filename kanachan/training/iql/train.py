@@ -880,60 +880,73 @@ def main() -> None:
         assert(not resume)
         assert(initial_model_prefix.exists())
         assert(initial_model_prefix.is_dir())
-        value_model_state_dict = torch.load(value_snapshot_path)
+        value_model_state_dict = torch.load(
+            value_snapshot_path, map_location='cpu')
         value_model_new_state_dict = {}
         for key, value in value_model_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             value_model_new_state_dict[new_key] = value
         value_model.load_state_dict(value_model_new_state_dict)
-        q_source1_state_dict = torch.load(q_source1_snapshot_path)
+        value_model.cuda()
+        q_source1_state_dict = torch.load(
+            q_source1_snapshot_path, map_location='cpu')
         q_source1_new_state_dict = {}
         for key, value in q_source1_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_source1_new_state_dict[new_key] = value
         q_source1_model.load_state_dict(q_source1_new_state_dict)
-        q_source2_state_dict = torch.load(q_source2_snapshot_path)
+        q_source1_model.cuda()
+        q_source2_state_dict = torch.load(
+            q_source2_snapshot_path, map_location='cpu')
         q_source2_new_state_dict = {}
         for key, value in q_source2_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_source2_new_state_dict[new_key] = value
         q_source2_model.load_state_dict(q_source2_new_state_dict)
-        q_target1_state_dict = torch.load(q_target1_snapshot_path)
+        q_source2_model.cuda()
+        q_target1_state_dict = torch.load(
+            q_target1_snapshot_path, map_location='cpu')
         q_target1_new_state_dict = {}
         for key, value in q_target1_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_target1_new_state_dict[new_key] = value
         q_target1_model.load_state_dict(q_target1_new_state_dict)
-        q_target2_state_dict = torch.load(q_target2_snapshot_path)
+        q_target1_model.cuda()
+        q_target2_state_dict = torch.load(
+            q_target2_snapshot_path, map_location='cpu')
         q_target2_new_state_dict = {}
         for key, value in q_target2_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_target2_new_state_dict[new_key] = value
         q_target2_model.load_state_dict(q_target2_new_state_dict)
+        q_target2_model.cuda()
         if value_optimizer_snapshot_path is not None:
             value_optimizer_state_dict = torch.load(
-                value_optimizer_snapshot_path)
+                value_optimizer_snapshot_path, map_location='cpu')
             value_optimizer_new_state_dict = {}
             for key, value in value_optimizer_state_dict.items():
                 new_key = re.sub('^module\.', '', key)
                 value_optimizer_new_state_dict[new_key] = value
             value_optimizer.load_state_dict(value_optimizer_new_state_dict)
         if q1_optimizer_snapshot_path is not None:
-            q1_optimizer_state_dict = torch.load(q1_optimizer_snapshot_path)
+            q1_optimizer_state_dict = torch.load(
+                q1_optimizer_snapshot_path, map_location='cpu')
             q1_optimizer_new_state_dict = {}
             for key, value in q1_optimizer_state_dict.items():
                 new_key = re.sub('^module\.', '', key)
                 q1_optimizer_new_state_dict[new_key] = value
             q1_optimizer.load_state_dict(q1_optimizer_new_state_dict)
         if q2_optimizer_snapshot_path is not None:
-            q2_optimizer_state_dict = torch.load(q2_optimizer_snapshot_path)
+            q2_optimizer_state_dict = torch.load(
+                q2_optimizer_snapshot_path, map_location='cpu')
             q2_optimizer_new_state_dict = {}
             for key, value in q2_optimizer_state_dict.items():
                 new_key = re.sub('^module\.', '', key)
                 q2_optimizer_new_state_dict[new_key] = value
             q2_optimizer.load_state_dict(q2_optimizer_new_state_dict)
         if amp_snapshot_path is not None:
-            amp.load_state_dict(torch.load(amp_snapshot_path))
+            amp.load_state_dict(
+                torch.load(amp_snapshot_path, map_location='cpu'))
 
     if resume:
         assert(initial_model_prefix is None)
@@ -948,36 +961,46 @@ def main() -> None:
         assert(q_target1_snapshot_path.is_file())
         assert(q_target2_snapshot_path.exists())
         assert(q_target2_snapshot_path.is_file())
-        value_model_state_dict = torch.load(value_snapshot_path)
+        value_model_state_dict = torch.load(
+            value_snapshot_path, map_location='cpu')
         value_model_new_state_dict = {}
         for key, value in value_model_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             value_model_new_state_dict[new_key] = value
         value_model.load_state_dict(value_model_new_state_dict)
-        q_source1_state_dict = torch.load(q_source1_snapshot_path)
+        value_model.cuda()
+        q_source1_state_dict = torch.load(
+            q_source1_snapshot_path, map_location='cpu')
         q_source1_new_state_dict = {}
         for key, value in q_source1_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_source1_new_state_dict[new_key] = value
         q_source1_model.load_state_dict(q_source1_new_state_dict)
-        q_source2_state_dict = torch.load(q_source2_snapshot_path)
+        q_source1_model.cuda()
+        q_source2_state_dict = torch.load(
+            q_source2_snapshot_path, map_location='cpu')
         q_source2_new_state_dict = {}
         for key, value in q_source2_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_source2_new_state_dict[new_key] = value
         q_source2_model.load_state_dict(q_source2_new_state_dict)
-        q_target1_state_dict = torch.load(q_target1_snapshot_path)
+        q_source2_model.cuda()
+        q_target1_state_dict = torch.load(
+            q_target1_snapshot_path, map_location='cpu')
         q_target1_new_state_dict = {}
         for key, value in q_target1_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_target1_new_state_dict[new_key] = value
         q_target1_model.load_state_dict(q_target1_new_state_dict)
-        q_target2_state_dict = torch.load(q_target2_snapshot_path)
+        q_target1_model.cuda()
+        q_target2_state_dict = torch.load(
+            q_target2_snapshot_path, map_location='cpu')
         q_target2_new_state_dict = {}
         for key, value in q_target2_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             q_target2_new_state_dict[new_key] = value
         q_target2_model.load_state_dict(q_target2_new_state_dict)
+        q_target2_model.cuda()
 
     if resume:
         assert(value_optimizer_snapshot_path.exists())
@@ -989,10 +1012,12 @@ def main() -> None:
         assert(amp_snapshot_path.exists())
         assert(amp_snapshot_path.is_file())
         value_optimizer.load_state_dict(
-            torch.load(value_optimizer_snapshot_path))
-        q1_optimizer.load_state_dict(torch.load(q1_optimizer_snapshot_path))
-        q2_optimizer.load_state_dict(torch.load(q2_optimizer_snapshot_path))
-        amp.load_state_dict(torch.load(amp_snapshot_path))
+            torch.load(value_optimizer_snapshot_path, map_location='cpu'))
+        q1_optimizer.load_state_dict(
+            torch.load(q1_optimizer_snapshot_path, map_location='cpu'))
+        q2_optimizer.load_state_dict(
+            torch.load(q2_optimizer_snapshot_path, map_location='cpu'))
+        amp.load_state_dict(torch.load(amp_snapshot_path, map_location='cpu'))
 
     if config['is_multiprocess']:
         init_process_group(backend='nccl')
