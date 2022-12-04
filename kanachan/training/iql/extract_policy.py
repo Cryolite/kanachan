@@ -705,7 +705,9 @@ def main() -> None:
         assert(not resume)
         assert(initial_encoder.exists())
         assert(initial_encoder.is_file())
-        policy_encoder.load_state_dict(torch.load(initial_encoder))
+        policy_encoder.load_state_dict(
+            torch.load(initial_encoder, map_location='cpu'))
+        policy_encoder.cuda()
     if resume:
         assert(initial_encoder is None)
         assert(encoder_snapshot_path.exists())
@@ -716,10 +718,16 @@ def main() -> None:
         assert(optimizer_snapshot_path.is_file())
         assert(amp_snapshot_path.exists())
         assert(amp_snapshot_path.is_file())
-        policy_encoder.load_state_dict(torch.load(encoder_snapshot_path))
-        policy_decoder.load_state_dict(torch.load(decoder_snapshot_path))
-        optimizer.load_state_dict(torch.load(optimizer_snapshot_path))
-        amp.load_state_dict(torch.load(amp_snapshot_path))
+        policy_encoder.load_state_dict(
+            torch.load(encoder_snapshot_path, map_location='cpu'))
+        policy_encoder.cuda()
+        policy_decoder.load_state_dict(
+            torch.load(decoder_snapshot_path, map_location='cpu'))
+        policy_decoder.cuda()
+        optimizer.load_state_dict(
+            torch.load(optimizer_snapshot_path, map_location='cpu'))
+        amp.load_state_dict(
+            torch.load(amp_snapshot_path, map_location='cpu'))
 
     if config['is_multiprocess']:
         init_process_group(backend='nccl')
