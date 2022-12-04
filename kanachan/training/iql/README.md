@@ -11,7 +11,7 @@ The following items are required to run the programs in this directory:
 
 For detailed installation instructions for the above prerequisite items, refer to those for each OS and distribution.
 
-After the installation of the prerequisite items, build the `cryolite/kanachan` Docker image.
+After the installation of the prerequisite items, [build the `cryolite/kanachan` Docker image](https://github.com/Cryolite/kanachan/blob/main/kanachan/README.md#cryolitekanachan-docker-image).
 
 ## `train.py`
 
