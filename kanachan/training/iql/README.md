@@ -7,7 +7,7 @@ The following items are required to run the programs in this directory:
 - [Docker](https://www.docker.com/),
 - NVIDIA driver, and
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/overview.html).
-- (CUDA is not required.)
+- ([CUDA](https://developer.nvidia.com/cuda-toolkit) is not required.)
 
 For detailed installation instructions for the above prerequisite items, refer to those for each OS and distribution.
 
