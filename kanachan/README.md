@@ -18,8 +18,8 @@ $ docker build -f kanachan/Dockerfile --build-arg BASE_IMAGE=nvcr.io/nvidia/pyto
 
 ### [`kanachan.training`](training)
 
-Implementations of learning programs and prediction modules with [PyTorch](https://pytorch.org/).
+Training programs and prediction modules with [PyTorch](https://pytorch.org/).
 
 ### [`kanachan.simulation`](simulation)
 
-An mplementation of a simulation program.
+A simulation program.
