@@ -1,5 +1,7 @@
 # `kanachan.training.bert.phase1` Python submodule
 
+A training program for BERT with an objective function that imitates human choices in training data.
+
 ## Prerequisits
 
 The following items are required to run the program in this directory:
