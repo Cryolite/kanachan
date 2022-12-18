@@ -124,6 +124,21 @@ std::uint_fast16_t ModelWrapper::operator()(python::object features) const
 
     prediction = model_(
       python::make_tuple(sparse, numeric, progression, candidates));
+    if (prediction.attr("dim")() != 2) {
+      long const dim = python::extract<long>(prediction.attr("dim")())();
+      KANACHAN_THROW<std::runtime_error>(_1)
+        << dim << ": An invalid dimension for `prediction`.";
+    }
+    if (prediction.attr("size")(0) != candidates.attr("size")(0)) {
+      long const size = python::extract<long>(prediction.attr("size")(0))();
+      KANACHAN_THROW<std::runtime_error>(_1)
+        << size << ": An invalid size for the 0th dimension of `prediction`.";
+    }
+    if (prediction.attr("size")(1) != constants.attr("MAX_NUM_ACTION_CANDIDATES")) {
+      long const size = python::extract<long>(prediction.attr("size")(1))();
+      KANACHAN_THROW<std::runtime_error>(_1)
+        << size << ": An invalid size for the 1st dimension of `prediction`.";
+    }
   }
   catch (python::error_already_set const &) {
     auto const [type, value, traceback] = [](){
@@ -169,10 +184,7 @@ std::uint_fast16_t ModelWrapper::operator()(python::object features) const
   python::object mask = torch.attr("lt")(
     candidates, python::getattr(constants, "NUM_TYPES_OF_ACTIONS"));
   candidates = torch.attr("squeeze")(candidates);
-  candidates = torch.attr("masked_select")(candidates, mask);
-  prediction = torch.attr("squeeze")(prediction);
-  prediction = torch.attr("masked_select")(prediction, mask);
-  //prediction = nn.attr("softmax")(prediction, 1);
+  prediction = prediction[mask];
   prediction = torch.attr("argmax")(prediction);
   prediction = prediction.attr("item")();
   python::extract<long> prediction_(prediction);
