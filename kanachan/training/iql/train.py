@@ -361,6 +361,10 @@ def main() -> None:
         '--dropout', default=0.1, type=float, help='defaults to `0.1`',
         metavar='DROPOUT')
     ap_model.add_argument(
+        '--initial-encoder', type=Path,
+        help='path to initial encoder; mutually exclusive to `--resume`',
+        metavar='PATH')
+    ap_model.add_argument(
         '--initial-model-prefix', type=Path,
         help='prefix to initial model; mutually exclusive to `--resume`',
         metavar='PREFIX')
@@ -507,6 +511,14 @@ def main() -> None:
     if config.dropout < 0.0 or 1.0 <= config.dropout:
         raise RuntimeError(f'{config.dropout}: An invalid value for `--dropout`.')
 
+    if config.initial_encoder is not None and not config.initial_encoder.exists():
+        raise RuntimeError(f'{config.initial_encoder}: Does not exist.')
+    if config.initial_encoder is not None and not config.initial_encoder.is_file():
+        raise RuntimeError(f'{config.initial_encoder}: Not a file')
+    if config.initial_encoder is not None and config.resume:
+        raise RuntimeError('`--initial-encoder` conflicts with `--resume`.')
+    initial_encoder = config.initial_encoder
+
     if config.initial_model_prefix is not None and not config.initial_model_prefix.exists():
         raise RuntimeError(f'{config.initial_model_prefix}: Does not exist.')
     if config.initial_model_prefix is not None and not config.initial_model_prefix.is_dir():
@@ -525,6 +537,8 @@ def main() -> None:
     initial_model_index = config.initial_model_index
 
     if initial_model_prefix is not None:
+        if initial_encoder is not None:
+            raise RuntimeError('`--initial-model-prefix` conflicts with `--initial-encoder`.')
         assert(not config.resume)
         if initial_model_index is None:
             for child in os.listdir(initial_model_prefix):
@@ -663,6 +677,7 @@ def main() -> None:
 
     num_samples = 0
     if resume:
+        assert(initial_encoder is None)
         assert(initial_model_prefix is None)
         assert(initial_model_index is None)
         if not snapshots_path.exists():
@@ -748,14 +763,16 @@ def main() -> None:
         f'Dimension of the final feedforward network: {config.dim_final_feedforward}')
     logging.info(f'Activation function: {config.activation_function}')
     logging.info(f'Dropout: {config.dropout}')
-    if initial_model_prefix is None and not resume:
-        logging.info('Initial model: (initialized randomly)')
+    if initial_encoder is not None:
+        logging.info(f'Initial encoder: {initial_encoder}')
     elif initial_model_prefix is not None:
         logging.info(f'Initial model prefix: {initial_model_prefix}')
         if initial_model_index is not None:
             logging.info(f'Initlal model index: {initial_model_index}')
         else:
             logging.info('Initial model index: (latest one)')
+    elif not resume:
+        logging.info('Initial model: (initialized randomly)')
     logging.info(f'Reward scale: {config.reward_scale}')
     logging.info(f'Discount factor: {config.discount_factor}')
     logging.info(f'Expectile: {config.expectile}')
@@ -778,6 +795,7 @@ def main() -> None:
     logging.info(
         f'Norm threshold for gradient clipping on Q: {config.q_max_gradient_norm}')
     if initial_model_prefix is not None:
+        assert(initial_encoder is None)
         assert(not resume)
         logging.info(f'Initial value network snapshot: {value_snapshot_path}')
         logging.info(f'Initial q source network 1 snapshot: {q_source1_snapshot_path}')
@@ -793,6 +811,7 @@ def main() -> None:
         if amp_snapshot_path is not None:
             logging.info(f'Initial AMP snapshot: {amp_snapshot_path}')
     if resume:
+        assert(initial_encoder is None)
         assert(initial_model_prefix is None)
         logging.info(f'Resume from {experiment_path}')
         logging.info(f'Value network snapshot: {value_snapshot_path}')
@@ -909,7 +928,30 @@ def main() -> None:
             q_source2_model, q2_optimizer, opt_level=amp_optimization_level,
             verbosity=0)
 
+    if initial_encoder is not None:
+        assert(initial_model_prefix is None)
+        assert(not resume)
+        assert(initial_encoder.exists())
+        assert(initial_encoder.is_file())
+        initial_encoder_state_dict = torch.load(
+            initial_encoder, map_location='cpu')
+        initial_encoder_new_state_dict = {}
+        for key, value in initial_encoder_state_dict.items():
+            new_key = re.sub('^module\.', '', key)
+            initial_encoder_new_state_dict[new_key] = value
+        value_encoder.load_state_dict(initial_encoder_new_state_dict)
+        value_encoder.cuda()
+        q_source1_encoder.load_state_dict(initial_encoder_new_state_dict)
+        q_source1_encoder.cuda()
+        q_source2_encoder.load_state_dict(initial_encoder_new_state_dict)
+        q_source2_encoder.cuda()
+        q_target1_encoder.load_state_dict(initial_encoder_new_state_dict)
+        q_target1_encoder.cuda()
+        q_target2_encoder.load_state_dict(initial_encoder_new_state_dict)
+        q_target2_encoder.cuda()
+
     if initial_model_prefix is not None:
+        assert(initial_encoder is None)
         assert(not resume)
         assert(initial_model_prefix.exists())
         assert(initial_model_prefix.is_dir())
@@ -982,6 +1024,7 @@ def main() -> None:
                 torch.load(amp_snapshot_path, map_location='cpu'))
 
     if resume:
+        assert(initial_encoder is None)
         assert(initial_model_prefix is None)
         assert(initial_model_index is None)
         assert(value_snapshot_path.exists())
