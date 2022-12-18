@@ -15,8 +15,6 @@ class QDecoder(nn.Module):
             activation_function: str, dropout: float, **kwargs) -> None:
         super(QDecoder, self).__init__()
 
-        self.dimension = dimension
-
         self.value_decoder = ValueDecoder(
             dimension=dimension, dim_final_feedforward=dim_final_feedforward,
             activation_function=activation_function, dropout=dropout, **kwargs)
@@ -36,22 +34,22 @@ class QDecoder(nn.Module):
     def forward(self, x) -> torch.Tensor:
         candidates, encode = x
 
-        mask = (candidates < NUM_TYPES_OF_ACTIONS)
         value_decode = self.value_decoder(x)
         value_decode = torch.unsqueeze(value_decode, dim=1)
         value_decode = value_decode.expand(-1, MAX_NUM_ACTION_CANDIDATES)
-        value_decode = value_decode * mask
 
-        mask = torch.unsqueeze(mask, dim=2)
-        mask = mask.expand(-1, -1, self.dimension)
-        advantage_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:] * mask
+        advantage_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         advantage_decode = self.semifinal_linear(advantage_encode)
         advantage_decode = self.semifinal_activation(advantage_decode)
         advantage_decode = self.semifinal_dropout(advantage_decode)
         advantage_decode = self.final_linear(advantage_decode)
         advantage_decode = torch.squeeze(advantage_decode, dim=2)
+        assert(advantage_decode.dim() == 2)
+        assert(advantage_decode.size(0) == candidates.size(0))
+        assert(advantage_decode.size(1) == MAX_NUM_ACTION_CANDIDATES)
+        decode = value_decode + advantage_decode
 
-        return value_decode + advantage_decode
+        return decode
 
 
 class QModel(nn.Module):
