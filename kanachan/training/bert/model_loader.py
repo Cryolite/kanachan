@@ -278,12 +278,16 @@ def load_model(config_path: Path) -> nn.Module:
         encoder_state_dict_fixed = {}
         for k, v in encoder_state_dict.items():
             k = re.sub('^module\\.', '', k)
+            k = re.sub('^_.+?__', '', k)
+            k = re.sub('\\._.+?__', '.', k)
             encoder_state_dict_fixed[k] = v
         encoder_instance.load_state_dict(encoder_state_dict_fixed)
         decoder_state_dict = torch.load(decoder_config['snapshot'])
         decoder_state_dict_fixed = {}
         for k, v in decoder_state_dict.items():
             k = re.sub('^module\\.', '', k)
+            k = re.sub('^_.+?__', '', k)
+            k = re.sub('\\._.+?__', '.', k)
             decoder_state_dict_fixed[k] = v
         decoder_instance.load_state_dict(decoder_state_dict_fixed)
     else:
@@ -294,6 +298,8 @@ def load_model(config_path: Path) -> nn.Module:
         model_state_dict_fixed = {}
         for k, v in model_state_dict.items():
             k = re.sub('^module\\.', '', k)
+            k = re.sub('^_.+?__', '', k)
+            k = re.sub('\\._.+?__', '.', k)
             model_state_dict_fixed[k] = v
         model.load_state_dict(model_state_dict_fixed)
 
