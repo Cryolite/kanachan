@@ -28,16 +28,27 @@ class ValueDecoder(nn.Module):
     def forward(self, x) -> torch.Tensor:
         candidates, encode = x
 
-        indices = torch.nonzero(candidates == NUM_TYPES_OF_ACTIONS)
+        new_candidates = candidates.clone().detach()
+        for i in range(new_candidates.size(0)):
+            for j in range(new_candidates.size(1)):
+                if new_candidates[i, j] == NUM_TYPES_OF_ACTIONS:
+                    break
+                if new_candidates[i, j] == NUM_TYPES_OF_ACTIONS + 1:
+                    new_candidates[i, j] = NUM_TYPES_OF_ACTIONS
+                    break
+
+        mask = (new_candidates == NUM_TYPES_OF_ACTIONS)
 
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
-        encode = encode[indices[:, 0], indices[:, 1]]
         decode = self.semifinal_linear(encode)
         decode = self.semifinal_activation(decode)
         decode = self.semifinal_dropout(decode)
-
         prediction = self.final_linear(decode)
-        prediction = torch.squeeze(prediction, dim=1)
+        prediction = torch.squeeze(prediction, dim=2)
+        prediction = prediction[mask]
+        assert(prediction.dim() == 1)
+        assert(prediction.size(0) == new_candidates.size(0))
+
         return prediction
 
 
