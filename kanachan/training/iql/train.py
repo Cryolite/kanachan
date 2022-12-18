@@ -83,12 +83,23 @@ def _training(
 
         with torch.no_grad():
             q1 = q_target1_model(annotation[:4])
+            assert(q1.dim() == 2)
+            assert(q1.size(0) == local_batch_size)
+            assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
             q1 = q1[torch.arange(local_batch_size), annotation[4]]
             q2 = q_target2_model(annotation[:4])
+            assert(q2.dim() == 2)
+            assert(q2.size(0) == local_batch_size)
+            assert(q2.size(1) == MAX_NUM_ACTION_CANDIDATES)
             q2 = q2[torch.arange(local_batch_size), annotation[4]]
             q = torch.minimum(q1, q2)
+            q = q.detach()
+            assert(q.dim() == 1)
+            assert(q.size(0) == local_batch_size)
         value = value_model(annotation[:4])
-        value_loss = q.detach() - value
+        assert(value.dim() == 1)
+        assert(value.size(0) == local_batch_size)
+        value_loss = q - value
         value_loss = torch.where(
             value_loss < 0.0, (1.0 - expectile) * (value_loss ** 2.0),
             expectile * (value_loss ** 2.0))
@@ -106,18 +117,31 @@ def _training(
         with amp.scale_loss(value_loss, value_optimizer) as scaled_value_loss:
             scaled_value_loss.backward()
 
-        mask = [0.0 if annotation[5][i][0].item() == NUM_TYPES_OF_SPARSE_FEATURES else 1.0 for i in range(local_batch_size)]
-        mask = torch.tensor(mask, device=annotation[5].device, dtype=torch.float32)
         reward = annotation[9]
         with torch.no_grad():
             value = value_model(annotation[5:9])
             value *= discount_factor
+            mask = [0.0 if annotation[5][i][0].item() == NUM_TYPES_OF_SPARSE_FEATURES else 1.0 for i in range(local_batch_size)]
+            mask = torch.tensor(mask, device=value.device, dtype=value.dtype, requires_grad=False)
             value *= mask
+            assert(value.dim() == 1)
+            assert(value.size(0) == local_batch_size)
+            value = value.detach()
         q1 = q_source1_model(annotation[:4])
+        assert(q1.dim() == 2)
+        assert(q1.size(0) == local_batch_size)
+        assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
         q1 = q1[torch.arange(local_batch_size), annotation[4]]
+        if is_main_process:
+            print(reward)
+            print(value)
+            print(q1)
         q1_loss = reward + value - q1
         q1_loss = q1_loss ** 2.0
         q2 = q_source2_model(annotation[:4])
+        assert(q2.dim() == 2)
+        assert(q2.size(0) == local_batch_size)
+        assert(q2.size(1) == MAX_NUM_ACTION_CANDIDATES)
         q2 = q2[torch.arange(local_batch_size), annotation[4]]
         q2_loss = reward + value - q2
         q2_loss = q2_loss ** 2.0
@@ -732,6 +756,7 @@ def main() -> None:
             logging.info(f'Initlal model index: {initial_model_index}')
         else:
             logging.info('Initial model index: (latest one)')
+    logging.info(f'Reward scale: {config.reward_scale}')
     logging.info(f'Discount factor: {config.discount_factor}')
     logging.info(f'Expectile: {config.expectile}')
     logging.info(f'Target update interval: {config.target_update_interval}')
