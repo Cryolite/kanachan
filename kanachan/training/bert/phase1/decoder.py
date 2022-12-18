@@ -28,7 +28,7 @@ class Decoder(nn.Module):
         decode = self.semifinal_linear(encode)
         decode = self.semifinal_dropout(decode)
         decode = self.semifinal_activation(decode)
-
         prediction = self.final_linear(decode)
         prediction = torch.squeeze(prediction, dim=2)
+
         return prediction
