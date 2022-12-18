@@ -13,13 +13,15 @@ from kanachan.training.constants import (
 
 
 class IteratorAdaptor(object):
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, reward_scale: float) -> None:
         if path.suffix == '.gz':
             self.__fp = gzip.open(path, mode='rt', encoding='UTF-8')
         elif path.suffix == '.bz2':
             self.__fp = bz2.open(path, mode='rt', encoding='UTF-8')
         else:
             self.__fp = open(path)
+
+        self.__reward_scale = reward_scale
 
         if get_worker_info() is not None:
             try:
@@ -150,7 +152,7 @@ class IteratorAdaptor(object):
             else:
                 raise RuntimeError(f'{uuid}:{game_rank}: An invalid game rank.')
             reward += (game_score - 25000) // 1000
-            reward /= 100.0
+            reward *= self.__reward_scale
             reward = torch.tensor(reward, device='cpu', dtype=torch.float32)
 
             dummy_sparse = [NUM_TYPES_OF_SPARSE_FEATURES] * MAX_NUM_ACTIVE_SPARSE_FEATURES

@@ -35,8 +35,8 @@ def _training(
         num_workers: int, device: str, value_model: nn.Module,
         q_source1_model: nn.Module, q_source2_model: nn.Module,
         q_target1_model: nn.Module, q_target2_model: nn.Module,
-        discount_factor: float, expectile: float, target_update_interval: int,
-        target_update_rate: float, batch_size: int,
+        reward_scale: float, discount_factor: float, expectile: float,
+        target_update_interval: int, target_update_rate: float, batch_size: int,
         gradient_accumulation_steps: int, v_max_gradient_norm: float,
         q_max_gradient_norm: float, value_optimizer: Optimizer,
         q1_optimizer: Optimizer, q2_optimizer: Optimizer, snapshots_path: Path,
@@ -46,7 +46,7 @@ def _training(
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: IteratorAdaptor(path)
+    iterator_adaptor = lambda path: IteratorAdaptor(path, reward_scale)
     dataset = Dataset(training_data, iterator_adaptor)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers,
@@ -347,6 +347,9 @@ def main() -> None:
 
     ap_training = ap.add_argument_group(title='Training')
     ap_training.add_argument(
+        '--reward-scale', default=1.0, type=float, help='defaults to `1.0`',
+        metavar='BETA')
+    ap_training.add_argument(
         '--discount-factor', type=float, required=True, metavar='GAMMA')
     ap_training.add_argument(
         '--expectile', type=float, required=True, metavar='TAU')
@@ -547,6 +550,10 @@ def main() -> None:
         amp_snapshot_path = initial_model_prefix / f'amp.{initial_model_index}.pth'
         if not amp_snapshot_path.is_file():
             amp_snapshot_path = None
+
+    if config.reward_scale <= 0.0:
+        raise RuntimeError(
+            f'{config.reward_scale}: An invalid value for `--reward-scale`.')
 
     if config.discount_factor <= 0.0 or 1.0 < config.discount_factor:
         raise RuntimeError(
@@ -795,6 +802,7 @@ def main() -> None:
         'dim_final_feedforward': config.dim_final_feedforward,
         'dropout': config.dropout,
         'activation_function': config.activation_function,
+        'reward_scale': config.reward_scale,
         'discount_factor': config.discount_factor,
         'expectile': config.expectile,
         'target_update_interval': config.target_update_interval,
