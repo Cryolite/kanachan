@@ -14,7 +14,7 @@ from torch import backends
 from torch import nn
 from torch.optim import (Optimizer, RAdam,)
 from torch.utils.data import DataLoader
-from torch.distributed import (init_process_group, all_reduce,)
+from torch.distributed import (init_process_group, all_gather,)
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
 from apex.parallel import (DistributedDataParallel, convert_syncbn_model,)
@@ -81,21 +81,36 @@ def _training(
             else:
                 annotation = tuple(x.cuda() for x in annotation)
 
+        # Compute the Q target value to get the loss of the V model.
         with torch.no_grad():
             q1 = q_target1_model(annotation[:4])
             assert(q1.dim() == 2)
             assert(q1.size(0) == local_batch_size)
             assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
             q1 = q1[torch.arange(local_batch_size), annotation[4]]
+            q1_mean = [torch.zeros_like(q1) for _ in range(world_size)]
+            all_gather(q1_mean, q1)
+            q1_mean = torch.cat(q1_mean)
+            assert(q1_mean.dim() == 1)
+            assert(q1_mean.size(0) == batch_size)
+            q1_mean = torch.mean(q1_mean).item()
             q2 = q_target2_model(annotation[:4])
             assert(q2.dim() == 2)
             assert(q2.size(0) == local_batch_size)
             assert(q2.size(1) == MAX_NUM_ACTION_CANDIDATES)
             q2 = q2[torch.arange(local_batch_size), annotation[4]]
+            q2_mean = [torch.zeros_like(q2) for _ in range(world_size)]
+            all_gather(q2_mean, q2)
+            q2_mean = torch.cat(q2_mean)
+            assert(q2_mean.dim() == 1)
+            assert(q2_mean.size(0) == batch_size)
+            q2_mean = torch.mean(q2).item()
             q = torch.minimum(q1, q2)
             q = q.detach()
             assert(q.dim() == 1)
             assert(q.size(0) == local_batch_size)
+
+        # Backprop for the V model.
         value = value_model(annotation[:4])
         assert(value.dim() == 1)
         assert(value.size(0) == local_batch_size)
@@ -103,20 +118,20 @@ def _training(
         value_loss = torch.where(
             value_loss < 0.0, (1.0 - expectile) * (value_loss ** 2.0),
             expectile * (value_loss ** 2.0))
+        value_batch_loss = [torch.zeros_like(value_loss) for _ in range(world_size)]
+        all_gather(value_batch_loss, value_loss)
+        value_batch_loss = torch.cat(value_batch_loss)
+        assert(value_batch_loss.dim() == 1)
+        assert(value_batch_loss.size(0) == batch_size)
+        value_batch_loss = torch.mean(value_batch_loss).item()
         value_loss = torch.mean(value_loss)
         if math.isnan(value_loss.item()):
             raise RuntimeError('Value loss becomes NaN.')
-
-        value_batch_loss = value_loss
-        if is_multiprocess:
-            all_reduce(value_batch_loss)
-            value_batch_loss /= world_size
-        value_batch_loss = value_batch_loss.item()
-
         value_loss /= gradient_accumulation_steps
         with amp.scale_loss(value_loss, value_optimizer) as scaled_value_loss:
             scaled_value_loss.backward()
 
+        # Compute V to get the loss of the Q source models.
         reward = annotation[9]
         with torch.no_grad():
             value = value_model(annotation[5:9])
@@ -127,17 +142,29 @@ def _training(
             assert(value.dim() == 1)
             assert(value.size(0) == local_batch_size)
             value = value.detach()
+
+        # Backprop for the Q1 source model.
         q1 = q_source1_model(annotation[:4])
         assert(q1.dim() == 2)
         assert(q1.size(0) == local_batch_size)
         assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
         q1 = q1[torch.arange(local_batch_size), annotation[4]]
-        if is_main_process:
-            print(reward)
-            print(value)
-            print(q1)
         q1_loss = reward + value - q1
         q1_loss = q1_loss ** 2.0
+        q1_batch_loss = [torch.zeros_like(q1_loss) for _ in range(world_size)]
+        all_gather(q1_batch_loss, q1_loss)
+        q1_batch_loss = torch.cat(q1_batch_loss)
+        assert(q1_batch_loss.dim() == 1)
+        assert(q1_batch_loss.size(0) == batch_size)
+        q1_batch_loss = torch.mean(q1_batch_loss).item()
+        q1_loss = torch.mean(q1_loss)
+        if math.isnan(q1_loss.item()):
+            raise RuntimeError('Q1 loss becomes NaN.')
+        q1_loss /= gradient_accumulation_steps
+        with amp.scale_loss(q1_loss, q1_optimizer) as scaled_q1_loss:
+            scaled_q1_loss.backward()
+
+        # Backprop for the Q2 source model.
         q2 = q_source2_model(annotation[:4])
         assert(q2.dim() == 2)
         assert(q2.size(0) == local_batch_size)
@@ -145,28 +172,15 @@ def _training(
         q2 = q2[torch.arange(local_batch_size), annotation[4]]
         q2_loss = reward + value - q2
         q2_loss = q2_loss ** 2.0
-
-        q1_loss = torch.mean(q1_loss)
-        if math.isnan(q1_loss.item()):
-            raise RuntimeError('Q1 loss becomes NaN.')
+        q2_batch_loss = [torch.zeros_like(q2_loss) for _ in range(world_size)]
+        all_gather(q2_batch_loss, q2_loss)
+        q2_batch_loss = torch.cat(q2_batch_loss)
+        assert(q2_batch_loss.dim() == 1)
+        assert(q2_batch_loss.size(0) == batch_size)
+        q2_batch_loss = torch.mean(q2_batch_loss).item()
         q2_loss = torch.mean(q2_loss)
         if math.isnan(q2_loss.item()):
             raise RuntimeError('Q2 loss becomes NaN.')
-
-        q1_batch_loss = q1_loss
-        if is_multiprocess:
-            all_reduce(q1_batch_loss)
-            q1_batch_loss /= world_size
-        q1_batch_loss = q1_batch_loss.item()
-        q2_batch_loss = q2_loss
-        if is_multiprocess:
-            all_reduce(q2_batch_loss)
-            q2_batch_loss /= world_size
-        q2_batch_loss = q2_batch_loss.item()
-
-        q1_loss /= gradient_accumulation_steps
-        with amp.scale_loss(q1_loss, q1_optimizer) as scaled_q1_loss:
-            scaled_q1_loss.backward()
         q2_loss /= gradient_accumulation_steps
         with amp.scale_loss(q2_loss, q2_optimizer) as scaled_q2_loss:
             scaled_q2_loss.backward()
@@ -178,39 +192,36 @@ def _training(
             value_gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(value_optimizer) if x.grad is not None]
             value_gradient = torch.cat(value_gradient)
-            if is_multiprocess:
-                all_reduce(value_gradient)
             value_gradient_norm = torch.linalg.vector_norm(value_gradient)
             value_gradient_norm = value_gradient_norm.item()
-            nn.utils.clip_grad_norm_(
-                amp.master_params(value_optimizer), v_max_gradient_norm,
-                error_if_nonfinite=False)
+            if value_gradient_norm > v_max_gradient_norm:
+                nn.utils.clip_grad_norm_(
+                    amp.master_params(value_optimizer), v_max_gradient_norm,
+                    error_if_nonfinite=False)
             value_optimizer.step()
             value_optimizer.zero_grad()
 
             q1_gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(q1_optimizer) if x.grad is not None]
             q1_gradient = torch.cat(q1_gradient)
-            if is_multiprocess:
-                all_reduce(q1_gradient)
             q1_gradient_norm = torch.linalg.vector_norm(q1_gradient)
             q1_gradient_norm = q1_gradient_norm.item()
-            nn.utils.clip_grad_norm_(
-                amp.master_params(q1_optimizer), q_max_gradient_norm,
-                error_if_nonfinite=False)
+            if q1_gradient_norm > q_max_gradient_norm:
+                nn.utils.clip_grad_norm_(
+                    amp.master_params(q1_optimizer), q_max_gradient_norm,
+                    error_if_nonfinite=False)
             q1_optimizer.step()
             q1_optimizer.zero_grad()
 
             q2_gradient = [
                 torch.flatten(x.grad) for x in amp.master_params(q2_optimizer) if x.grad is not None]
             q2_gradient = torch.cat(q2_gradient)
-            if is_multiprocess:
-                all_reduce(q2_gradient)
             q2_gradient_norm = torch.linalg.vector_norm(q2_gradient)
             q2_gradient_norm = q2_gradient_norm.item()
-            nn.utils.clip_grad_norm_(
-                amp.master_params(q2_optimizer), q_max_gradient_norm,
-                error_if_nonfinite=False)
+            if q2_gradient_norm > q_max_gradient_norm:
+                nn.utils.clip_grad_norm_(
+                    amp.master_params(q2_optimizer), q_max_gradient_norm,
+                    error_if_nonfinite=False)
             q2_optimizer.step()
             q2_optimizer.zero_grad()
 
@@ -245,6 +256,8 @@ f' Q2 gradient norm = {q2_gradient_norm}')
                     'Q Gradient Norm',
                     { 'Q1': q1_gradient_norm, 'Q2': q2_gradient_norm },
                     num_samples)
+                writer.add_scalars(
+                    'Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
         else:
             logging.info(
                 f'sample = {num_samples}, value loss = {value_batch_loss},'
@@ -412,12 +425,12 @@ def main() -> None:
         help='# of steps for gradient accumulation (defaults to `1`)',
         metavar='NSTEPS')
     ap_training.add_argument(
-        '--v-max-gradient-norm', default=1.0, type=float,
-        help='norm threshold for gradient clipping on value (defaults to `1.0`)',
+        '--v-max-gradient-norm', default=math.inf, type=float,
+        help='norm threshold for gradient clipping on value (defaults to `+∞`)',
         metavar='NORM')
     ap_training.add_argument(
-        '--q-max-gradient-norm', default=10.0, type=float,
-        help='norm threshold for gradient clipping on Q (defaults to `10.0`)',
+        '--q-max-gradient-norm', default=math.inf, type=float,
+        help='norm threshold for gradient clipping on Q (defaults to `+∞`)',
         metavar='NORM')
 
     ap_output = ap.add_argument_group(title='Output')
