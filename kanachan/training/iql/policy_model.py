@@ -14,8 +14,6 @@ class PolicyDecoder(nn.Module):
             activation_function: str, dropout: float, **kwargs) -> None:
         super(PolicyDecoder, self).__init__()
 
-        self.dimension = dimension
-
         # The final layer is position-wise feed-forward network.
         self.semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
         if activation_function == 'relu':
@@ -31,20 +29,18 @@ class PolicyDecoder(nn.Module):
     def forward(self, x):
         candidates, encode = x
 
-        mask = (candidates < NUM_TYPES_OF_ACTIONS)
-        mask = torch.unsqueeze(mask, dim=2)
-        mask = mask.expand(-1, -1, self.dimension)
-        encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:] * mask
+        encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         decode = self.semifinal_linear(encode)
         decode = self.semifinal_activation(decode)
         decode = self.semifinal_dropout(decode)
-
         prediction = self.final_linear(decode)
         prediction = torch.squeeze(prediction, dim=2)
-        mask = torch.tensor(
-            -math.inf, device=prediction.device, dtype=prediction.dtype)
         prediction = torch.where(
-            candidates < NUM_TYPES_OF_ACTIONS, prediction, mask)
+            candidates < NUM_TYPES_OF_ACTIONS, prediction, -math.inf)
+        assert(prediction.dim() == 2)
+        assert(prediction.size(0) == candidates.size(0))
+        assert(prediction.size(1) == MAX_NUM_ACTION_CANDIDATES)
+
         return prediction
 
 
