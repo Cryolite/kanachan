@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import numpy
+import math
 import torch
 from torch import nn
 from kanachan.training.constants import (
@@ -47,9 +47,11 @@ class QDecoder(nn.Module):
         assert(advantage_decode.dim() == 2)
         assert(advantage_decode.size(0) == candidates.size(0))
         assert(advantage_decode.size(1) == MAX_NUM_ACTION_CANDIDATES)
-        decode = value_decode + advantage_decode
+        prediction = value_decode + advantage_decode
+        prediction = torch.where(
+            candidates < NUM_TYPES_OF_ACTIONS, prediction, -math.inf)
 
-        return decode
+        return prediction
 
 
 class QModel(nn.Module):
