@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import gzip
+import bz2
 import torch
 import torch.nn.functional
 from torch.utils.data import get_worker_info
@@ -13,7 +15,12 @@ from kanachan.training.constants import (
 
 class IteratorAdaptorBase(object):
     def __init__(self, path: Path) -> None:
-        self.__fp = open(path)
+        if path.suffix == '.gz':
+            self.__fp = gzip.open(path, mode='rt', encoding='UTF-8')
+        elif path.suffix == '.bz2':
+            self.__fp = bz2.open(path, mode='rt', encoding='UTF-8')
+        else:
+            self.__fp = open(path, encoding='UTF-8')
 
         if get_worker_info() is not None:
             try:

@@ -19,7 +19,7 @@ class IteratorAdaptor(object):
         elif path.suffix == '.bz2':
             self.__fp = bz2.open(path, mode='rt', encoding='UTF-8')
         else:
-            self.__fp = open(path)
+            self.__fp = open(path, encoding='UTF-8')
 
         self.__reward_scale = reward_scale
 
