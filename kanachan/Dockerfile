@@ -35,7 +35,8 @@ RUN mkdir -p /home/ubuntu/.local/src && \
     CFLAGS='-DNDEBUG -O3 -flto' CXXFLAGS='-DNDEBUG -O3 -flto' ./configure --prefix=/home/ubuntu/.local --enable-native-code --disable-static && \
     make -j && \
     make install && \
-    popd
+    popd && \
+    rm -rf /home/ubuntu/.local/src/marisa-trie
 
 RUN mkdir -p /home/ubuntu/.local/src && \
     pushd /home/ubuntu/.local/src && \
@@ -70,4 +71,5 @@ RUN pushd /workspace/kanachan/src/common && \
     pushd /workspace/kanachan && \
     cp build/src/simulation/lib_simulation.so kanachan/simulation/_simulation.so && \
     pip3 install . && \
-    popd
+    popd && \
+    rm -rf /workspace/kanachan/build
