@@ -701,29 +701,40 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
     if initial_encoder is not None:
         assert(not resume)
         assert(initial_encoder.exists())
-        encoder.load_state_dict(torch.load(initial_encoder))
+        encoder_state_dict = torch.load(initial_encoder, map_location='cpu')
+        encoder.load_state_dict(encoder_state_dict)
+        encoder.cuda()
     if initial_decoder is not None:
         assert(not resume)
         assert(initial_decoder.exists())
-        decoder.load_state_dict(torch.load(initial_decoder))
+        decoder_state_dict = torch.load(initial_decoder, map_location='cpu')
+        decoder.load_state_dict(decoder_state_dict)
+        decoder.cuda()
     if resume:
         assert(initial_encoder is None)
         assert(initial_decoder is None)
         assert(encoder_snapshot_path.exists())
         assert(decoder_snapshot_path.exists())
-        encoder.load_state_dict(torch.load(encoder_snapshot_path))
-        decoder.load_state_dict(torch.load(decoder_snapshot_path))
+        encoder_state_dict = torch.load(
+            encoder_snapshot_path, map_location='cpu')
+        encoder.load_state_dict(encoder_state_dict)
+        encoder.cuda()
+        decoder_state_dict = torch.load(
+            decoder_snapshot_path, map_location='cpu')
+        decoder.load_state_dict(decoder_state_dict)
+        decoder.cuda()
 
     if initial_optimizer is not None:
         assert(not resume)
         assert(initial_optimizer.exists())
-        optimizer_state = torch.load(initial_optimizer)
+        optimizer_state = torch.load(initial_optimizer, map_location='cpu')
         optimizer.load_state_dict(optimizer_state['optimizer'])
         amp.load_state_dict(optimizer_state['amp'])
     if resume:
         assert(initial_optimizer is None)
         assert(optimizer_snapshot_path.exists())
-        optimizer_state = torch.load(optimizer_snapshot_path)
+        optimizer_state = torch.load(
+            optimizer_snapshot_path, map_location='cpu')
         optimizer.load_state_dict(optimizer_state['optimizer'])
         amp.load_state_dict(optimizer_state['amp'])
 
