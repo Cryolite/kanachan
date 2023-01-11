@@ -1,6 +1,6 @@
 # Annotate
 
-**annotate** is a C++ program that extracts almost all *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's choice and round's/game's final results into annotations suitable to learning. The output of the program is text, where each line represents the annotation of a decision-making point. The format of the annotation (each line of the output) is specified in the [Annotation Specification](../../#annotation-specification) section.
+**annotate** is a C++ program that extracts almost all *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's choice and round's/game's final results into annotations suitable to learning. The output of the program is text, where each line represents the annotation of a decision-making point. The format of the annotation (each line of the output) is specified in [Training Data Format for Behavioral Cloning](https://github.com/Cryolite/kanachan/wiki/Notes-on-Training-Data#training-data-format-for-behavioral-cloning).
 
 A *decision-making point* is defined by a point in a game at which a player is forced to choose an action among multiple options. Possible points and actions are enumerated as follows:
 
