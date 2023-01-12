@@ -24,29 +24,31 @@ from kanachan.training.constants import (
     MAX_NUM_ACTION_CANDIDATES,)
 from kanachan.training.common import (initialize_logging, Dataset,)
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.iql.value_model import (ValueDecoder, ValueModel,)
-from kanachan.training.iql.q_model import (QDecoder, QModel,)
+from kanachan.training.iql.qv_model import (QVDecoder, QVModel,)
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 
 
 def _training(
         *, is_multiprocess: bool, world_size: Optional[int],
         rank: Optional[int], is_main_process: bool, training_data: Path,
-        num_workers: int, device: str, value_model: nn.Module,
-        q_source1_model: nn.Module, q_source2_model: nn.Module,
-        q_target1_model: nn.Module, q_target2_model: nn.Module,
-        reward_scale: float, discount_factor: float, expectile: float,
-        target_update_interval: int, target_update_rate: float, batch_size: int,
-        gradient_accumulation_steps: int, v_max_gradient_norm: float,
-        q_max_gradient_norm: float, value_optimizer: Optimizer,
-        q1_optimizer: Optimizer, q2_optimizer: Optimizer, snapshots_path: Path,
-        snapshot_interval: int, num_samples: int, writer: SummaryWriter,
-        **kwargs) -> None:
+        num_workers: int, device: str, qv1_source_model: nn.Module,
+        qv2_source_model: nn.Module, qv1_target_model: nn.Module,
+        qv2_target_model: nn.Module, reward_plugin: Path,
+        discount_factor: float, expectile: float, target_update_interval: int,
+        target_update_rate: float, batch_size: int,
+        gradient_accumulation_steps: int, max_gradient_norm: float,
+        qv1_optimizer: Optimizer, qv2_optimizer: Optimizer,
+        snapshots_path: Path, snapshot_interval: int, num_samples: int,
+        writer: SummaryWriter, **kwargs) -> None:
     start_time = datetime.datetime.now()
+
+    # Load the reward plugin.
+    with open(reward_plugin, encoding='UTF-8') as f:
+        exec(f.read(), globals())
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: IteratorAdaptor(path, reward_scale)
+    iterator_adaptor = lambda path: IteratorAdaptor(path, get_reward)
     dataset = Dataset(training_data, iterator_adaptor)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers,
@@ -81,219 +83,184 @@ def _training(
             else:
                 annotation = tuple(x.cuda() for x in annotation)
 
-        # Compute the Q target value to get the loss of the V model.
+        # Compute the Q target value.
         with torch.no_grad():
-            q1 = q_target1_model(annotation[:4])
-            assert(q1.dim() == 2)
-            assert(q1.size(0) == local_batch_size)
-            assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
-            q1 = q1[torch.arange(local_batch_size), annotation[4]]
-            q1_mean = [torch.zeros_like(q1) for _ in range(world_size)]
-            all_gather(q1_mean, q1)
+            q1_target, _ = qv1_target_model(annotation[:4])
+            assert(q1_target.dim() == 2)
+            assert(q1_target.size(0) == local_batch_size)
+            assert(q1_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
+            q1_target = q1_target[torch.arange(local_batch_size), annotation[4]]
+            q1_mean = [torch.zeros_like(q1_target) for _ in range(world_size)]
+            all_gather(q1_mean, q1_target)
             q1_mean = torch.cat(q1_mean)
             assert(q1_mean.dim() == 1)
             assert(q1_mean.size(0) == batch_size)
             q1_mean = torch.mean(q1_mean).item()
-            q2 = q_target2_model(annotation[:4])
-            assert(q2.dim() == 2)
-            assert(q2.size(0) == local_batch_size)
-            assert(q2.size(1) == MAX_NUM_ACTION_CANDIDATES)
-            q2 = q2[torch.arange(local_batch_size), annotation[4]]
-            q2_mean = [torch.zeros_like(q2) for _ in range(world_size)]
-            all_gather(q2_mean, q2)
+            q2_target, _ = qv2_target_model(annotation[:4])
+            assert(q2_target.dim() == 2)
+            assert(q2_target.size(0) == local_batch_size)
+            assert(q2_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
+            q2_target = q2_target[torch.arange(local_batch_size), annotation[4]]
+            q2_mean = [torch.zeros_like(q2_target) for _ in range(world_size)]
+            all_gather(q2_mean, q2_target)
             q2_mean = torch.cat(q2_mean)
             assert(q2_mean.dim() == 1)
             assert(q2_mean.size(0) == batch_size)
-            q2_mean = torch.mean(q2).item()
-            q = torch.minimum(q1, q2)
-            q = q.detach()
-            assert(q.dim() == 1)
-            assert(q.size(0) == local_batch_size)
+            q2_mean = torch.mean(q2_mean).item()
+            q_target = torch.minimum(q1_target, q2_target)
+            q_target = q_target.detach()
+            assert(q_target.dim() == 1)
+            assert(q_target.size(0) == local_batch_size)
 
-        # Backprop for the V model.
-        value = value_model(annotation[:4])
-        assert(value.dim() == 1)
-        assert(value.size(0) == local_batch_size)
-        value_loss = q - value
-        value_loss = torch.where(
-            value_loss < 0.0, (1.0 - expectile) * (value_loss ** 2.0),
-            expectile * (value_loss ** 2.0))
-        value_batch_loss = [torch.zeros_like(value_loss) for _ in range(world_size)]
-        all_gather(value_batch_loss, value_loss)
-        value_batch_loss = torch.cat(value_batch_loss)
-        assert(value_batch_loss.dim() == 1)
-        assert(value_batch_loss.size(0) == batch_size)
-        value_batch_loss = torch.mean(value_batch_loss).item()
-        value_loss = torch.mean(value_loss)
-        if math.isnan(value_loss.item()):
-            raise RuntimeError('Value loss becomes NaN.')
-        value_loss /= gradient_accumulation_steps
-        with amp.scale_loss(value_loss, value_optimizer) as scaled_value_loss:
-            scaled_value_loss.backward()
-
-        # Compute V to get the loss of the Q source models.
         reward = annotation[9]
-        with torch.no_grad():
-            value = value_model(annotation[5:9])
-            value *= discount_factor
-            mask = [0.0 if annotation[5][i][0].item() == NUM_TYPES_OF_SPARSE_FEATURES else 1.0 for i in range(local_batch_size)]
-            mask = torch.tensor(mask, device=value.device, dtype=value.dtype, requires_grad=False)
-            value *= mask
-            assert(value.dim() == 1)
-            assert(value.size(0) == local_batch_size)
-            value = value.detach()
 
-        # Backprop for the Q1 source model.
-        q1 = q_source1_model(annotation[:4])
+        # Backprop for the QV1 source model.
+        q1, v1 = qv1_source_model(annotation[:4])
         assert(q1.dim() == 2)
         assert(q1.size(0) == local_batch_size)
         assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
+        assert(v1.dim() == 1)
+        assert(v1.size(0) == local_batch_size)
         q1 = q1[torch.arange(local_batch_size), annotation[4]]
-        q1_loss = reward + value - q1
-        q1_loss = q1_loss ** 2.0
-        q1_batch_loss = [torch.zeros_like(q1_loss) for _ in range(world_size)]
-        all_gather(q1_batch_loss, q1_loss)
-        q1_batch_loss = torch.cat(q1_batch_loss)
-        assert(q1_batch_loss.dim() == 1)
-        assert(q1_batch_loss.size(0) == batch_size)
-        q1_batch_loss = torch.mean(q1_batch_loss).item()
-        q1_loss = torch.mean(q1_loss)
-        if math.isnan(q1_loss.item()):
-            raise RuntimeError('Q1 loss becomes NaN.')
-        q1_loss /= gradient_accumulation_steps
-        with amp.scale_loss(q1_loss, q1_optimizer) as scaled_q1_loss:
-            scaled_q1_loss.backward()
+        _, vv1 = qv1_source_model(annotation[5:9])
+        assert(vv1.dim() == 1)
+        assert(vv1.size(0) == local_batch_size)
+        q1_loss = (reward + discount_factor * vv1 - q1) ** 2.0
+        v1_loss = q_target - v1
+        v1_loss = torch.where(
+            v1_loss < 0.0, (1.0 - expectile) * (v1_loss ** 2.0),
+            expectile * (v1_loss ** 2.0))
+        qv1_loss = q1_loss + v1_loss
+        qv1_batch_loss = [torch.zeros_like(q1_loss) for _ in range(world_size)]
+        all_gather(qv1_batch_loss, qv1_loss)
+        qv1_batch_loss = torch.cat(qv1_batch_loss)
+        assert(qv1_batch_loss.dim() == 1)
+        assert(qv1_batch_loss.size(0) == batch_size)
+        qv1_batch_loss = torch.mean(qv1_batch_loss).item()
+        qv1_loss = torch.mean(qv1_loss)
+        if math.isnan(qv1_loss.item()):
+            raise RuntimeError('QV1 loss becomes NaN.')
+        qv1_loss /= gradient_accumulation_steps
+        with amp.scale_loss(qv1_loss, qv1_optimizer) as scaled_qv1_loss:
+            scaled_qv1_loss.backward()
 
-        # Backprop for the Q2 source model.
-        q2 = q_source2_model(annotation[:4])
+        # Backprop for the QV2 source model.
+        q2, v2 = qv2_source_model(annotation[:4])
         assert(q2.dim() == 2)
         assert(q2.size(0) == local_batch_size)
         assert(q2.size(1) == MAX_NUM_ACTION_CANDIDATES)
+        assert(v2.dim() == 1)
+        assert(v2.size(0) == local_batch_size)
         q2 = q2[torch.arange(local_batch_size), annotation[4]]
-        q2_loss = reward + value - q2
-        q2_loss = q2_loss ** 2.0
-        q2_batch_loss = [torch.zeros_like(q2_loss) for _ in range(world_size)]
-        all_gather(q2_batch_loss, q2_loss)
-        q2_batch_loss = torch.cat(q2_batch_loss)
-        assert(q2_batch_loss.dim() == 1)
-        assert(q2_batch_loss.size(0) == batch_size)
-        q2_batch_loss = torch.mean(q2_batch_loss).item()
-        q2_loss = torch.mean(q2_loss)
-        if math.isnan(q2_loss.item()):
-            raise RuntimeError('Q2 loss becomes NaN.')
-        q2_loss /= gradient_accumulation_steps
-        with amp.scale_loss(q2_loss, q2_optimizer) as scaled_q2_loss:
-            scaled_q2_loss.backward()
+        _, vv2 = qv2_source_model(annotation[5:9])
+        assert(vv2.dim() == 1)
+        assert(vv2.size(0) == local_batch_size)
+        q2_loss = (reward + discount_factor * vv2 - q2) ** 2.0
+        v2_loss = q_target - v2
+        v2_loss = torch.where(
+            v2_loss < 0.0, (1.0 - expectile) * (v2_loss ** 2.0),
+            expectile * (v2_loss ** 2.0))
+        qv2_loss = q2_loss + v2_loss
+        qv2_batch_loss = [torch.zeros_like(qv2_loss) for _ in range(world_size)]
+        all_gather(qv2_batch_loss, qv2_loss)
+        qv2_batch_loss = torch.cat(qv2_batch_loss)
+        assert(qv2_batch_loss.dim() == 1)
+        assert(qv2_batch_loss.size(0) == batch_size)
+        qv2_batch_loss = torch.mean(qv2_batch_loss).item()
+        qv2_loss = torch.mean(qv2_loss)
+        if math.isnan(qv2_loss.item()):
+            raise RuntimeError('QV2 loss becomes NaN.')
+        qv2_loss /= gradient_accumulation_steps
+        with amp.scale_loss(qv2_loss, qv2_optimizer) as scaled_qv2_loss:
+            scaled_qv2_loss.backward()
 
         num_samples += batch_size
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            value_gradient = [
-                torch.flatten(x.grad) for x in amp.master_params(value_optimizer) if x.grad is not None]
-            value_gradient = torch.cat(value_gradient)
-            value_gradient_norm = torch.linalg.vector_norm(value_gradient)
-            value_gradient_norm = value_gradient_norm.item()
-            if value_gradient_norm > v_max_gradient_norm:
+            qv1_gradient = [
+                torch.flatten(x.grad) for x in amp.master_params(qv1_optimizer) if x.grad is not None]
+            qv1_gradient = torch.cat(qv1_gradient)
+            qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
+            if qv1_gradient_norm > max_gradient_norm:
                 nn.utils.clip_grad_norm_(
-                    amp.master_params(value_optimizer), v_max_gradient_norm,
+                    amp.master_params(qv1_optimizer), max_gradient_norm,
                     error_if_nonfinite=False)
-            value_optimizer.step()
-            value_optimizer.zero_grad()
+            qv1_optimizer.step()
+            qv1_optimizer.zero_grad()
 
-            q1_gradient = [
-                torch.flatten(x.grad) for x in amp.master_params(q1_optimizer) if x.grad is not None]
-            q1_gradient = torch.cat(q1_gradient)
-            q1_gradient_norm = torch.linalg.vector_norm(q1_gradient)
-            q1_gradient_norm = q1_gradient_norm.item()
-            if q1_gradient_norm > q_max_gradient_norm:
+            qv2_gradient = [
+                torch.flatten(x.grad) for x in amp.master_params(qv2_optimizer) if x.grad is not None]
+            qv2_gradient = torch.cat(qv2_gradient)
+            qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
+            if qv2_gradient_norm > max_gradient_norm:
                 nn.utils.clip_grad_norm_(
-                    amp.master_params(q1_optimizer), q_max_gradient_norm,
+                    amp.master_params(qv2_optimizer), max_gradient_norm,
                     error_if_nonfinite=False)
-            q1_optimizer.step()
-            q1_optimizer.zero_grad()
-
-            q2_gradient = [
-                torch.flatten(x.grad) for x in amp.master_params(q2_optimizer) if x.grad is not None]
-            q2_gradient = torch.cat(q2_gradient)
-            q2_gradient_norm = torch.linalg.vector_norm(q2_gradient)
-            q2_gradient_norm = q2_gradient_norm.item()
-            if q2_gradient_norm > q_max_gradient_norm:
-                nn.utils.clip_grad_norm_(
-                    amp.master_params(q2_optimizer), q_max_gradient_norm,
-                    error_if_nonfinite=False)
-            q2_optimizer.step()
-            q2_optimizer.zero_grad()
+            qv2_optimizer.step()
+            qv2_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
-                param_source1_iter = amp.master_params(q1_optimizer)
-                param_target1_iter = q_target1_model.parameters()
-                for param_source1, param_target1 in zip(param_source1_iter, param_target1_iter):
-                    param_target1 *= (1.0 - target_update_rate)
-                    param_target1 += target_update_rate * param_source1
+                param1_source_iter = amp.master_params(qv1_optimizer)
+                param1_target_iter = qv1_target_model.parameters()
+                for param1_source, param1_target in zip(param1_source_iter, param1_target_iter):
+                    param1_target *= (1.0 - target_update_rate)
+                    param1_target += target_update_rate * param1_source
 
-                param_source2_iter = amp.master_params(q2_optimizer)
-                param_target2_iter = q_target2_model.parameters()
-                for param_source2, param_target2 in zip(param_source2_iter, param_target2_iter):
-                    param_target2 *= (1.0 - target_update_rate)
-                    param_target2 += target_update_rate * param_source2
+                param2_source_iter = amp.master_params(qv2_optimizer)
+                param2_target_iter = qv2_target_model.parameters()
+                for param2_source, param2_target in zip(param2_source_iter, param2_target_iter):
+                    param2_target *= (1.0 - target_update_rate)
+                    param2_target += target_update_rate * param2_source
 
             logging.info(
-                f'sample = {num_samples}, value loss = {value_batch_loss},'
-f' Q1 loss = {q1_batch_loss},'
-f' Q2 loss = {q2_batch_loss},'
-f' value gradient norm = {value_gradient_norm},'
-f' Q1 gradient norm = {q1_gradient_norm},'
-f' Q2 gradient norm = {q2_gradient_norm}')
+                f'sample = {num_samples},'
+f' QV1 loss = {qv1_batch_loss},'
+f' QV2 loss = {qv2_batch_loss},'
+f' QV1 gradient norm = {qv1_gradient_norm},'
+f' QV2 gradient norm = {qv2_gradient_norm}')
             if is_main_process:
-                writer.add_scalar('Value Loss', value_batch_loss, num_samples)
-                writer.add_scalar(
-                    'Value Gradient Norm', value_gradient_norm, num_samples)
-                writer.add_scalars(
-                    'Q Loss', { 'Q1': q1_batch_loss, 'Q2': q2_batch_loss },
-                    num_samples)
-                writer.add_scalars(
-                    'Q Gradient Norm',
-                    { 'Q1': q1_gradient_norm, 'Q2': q2_gradient_norm },
-                    num_samples)
                 writer.add_scalars(
                     'Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
+                writer.add_scalars(
+                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
+                    num_samples)
+                writer.add_scalars(
+                    'QV Gradient Norm',
+                    { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm },
+                    num_samples)
         else:
             logging.info(
-                f'sample = {num_samples}, value loss = {value_batch_loss},'
-f' Q1 loss = {q1_batch_loss}, Q2 loss = {q2_batch_loss}')
+                f'sample = {num_samples},'
+f' QV1 loss = {qv1_batch_loss},'
+f' QV2 loss = {qv2_batch_loss}')
             if is_main_process:
-                writer.add_scalar('Value Loss', value_batch_loss, num_samples)
                 writer.add_scalars(
-                    'Q Loss', { 'Q1': q1_batch_loss, 'Q2': q2_batch_loss },
+                    'Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
+                writer.add_scalars(
+                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
                     num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
             snapshots_path.mkdir(parents=False, exist_ok=True)
             torch.save(
-                value_model.state_dict(),
-                snapshots_path / f'value.{num_samples}.pth')
+                qv1_source_model.state_dict(),
+                snapshots_path / f'qv1-source.{num_samples}.pth')
             torch.save(
-                q_source1_model.state_dict(),
-                snapshots_path / f'q-source1.{num_samples}.pth')
+                qv2_source_model.state_dict(),
+                snapshots_path / f'qv2-source.{num_samples}.pth')
             torch.save(
-                q_source2_model.state_dict(),
-                snapshots_path / f'q-source2.{num_samples}.pth')
+                qv1_target_model.state_dict(),
+                snapshots_path / f'qv1-target.{num_samples}.pth')
             torch.save(
-                q_target1_model.state_dict(),
-                snapshots_path / f'q-target1.{num_samples}.pth')
+                qv2_target_model.state_dict(),
+                snapshots_path / f'qv2-target.{num_samples}.pth')
             torch.save(
-                q_target2_model.state_dict(),
-                snapshots_path / f'q-target2.{num_samples}.pth')
+                qv1_optimizer.state_dict(),
+                snapshots_path / f'qv1-optimizer.{num_samples}.pth')
             torch.save(
-                value_optimizer.state_dict(),
-                snapshots_path / f'value-optimizer.{num_samples}.pth')
-            torch.save(
-                q1_optimizer.state_dict(),
-                snapshots_path / f'q1-optimizer.{num_samples}.pth')
-            torch.save(
-                q2_optimizer.state_dict(),
-                snapshots_path / f'q2-optimizer.{num_samples}.pth')
+                qv2_optimizer.state_dict(),
+                snapshots_path / f'qv2-optimizer.{num_samples}.pth')
             torch.save(
                 amp.state_dict(), snapshots_path / f'amp.{num_samples}.pth')
             last_snapshot = num_samples
@@ -305,31 +272,18 @@ f' Q1 loss = {q1_batch_loss}, Q2 loss = {q2_batch_loss}')
     if is_main_process:
         snapshots_path.mkdir(parents=False, exist_ok=True)
         torch.save(
-            value_model.state_dict(),
-            snapshots_path / f'value.pth')
+            qv1_source_model.state_dict(), snapshots_path / f'qv1-source.pth')
         torch.save(
-            q_source1_model.state_dict(),
-            snapshots_path / f'q-source1.pth')
+            qv2_source_model.state_dict(), snapshots_path / f'qv2-source.pth')
         torch.save(
-            q_source2_model.state_dict(),
-            snapshots_path / f'q-source2.pth')
+            qv1_target_model.state_dict(), snapshots_path / f'qv1-target.pth')
         torch.save(
-            q_target1_model.state_dict(),
-            snapshots_path / f'q-target1.pth')
+            qv2_target_model.state_dict(), snapshots_path / f'qv2-target.pth')
         torch.save(
-            q_target2_model.state_dict(),
-            snapshots_path / f'q-target2.pth')
+            qv1_optimizer.state_dict(), snapshots_path / f'qv1-optimizer.pth')
         torch.save(
-            value_optimizer.state_dict(),
-            snapshots_path / f'value-optimizer.pth')
-        torch.save(
-            q1_optimizer.state_dict(),
-            snapshots_path / f'q1-optimizer.pth')
-        torch.save(
-            q2_optimizer.state_dict(),
-            snapshots_path / f'q2-optimizer.pth')
-        torch.save(
-            amp.state_dict(), snapshots_path / f'amp.pth')
+            qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer.pth')
+        torch.save(amp.state_dict(), snapshots_path / f'amp.pth')
 
 
 def main() -> None:
@@ -348,7 +302,7 @@ def main() -> None:
     ap_device.add_argument(
         '--amp-optimization-level', default='O2',
         choices=('O0', 'O1', 'O2', 'O3',),
-        help='Optimization level for automatic mixed precision (defaults to `O2`)')
+        help='optimization level for automatic mixed precision (defaults to `O2`)')
 
     ap_model = ap.add_argument_group(title='Model')
     ap_model.add_argument('--model-preset', choices=('base', 'large',))
@@ -368,10 +322,10 @@ def main() -> None:
         metavar='DIM_FINAL_FEEDFORWARD')
     ap_model.add_argument(
         '--activation-function', default='gelu', choices=('relu', 'gelu',),
-        help='activation function for the feedforward networks of (defaults to `gelu`)',
+        help='activation function for the feedforward networks (defaults to `gelu`)',
         metavar='ACTIVATION')
     ap_model.add_argument(
-        '--dropout', default=0.1, type=float, help='defaults to `0.1`',
+        '--dropout', default=0.1, type=float, help='dropout rate (defaults to `0.1`)',
         metavar='DROPOUT')
     ap_model.add_argument(
         '--initial-encoder', type=Path,
@@ -388,19 +342,25 @@ def main() -> None:
 
     ap_training = ap.add_argument_group(title='Training')
     ap_training.add_argument(
-        '--reward-scale', default=1.0, type=float, help='defaults to `1.0`',
-        metavar='BETA')
+        '--reward-plugin', type=Path, required=True,
+        help='path to reward plugin', metavar='PATH')
+    ap_training.add_argument(
+        '--checkpointing', action='store_true', help='enable checkpointing')
     ap_training.add_argument(
         '--discount-factor', type=float, required=True, metavar='GAMMA')
     ap_training.add_argument(
         '--expectile', type=float, required=True, metavar='TAU')
     ap_training.add_argument(
-        '--target-update-interval', type=int, required=True, metavar='N')
-    ap_training.add_argument(
-        '--target-update-rate', type=float, required=True, metavar='ALPHA')
-    ap_training.add_argument(
         '--batch-size', type=int, required=True,
         help='batch size', metavar='N')
+    ap_training.add_argument(
+        '--gradient-accumulation-steps', default=1, type=int,
+        help='# of steps for gradient accumulation (defaults to `1`)',
+        metavar='NSTEPS')
+    ap_training.add_argument(
+        '--max-gradient-norm', default=math.inf, type=float,
+        help='norm threshold for gradient clipping (defaults to `+INF`)',
+        metavar='NORM')
     ap_training.add_argument(
         '--optimizer', default='lamb',
         choices=('sgd', 'adam', 'radam', 'lamb',),
@@ -419,19 +379,9 @@ def main() -> None:
  (defaults to `1.0e-8` for Adam and RAdam, `1.0e-6` for LAMB)',
         metavar='EPS')
     ap_training.add_argument(
-        '--checkpointing', action='store_true', help='enable checkpointing')
+        '--target-update-interval', type=int, required=True, metavar='N')
     ap_training.add_argument(
-        '--gradient-accumulation-steps', default=1, type=int,
-        help='# of steps for gradient accumulation (defaults to `1`)',
-        metavar='NSTEPS')
-    ap_training.add_argument(
-        '--v-max-gradient-norm', default=math.inf, type=float,
-        help='norm threshold for gradient clipping on value (defaults to `+∞`)',
-        metavar='NORM')
-    ap_training.add_argument(
-        '--q-max-gradient-norm', default=math.inf, type=float,
-        help='norm threshold for gradient clipping on Q (defaults to `+∞`)',
-        metavar='NORM')
+        '--target-update-rate', type=float, required=True, metavar='ALPHA')
 
     ap_output = ap.add_argument_group(title='Output')
     ap_output.add_argument(
@@ -555,7 +505,7 @@ def main() -> None:
         assert(not config.resume)
         if initial_model_index is None:
             for child in os.listdir(initial_model_prefix):
-                m = re.search('^(?:value|q-source[12]|q-target[12]|value-optimizer|q[12]-optimizer)\\.(\\d+)\\.pth$', child)
+                m = re.search('^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer)\\.(\\d+)\\.pth$', child)
                 if m is None:
                     continue
                 if initial_model_index is None:
@@ -564,47 +514,40 @@ def main() -> None:
                     initial_model_index = int(m[1])
         if initial_model_index is None:
             raise RuntimeError(f'{initial_model_prefix}: No model found.')
-        value_snapshot_path = initial_model_prefix / f'value.{initial_model_index}.pth'
-        if not value_snapshot_path.exists():
-            raise RuntimeError(f'{value_snapshot_path}: Does not exist.')
-        if not value_snapshot_path.is_file():
-            raise RuntimeError(f'{value_snapshot_path}: Not a file.')
-        q_source1_snapshot_path = initial_model_prefix / f'q-source1.{initial_model_index}.pth'
-        if not q_source1_snapshot_path.exists():
-            raise RuntimeError(f'{q_source1_snapshot_path}: Does not exist.')
-        if not q_source1_snapshot_path.is_file():
-            raise RuntimeError(f'{q_source1_snapshot_path}: Not a file.')
-        q_source2_snapshot_path = initial_model_prefix / f'q-source2.{initial_model_index}.pth'
-        if not q_source2_snapshot_path.exists():
-            raise RuntimeError(f'{q_source2_snapshot_path}: Does not exist.')
-        if not q_source2_snapshot_path.is_file():
-            raise RuntimeError(f'{q_source2_snapshot_path}: Not a file.')
-        q_target1_snapshot_path = initial_model_prefix / f'q-target1.{initial_model_index}.pth'
-        if not q_target1_snapshot_path.exists():
-            raise RuntimeError(f'{q_target1_snapshot_path}: Does not exist.')
-        if not q_target1_snapshot_path.is_file():
-            raise RuntimeError(f'{q_target1_snapshot_path}: Not a file.')
-        q_target2_snapshot_path = initial_model_prefix / f'q-target2.{initial_model_index}.pth'
-        if not q_target2_snapshot_path.exists():
-            raise RuntimeError(f'{q_target2_snapshot_path}: Does not exist.')
-        if not q_target2_snapshot_path.is_file():
-            raise RuntimeError(f'{q_target2_snapshot_path}: Not a file.')
-        value_optimizer_snapshot_path = initial_model_prefix / f'value-optimizer.{initial_model_index}.pth'
-        if not value_optimizer_snapshot_path.is_file():
-            value_optimizer_snapshot_path = None
-        q1_optimizer_snapshot_path = initial_model_prefix / f'q1-optimizer.{initial_model_index}.pth'
-        if not q1_optimizer_snapshot_path.is_file():
-            q1_optimizer_snapshot_path = None
-        q2_optimizer_snapshot_path = initial_model_prefix / f'q2-optimizer.{initial_model_index}.pth'
-        if not q2_optimizer_snapshot_path.is_file():
-            q2_optimizer_snapshot_path = None
+        qv1_source_snapshot_path = initial_model_prefix / f'qv1-source.{initial_model_index}.pth'
+        if not qv1_source_snapshot_path.exists():
+            raise RuntimeError(f'{qv1_source_snapshot_path}: Does not exist.')
+        if not qv1_source_snapshot_path.is_file():
+            raise RuntimeError(f'{qv1_source_snapshot_path}: Not a file.')
+        qv2_source_snapshot_path = initial_model_prefix / f'qv2-source.{initial_model_index}.pth'
+        if not qv2_source_snapshot_path.exists():
+            raise RuntimeError(f'{qv2_source_snapshot_path}: Does not exist.')
+        if not qv2_source_snapshot_path.is_file():
+            raise RuntimeError(f'{qv2_source_snapshot_path}: Not a file.')
+        qv1_target_snapshot_path = initial_model_prefix / f'qv1-target.{initial_model_index}.pth'
+        if not qv1_target_snapshot_path.exists():
+            raise RuntimeError(f'{qv1_target_snapshot_path}: Does not exist.')
+        if not qv1_target_snapshot_path.is_file():
+            raise RuntimeError(f'{qv1_target_snapshot_path}: Not a file.')
+        qv2_target_snapshot_path = initial_model_prefix / f'qv2-target.{initial_model_index}.pth'
+        if not qv2_target_snapshot_path.exists():
+            raise RuntimeError(f'{qv2_target_snapshot_path}: Does not exist.')
+        if not qv2_target_snapshot_path.is_file():
+            raise RuntimeError(f'{qv2_target_snapshot_path}: Not a file.')
+        qv1_optimizer_snapshot_path = initial_model_prefix / f'qv1-optimizer.{initial_model_index}.pth'
+        if not qv1_optimizer_snapshot_path.is_file():
+            qv1_optimizer_snapshot_path = None
+        qv2_optimizer_snapshot_path = initial_model_prefix / f'qv2-optimizer.{initial_model_index}.pth'
+        if not qv2_optimizer_snapshot_path.is_file():
+            qv2_optimizer_snapshot_path = None
         amp_snapshot_path = initial_model_prefix / f'amp.{initial_model_index}.pth'
         if not amp_snapshot_path.is_file():
             amp_snapshot_path = None
 
-    if config.reward_scale <= 0.0:
-        raise RuntimeError(
-            f'{config.reward_scale}: An invalid value for `--reward-scale`.')
+    if config.reward_plugin is not None and not config.reward_plugin.exists():
+        raise RuntimeError(f'{config.reward_plugin}: Does not exist.')
+    if config.reward_plugin is not None and not config.reward_plugin.is_file():
+        raise RuntimeError(f'{config.reward_plugin}: Not a file.')
 
     if config.discount_factor <= 0.0 or 1.0 < config.discount_factor:
         raise RuntimeError(
@@ -614,17 +557,17 @@ def main() -> None:
         raise RuntimeError(
             f'{config.expectile}: An invalid value for `--expectile`.')
 
-    if config.target_update_interval <= 0:
-        raise RuntimeError(
-            f'{config.target_update_interval}: An invalid value for `--target-update-interval`.')
-
-    if config.target_update_rate <= 0.0 or 1.0 <= config.target_update_rate:
-        raise RuntimeError(
-            f'{config.target_update_rate}: An invalid value for `--target-update-rate`.')
-
     if config.batch_size < 1:
         raise RuntimeError(
             f'{config.batch_size}: An invalid value for `--batch-size`.')
+
+    if config.gradient_accumulation_steps < 1:
+        raise RuntimeError(
+            f'{config.gradient_accumulation_steps}: An invalid value for `--gradient-accumulation`.')
+
+    if config.max_gradient_norm <= 0.0:
+        raise RuntimeError(
+            f'{config.max_gradient_norm}: An invalid value for `--max-gradient-norm`.')
 
     if config.optimizer == 'sgd':
         if config.learning_rate is None:
@@ -656,15 +599,13 @@ def main() -> None:
     if epsilon is not None and epsilon <= 0.0:
         raise RuntimeError(f'{epsilon}: An invalid value for `--epsilon`.')
 
-    if config.gradient_accumulation_steps < 1:
+    if config.target_update_interval <= 0:
         raise RuntimeError(
-            f'{config.gradient_accumulation_steps}: An invalid value for `--gradient-accumulation`.')
-    if config.v_max_gradient_norm <= 0.0:
+            f'{config.target_update_interval}: An invalid value for `--target-update-interval`.')
+
+    if config.target_update_rate <= 0.0 or 1.0 <= config.target_update_rate:
         raise RuntimeError(
-            f'{config.v_max_gradient_norm}: An invalid value for `--v-max-gradient-norm`.')
-    if config.q_max_gradient_norm <= 0.0:
-        raise RuntimeError(
-            f'{config.q_max_gradient_norm}: An invalid value for `--q-max-gradient-norm`.')
+            f'{config.target_update_rate}: An invalid value for `--target-update-rate`.')
 
     if config.experiment_name is None:
         now = datetime.datetime.now()
@@ -696,51 +637,41 @@ def main() -> None:
         if not snapshots_path.exists():
             raise RuntimeError(f'{snapshots_path}: Does not exist.')
         for child in os.listdir(snapshots_path):
-            m = re.search('^(?:value|q-source[12]|q-target[12]|value-optimizer|q[12]-optimizer)\\.(\\d+)\\.pth$', child)
+            m = re.search('^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer|amp)\\.(\\d+)\\.pth$', child)
             if m is None:
                 continue
             if int(m[1]) > num_samples:
                 num_samples = int(m[1])
-        value_snapshot_path = snapshots_path / f'value.{num_samples}.pth'
-        if not value_snapshot_path.exists():
-            raise RuntimeError(f'{value_snapshot_path}: Does not exist.')
-        if not value_snapshot_path.is_file():
-            raise RuntimeError(f'{value_snapshot_path}: Not a file.')
-        q_source1_snapshot_path = snapshots_path / f'q-source1.{num_samples}.pth'
-        if not q_source1_snapshot_path.exists():
-            raise RuntimeError(f'{q_source1_snapshot_path}: Does not exist.')
-        if not q_source1_snapshot_path.is_file():
-            raise RuntimeError(f'{q_source1_snapshot_path}: Not a file.')
-        q_source2_snapshot_path = snapshots_path / f'q-source2.{num_samples}.pth'
-        if not q_source2_snapshot_path.exists():
-            raise RuntimeError(f'{q_source2_snapshot_path}: Does not exist.')
-        if not q_source2_snapshot_path.is_file():
-            raise RuntimeError(f'{q_source2_snapshot_path}: Not a file.')
-        q_target1_snapshot_path = snapshots_path / f'q-target1.{num_samples}.pth'
-        if not q_target1_snapshot_path.exists():
-            raise RuntimeError(f'{q_target1_snapshot_path}: Does not exist.')
-        if not q_target1_snapshot_path.is_file():
-            raise RuntimeError(f'{q_target1_snapshot_path}: Not a file.')
-        q_target2_snapshot_path = snapshots_path / f'q-target2.{num_samples}.pth'
-        if not q_target2_snapshot_path.exists():
-            raise RuntimeError(f'{q_target2_snapshot_path}: Does not exist.')
-        if not q_target2_snapshot_path.is_file():
-            raise RuntimeError(f'{q_target2_snapshot_path}: Not a file.')
-        value_optimizer_snapshot_path = snapshots_path / f'value-optimizer.{num_samples}.pth'
-        if not value_optimizer_snapshot_path.exists():
-            raise RuntimeError(f'{value_optimizer_snapshot_path}: Does not exist.')
-        if not value_optimizer_snapshot_path.is_file():
-            raise RuntimeError(f'{value_optimizer_snapshot_path}: Not a file.')
-        q1_optimizer_snapshot_path = snapshots_path / f'q1-optimizer.{num_samples}.pth'
-        if not q1_optimizer_snapshot_path.exists():
-            raise RuntimeError(f'{q1_optimizer_snapshot_path}: Does not exist.')
-        if not q1_optimizer_snapshot_path.is_file():
-            raise RuntimeError(f'{q1_optimizer_snapshot_path}: Not a file.')
-        q2_optimizer_snapshot_path = snapshots_path / f'q2-optimizer.{num_samples}.pth'
-        if not q2_optimizer_snapshot_path.exists():
-            raise RuntimeError(f'{q2_optimizer_snapshot_path}: Does not exist.')
-        if not q2_optimizer_snapshot_path.is_file():
-            raise RuntimeError(f'{q2_optimizer_snapshot_path}: Not a file.')
+        qv1_source_snapshot_path = snapshots_path / f'qv1-source.{num_samples}.pth'
+        if not qv1_source_snapshot_path.exists():
+            raise RuntimeError(f'{qv1_source_snapshot_path}: Does not exist.')
+        if not qv1_source_snapshot_path.is_file():
+            raise RuntimeError(f'{qv1_source_snapshot_path}: Not a file.')
+        qv2_source_snapshot_path = snapshots_path / f'qv2-source.{num_samples}.pth'
+        if not qv2_source_snapshot_path.exists():
+            raise RuntimeError(f'{qv2_source_snapshot_path}: Does not exist.')
+        if not qv2_source_snapshot_path.is_file():
+            raise RuntimeError(f'{qv2_source_snapshot_path}: Not a file.')
+        qv1_target_snapshot_path = snapshots_path / f'qv1-target.{num_samples}.pth'
+        if not qv1_target_snapshot_path.exists():
+            raise RuntimeError(f'{qv1_target_snapshot_path}: Does not exist.')
+        if not qv1_target_snapshot_path.is_file():
+            raise RuntimeError(f'{qv1_target_snapshot_path}: Not a file.')
+        qv2_target_snapshot_path = snapshots_path / f'qv2-target.{num_samples}.pth'
+        if not qv2_target_snapshot_path.exists():
+            raise RuntimeError(f'{qv2_target_snapshot_path}: Does not exist.')
+        if not qv2_target_snapshot_path.is_file():
+            raise RuntimeError(f'{qv2_target_snapshot_path}: Not a file.')
+        qv1_optimizer_snapshot_path = snapshots_path / f'qv1-optimizer.{num_samples}.pth'
+        if not qv1_optimizer_snapshot_path.exists():
+            raise RuntimeError(f'{qv1_optimizer_snapshot_path}: Does not exist.')
+        if not qv1_optimizer_snapshot_path.is_file():
+            raise RuntimeError(f'{qv1_optimizer_snapshot_path}: Not a file.')
+        qv2_optimizer_snapshot_path = snapshots_path / f'qv2-optimizer.{num_samples}.pth'
+        if not qv2_optimizer_snapshot_path.exists():
+            raise RuntimeError(f'{qv2_optimizer_snapshot_path}: Does not exist.')
+        if not qv2_optimizer_snapshot_path.is_file():
+            raise RuntimeError(f'{qv2_optimizer_snapshot_path}: Not a file.')
         amp_snapshot_path = snapshots_path / f'amp.{num_samples}.pth'
         if not amp_snapshot_path.exists():
             raise RuntimeError(f'{amp_snapshot_path}: Does not exist.')
@@ -786,55 +717,48 @@ def main() -> None:
             logging.info('Initial model index: (latest one)')
     elif not resume:
         logging.info('Initial model: (initialized randomly)')
-    logging.info(f'Reward scale: {config.reward_scale}')
+    logging.info(f'Reward plugin: {config.reward_plugin}')
+    logging.info(f'Checkpointing: {config.checkpointing}')
     logging.info(f'Discount factor: {config.discount_factor}')
     logging.info(f'Expectile: {config.expectile}')
-    logging.info(f'Target update interval: {config.target_update_interval}')
-    logging.info(f'Target update rate: {config.target_update_rate}')
     logging.info(f'Batch size: {config.batch_size}')
+    logging.info(
+        f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
+    logging.info(
+        f'Virtual batch size: {config.batch_size * config.gradient_accumulation_steps}')
+    logging.info(
+        f'Norm threshold for gradient clipping: {config.max_gradient_norm}')
     logging.info(f'Optimizer: {config.optimizer}')
     logging.info(f'Learning rate: {learning_rate}')
     if config.optimizer == 'sgd':
         logging.info(f'Momentum factor: {momentum}')
     if config.optimizer in ('adam', 'radam', 'lamb',):
         logging.info(f'Epsilon parameter: {epsilon}')
-    logging.info(f'Checkpointing: {config.checkpointing}')
-    logging.info(
-        f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
-    logging.info(
-        f'Virtual batch size: {config.batch_size * config.gradient_accumulation_steps}')
-    logging.info(
-        f'Norm threshold for gradient clipping on value: {config.v_max_gradient_norm}')
-    logging.info(
-        f'Norm threshold for gradient clipping on Q: {config.q_max_gradient_norm}')
+    logging.info(f'Target update interval: {config.target_update_interval}')
+    logging.info(f'Target update rate: {config.target_update_rate}')
     if initial_model_prefix is not None:
         assert(initial_encoder is None)
         assert(not resume)
-        logging.info(f'Initial value network snapshot: {value_snapshot_path}')
-        logging.info(f'Initial q source network 1 snapshot: {q_source1_snapshot_path}')
-        logging.info(f'Initial q source network 2 snapshot: {q_source2_snapshot_path}')
-        logging.info(f'Initial q target network 1 snapshot: {q_target1_snapshot_path}')
-        logging.info(f'Initial q target network 2 snapshot: {q_target2_snapshot_path}')
-        if value_optimizer_snapshot_path is not None:
-            logging.info(f'Initial value optimizer snapshot: {value_optimizer_snapshot_path}')
-        if q1_optimizer_snapshot_path is not None:
-            logging.info(f'Initial Q1 optimizer snapshot: {q1_optimizer_snapshot_path}')
-        if q2_optimizer_snapshot_path is not None:
-            logging.info(f'Initial Q2 optimizer snapshot: {q2_optimizer_snapshot_path}')
+        logging.info(f'Initial QV1 source network snapshot: {qv1_source_snapshot_path}')
+        logging.info(f'Initial QV2 source network snapshot: {qv2_source_snapshot_path}')
+        logging.info(f'Initial QV1 target network snapshot: {qv1_target_snapshot_path}')
+        logging.info(f'Initial QV2 target network snapshot: {qv2_target_snapshot_path}')
+        if qv1_optimizer_snapshot_path is not None:
+            logging.info(f'Initial QV1 optimizer snapshot: {qv1_optimizer_snapshot_path}')
+        if qv2_optimizer_snapshot_path is not None:
+            logging.info(f'Initial QV2 optimizer snapshot: {qv2_optimizer_snapshot_path}')
         if amp_snapshot_path is not None:
             logging.info(f'Initial AMP snapshot: {amp_snapshot_path}')
     if resume:
         assert(initial_encoder is None)
         assert(initial_model_prefix is None)
         logging.info(f'Resume from {experiment_path}')
-        logging.info(f'Value network snapshot: {value_snapshot_path}')
-        logging.info(f'Q source network 1 snapshot: {q_source1_snapshot_path}')
-        logging.info(f'Q source network 2 snapshot: {q_source2_snapshot_path}')
-        logging.info(f'Q target network 1 snapshot: {q_target1_snapshot_path}')
-        logging.info(f'Q target network 2 snapshot: {q_target2_snapshot_path}')
-        logging.info(f'Value network optimizer snapshot: {value_optimizer_snapshot_path}')
-        logging.info(f'Q source network 1 optimizer snapshot: {q1_optimizer_snapshot_path}')
-        logging.info(f'Q source network 2 optimizer snapshot: {q2_optimizer_snapshot_path}')
+        logging.info(f'QV1 source network snapshot: {qv1_source_snapshot_path}')
+        logging.info(f'QV2 source network snapshot: {qv2_source_snapshot_path}')
+        logging.info(f'QV1 target network snapshot: {qv1_target_snapshot_path}')
+        logging.info(f'QV2 target network snapshot: {qv2_target_snapshot_path}')
+        logging.info(f'QV1 source network optimizer snapshot: {qv1_optimizer_snapshot_path}')
+        logging.info(f'QV2 source network optimizer snapshot: {qv2_optimizer_snapshot_path}')
         logging.info(f'AMP snapshot: {amp_snapshot_path}')
         logging.info(f'# of training samples so far: {num_samples}')
     else:
@@ -859,17 +783,16 @@ def main() -> None:
         'dim_final_feedforward': config.dim_final_feedforward,
         'dropout': config.dropout,
         'activation_function': config.activation_function,
-        'reward_scale': config.reward_scale,
+        'reward_plugin': config.reward_plugin,
+        'checkpointing': config.checkpointing,
         'discount_factor': config.discount_factor,
         'expectile': config.expectile,
+        'batch_size': config.batch_size,
+        'gradient_accumulation_steps': config.gradient_accumulation_steps,
+        'max_gradient_norm': config.max_gradient_norm,
+        'optimizer': config.optimizer,
         'target_update_interval': config.target_update_interval,
         'target_update_rate': config.target_update_rate,
-        'batch_size': config.batch_size,
-        'optimizer': config.optimizer,
-        'checkpointing': config.checkpointing,
-        'gradient_accumulation_steps': config.gradient_accumulation_steps,
-        'v_max_gradient_norm': config.v_max_gradient_norm,
-        'q_max_gradient_norm': config.q_max_gradient_norm,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
         'snapshots_path': snapshots_path,
@@ -878,32 +801,27 @@ def main() -> None:
         'num_samples': num_samples,
     }
 
-    value_encoder = Encoder(**config)
-    value_decoder = ValueDecoder(**config)
-    value_model = ValueModel(value_encoder, value_decoder)
-    value_model.to(device=config['device'], dtype=torch.float32)
+    qv1_source_encoder = Encoder(**config)
+    qv1_source_decoder = QVDecoder(**config)
+    qv1_source_model = QVModel(qv1_source_encoder, qv1_source_decoder)
+    qv1_source_model.to(device=config['device'], dtype=torch.float32)
 
-    q_source1_encoder = Encoder(**config)
-    q_source1_decoder = QDecoder(**config)
-    q_source1_model = QModel(q_source1_encoder, q_source1_decoder)
-    q_source1_model.to(device=config['device'], dtype=torch.float32)
+    qv2_source_encoder = Encoder(**config)
+    qv2_source_decoder = QVDecoder(**config)
+    qv2_source_model = QVModel(qv2_source_encoder, qv2_source_decoder)
+    qv2_source_model.to(device=config['device'], dtype=torch.float32)
 
-    q_source2_encoder = Encoder(**config)
-    q_source2_decoder = QDecoder(**config)
-    q_source2_model = QModel(q_source2_encoder, q_source2_decoder)
-    q_source2_model.to(device=config['device'], dtype=torch.float32)
+    qv1_target_encoder = Encoder(**config)
+    qv1_target_decoder = QVDecoder(**config)
+    qv1_target_model = QVModel(qv1_target_encoder, qv1_target_decoder)
+    qv1_target_model.requires_grad_(False)
+    qv1_target_model.to(device=config['device'], dtype=torch.float32)
 
-    q_target1_encoder = Encoder(**config)
-    q_target1_decoder = QDecoder(**config)
-    q_target1_model = QModel(q_target1_encoder, q_target1_decoder)
-    q_target1_model.requires_grad_(False)
-    q_target1_model.to(device=config['device'], dtype=torch.float32)
-
-    q_target2_encoder = Encoder(**config)
-    q_target2_decoder = QDecoder(**config)
-    q_target2_model = QModel(q_target2_encoder, q_target2_decoder)
-    q_target2_model.requires_grad_(False)
-    q_target2_model.to(device=config['device'], dtype=torch.float32)
+    qv2_target_encoder = Encoder(**config)
+    qv2_target_decoder = QVDecoder(**config)
+    qv2_target_model = QVModel(qv2_target_encoder, qv2_target_decoder)
+    qv2_target_model.requires_grad_(False)
+    qv2_target_model.to(device=config['device'], dtype=torch.float32)
 
     if config['optimizer'] == 'sgd':
         construct = lambda model: FusedSGD(
@@ -919,26 +837,20 @@ def main() -> None:
             model.parameters(), lr=learning_rate, eps=epsilon)
     else:
         raise NotImplemented(config['optimizer'])
-    value_optimizer = construct(value_model)
-    q1_optimizer = construct(q_source1_model)
-    q2_optimizer = construct(q_source2_model)
+    qv1_optimizer = construct(qv1_source_model)
+    qv2_optimizer = construct(qv2_source_model)
 
     if config['is_main_process']:
-        value_model, value_optimizer = amp.initialize(
-            value_model, value_optimizer, opt_level=amp_optimization_level)
-        q_source1_model, q1_optimizer = amp.initialize(
-            q_source1_model, q1_optimizer, opt_level=amp_optimization_level)
-        q_source2_model, q2_optimizer = amp.initialize(
-            q_source2_model, q2_optimizer, opt_level=amp_optimization_level)
+        qv1_source_model, qv1_optimizer = amp.initialize(
+            qv1_source_model, qv1_optimizer, opt_level=amp_optimization_level)
+        qv2_source_model, qv2_optimizer = amp.initialize(
+            qv2_source_model, qv2_optimizer, opt_level=amp_optimization_level)
     else:
-        value_model, value_optimizer = amp.initialize(
-            value_model, value_optimizer, opt_level=amp_optimization_level,
+        qv1_source_model, qv1_optimizer = amp.initialize(
+            qv1_source_model, qv1_optimizer, opt_level=amp_optimization_level,
             verbosity=0)
-        q_source1_model, q1_optimizer = amp.initialize(
-            q_source1_model, q1_optimizer, opt_level=amp_optimization_level,
-            verbosity=0)
-        q_source2_model, q2_optimizer = amp.initialize(
-            q_source2_model, q2_optimizer, opt_level=amp_optimization_level,
+        qv2_source_model, qv2_optimizer = amp.initialize(
+            qv2_source_model, qv2_optimizer, opt_level=amp_optimization_level,
             verbosity=0)
 
     if initial_encoder is not None:
@@ -952,86 +864,58 @@ def main() -> None:
         for key, value in initial_encoder_state_dict.items():
             new_key = re.sub('^module\.', '', key)
             initial_encoder_new_state_dict[new_key] = value
-        value_encoder.load_state_dict(initial_encoder_new_state_dict)
-        value_encoder.cuda()
-        q_source1_encoder.load_state_dict(initial_encoder_new_state_dict)
-        q_source1_encoder.cuda()
-        q_source2_encoder.load_state_dict(initial_encoder_new_state_dict)
-        q_source2_encoder.cuda()
-        q_target1_encoder.load_state_dict(initial_encoder_new_state_dict)
-        q_target1_encoder.cuda()
-        q_target2_encoder.load_state_dict(initial_encoder_new_state_dict)
-        q_target2_encoder.cuda()
+        qv1_source_encoder.load_state_dict(initial_encoder_new_state_dict)
+        qv1_source_encoder.cuda()
+        qv2_source_encoder.load_state_dict(initial_encoder_new_state_dict)
+        qv2_source_encoder.cuda()
+        qv1_target_encoder.load_state_dict(initial_encoder_new_state_dict)
+        qv1_target_encoder.cuda()
+        qv2_target_encoder.load_state_dict(initial_encoder_new_state_dict)
+        qv2_target_encoder.cuda()
 
     if initial_model_prefix is not None:
         assert(initial_encoder is None)
         assert(not resume)
         assert(initial_model_prefix.exists())
         assert(initial_model_prefix.is_dir())
-        value_model_state_dict = torch.load(
-            value_snapshot_path, map_location='cpu')
-        value_model_new_state_dict = {}
-        for key, value in value_model_state_dict.items():
+        qv1_source_state_dict = torch.load(
+            qv1_source_snapshot_path, map_location='cpu')
+        qv1_source_new_state_dict = {}
+        for key, value in qv1_source_state_dict.items():
             new_key = re.sub('^module\.', '', key)
-            value_model_new_state_dict[new_key] = value
-        value_model.load_state_dict(value_model_new_state_dict)
-        value_model.cuda()
-        q_source1_state_dict = torch.load(
-            q_source1_snapshot_path, map_location='cpu')
-        q_source1_new_state_dict = {}
-        for key, value in q_source1_state_dict.items():
+            qv1_source_new_state_dict[new_key] = value
+        qv1_source_model.load_state_dict(qv1_source_new_state_dict)
+        qv1_source_model.cuda()
+        qv2_source_state_dict = torch.load(
+            qv2_source_snapshot_path, map_location='cpu')
+        qv2_source_new_state_dict = {}
+        for key, value in qv2_source_state_dict.items():
             new_key = re.sub('^module\.', '', key)
-            q_source1_new_state_dict[new_key] = value
-        q_source1_model.load_state_dict(q_source1_new_state_dict)
-        q_source1_model.cuda()
-        q_source2_state_dict = torch.load(
-            q_source2_snapshot_path, map_location='cpu')
-        q_source2_new_state_dict = {}
-        for key, value in q_source2_state_dict.items():
+            qv2_source_new_state_dict[new_key] = value
+        qv2_source_model.load_state_dict(qv2_source_new_state_dict)
+        qv2_source_model.cuda()
+        qv1_target_state_dict = torch.load(
+            qv1_target_snapshot_path, map_location='cpu')
+        qv1_target_new_state_dict = {}
+        for key, value in qv1_target_state_dict.items():
             new_key = re.sub('^module\.', '', key)
-            q_source2_new_state_dict[new_key] = value
-        q_source2_model.load_state_dict(q_source2_new_state_dict)
-        q_source2_model.cuda()
-        q_target1_state_dict = torch.load(
-            q_target1_snapshot_path, map_location='cpu')
-        q_target1_new_state_dict = {}
-        for key, value in q_target1_state_dict.items():
+            qv1_target_new_state_dict[new_key] = value
+        qv1_target_model.load_state_dict(qv1_target_new_state_dict)
+        qv1_target_model.cuda()
+        qv2_target_state_dict = torch.load(
+            qv2_target_snapshot_path, map_location='cpu')
+        qv2_target_new_state_dict = {}
+        for key, value in qv2_target_state_dict.items():
             new_key = re.sub('^module\.', '', key)
-            q_target1_new_state_dict[new_key] = value
-        q_target1_model.load_state_dict(q_target1_new_state_dict)
-        q_target1_model.cuda()
-        q_target2_state_dict = torch.load(
-            q_target2_snapshot_path, map_location='cpu')
-        q_target2_new_state_dict = {}
-        for key, value in q_target2_state_dict.items():
-            new_key = re.sub('^module\.', '', key)
-            q_target2_new_state_dict[new_key] = value
-        q_target2_model.load_state_dict(q_target2_new_state_dict)
-        q_target2_model.cuda()
-        if value_optimizer_snapshot_path is not None:
-            value_optimizer_state_dict = torch.load(
-                value_optimizer_snapshot_path, map_location='cpu')
-            value_optimizer_new_state_dict = {}
-            for key, value in value_optimizer_state_dict.items():
-                new_key = re.sub('^module\.', '', key)
-                value_optimizer_new_state_dict[new_key] = value
-            value_optimizer.load_state_dict(value_optimizer_new_state_dict)
-        if q1_optimizer_snapshot_path is not None:
-            q1_optimizer_state_dict = torch.load(
-                q1_optimizer_snapshot_path, map_location='cpu')
-            q1_optimizer_new_state_dict = {}
-            for key, value in q1_optimizer_state_dict.items():
-                new_key = re.sub('^module\.', '', key)
-                q1_optimizer_new_state_dict[new_key] = value
-            q1_optimizer.load_state_dict(q1_optimizer_new_state_dict)
-        if q2_optimizer_snapshot_path is not None:
-            q2_optimizer_state_dict = torch.load(
-                q2_optimizer_snapshot_path, map_location='cpu')
-            q2_optimizer_new_state_dict = {}
-            for key, value in q2_optimizer_state_dict.items():
-                new_key = re.sub('^module\.', '', key)
-                q2_optimizer_new_state_dict[new_key] = value
-            q2_optimizer.load_state_dict(q2_optimizer_new_state_dict)
+            qv2_target_new_state_dict[new_key] = value
+        qv2_target_model.load_state_dict(qv2_target_new_state_dict)
+        qv2_target_model.cuda()
+        if qv1_optimizer_snapshot_path is not None:
+            qv1_optimizer.load_state_dict(
+                torch.load(qv1_optimizer_snapshot_path, map_location='cpu'))
+        if qv2_optimizer_snapshot_path is not None:
+            qv2_optimizer.load_state_dict(
+                torch.load(qv2_optimizer_snapshot_path, map_location='cpu'))
         if amp_snapshot_path is not None:
             amp.load_state_dict(
                 torch.load(amp_snapshot_path, map_location='cpu'))
@@ -1050,85 +934,67 @@ def main() -> None:
         assert(q_target1_snapshot_path.is_file())
         assert(q_target2_snapshot_path.exists())
         assert(q_target2_snapshot_path.is_file())
-        value_model_state_dict = torch.load(
-            value_snapshot_path, map_location='cpu')
-        value_model_new_state_dict = {}
-        for key, value in value_model_state_dict.items():
-            new_key = re.sub('^module\.', '', key)
-            value_model_new_state_dict[new_key] = value
-        value_model.load_state_dict(value_model_new_state_dict)
-        value_model.cuda()
-        q_source1_state_dict = torch.load(
-            q_source1_snapshot_path, map_location='cpu')
-        q_source1_new_state_dict = {}
-        for key, value in q_source1_state_dict.items():
-            new_key = re.sub('^module\.', '', key)
-            q_source1_new_state_dict[new_key] = value
-        q_source1_model.load_state_dict(q_source1_new_state_dict)
-        q_source1_model.cuda()
-        q_source2_state_dict = torch.load(
-            q_source2_snapshot_path, map_location='cpu')
-        q_source2_new_state_dict = {}
-        for key, value in q_source2_state_dict.items():
-            new_key = re.sub('^module\.', '', key)
-            q_source2_new_state_dict[new_key] = value
-        q_source2_model.load_state_dict(q_source2_new_state_dict)
-        q_source2_model.cuda()
-        q_target1_state_dict = torch.load(
-            q_target1_snapshot_path, map_location='cpu')
-        q_target1_new_state_dict = {}
-        for key, value in q_target1_state_dict.items():
-            new_key = re.sub('^module\.', '', key)
-            q_target1_new_state_dict[new_key] = value
-        q_target1_model.load_state_dict(q_target1_new_state_dict)
-        q_target1_model.cuda()
-        q_target2_state_dict = torch.load(
-            q_target2_snapshot_path, map_location='cpu')
-        q_target2_new_state_dict = {}
-        for key, value in q_target2_state_dict.items():
-            new_key = re.sub('^module\.', '', key)
-            q_target2_new_state_dict[new_key] = value
-        q_target2_model.load_state_dict(q_target2_new_state_dict)
-        q_target2_model.cuda()
-
-    if resume:
-        assert(value_optimizer_snapshot_path.exists())
-        assert(value_optimizer_snapshot_path.is_file())
         assert(q1_optimizer_snapshot_path.exists())
         assert(q1_optimizer_snapshot_path.is_file())
         assert(q2_optimizer_snapshot_path.exists())
         assert(q2_optimizer_snapshot_path.is_file())
         assert(amp_snapshot_path.exists())
         assert(amp_snapshot_path.is_file())
-        value_optimizer.load_state_dict(
-            torch.load(value_optimizer_snapshot_path, map_location='cpu'))
-        q1_optimizer.load_state_dict(
-            torch.load(q1_optimizer_snapshot_path, map_location='cpu'))
-        q2_optimizer.load_state_dict(
-            torch.load(q2_optimizer_snapshot_path, map_location='cpu'))
+        qv1_source_state_dict = torch.load(
+            qv1_source_snapshot_path, map_location='cpu')
+        qv1_source_new_state_dict = {}
+        for key, value in qv1_source_state_dict.items():
+            new_key = re.sub('^module\.', '', key)
+            qv1_source_new_state_dict[new_key] = value
+        qv1_source_model.load_state_dict(qv1_source_new_state_dict)
+        qv1_source_model.cuda()
+        qv2_source_state_dict = torch.load(
+            qv2_source_snapshot_path, map_location='cpu')
+        qv2_source_new_state_dict = {}
+        for key, value in qv2_source_state_dict.items():
+            new_key = re.sub('^module\.', '', key)
+            qv2_source_new_state_dict[new_key] = value
+        qv2_source_model.load_state_dict(qv2_source_new_state_dict)
+        qv2_source_model.cuda()
+        qv1_target_state_dict = torch.load(
+            qv1_target_snapshot_path, map_location='cpu')
+        qv1_target_new_state_dict = {}
+        for key, value in qv1_target_state_dict.items():
+            new_key = re.sub('^module\.', '', key)
+            qv1_target_new_state_dict[new_key] = value
+        qv1_target_model.load_state_dict(qv1_target_new_state_dict)
+        qv1_target_model.cuda()
+        qv2_target_state_dict = torch.load(
+            qv2_target_snapshot_path, map_location='cpu')
+        qv2_target_new_state_dict = {}
+        for key, value in qv2_target_state_dict.items():
+            new_key = re.sub('^module\.', '', key)
+            qv2_target_new_state_dict[new_key] = value
+        qv2_target_model.load_state_dict(qv2_target_new_state_dict)
+        qv2_target_model.cuda()
+        qv1_optimizer.load_state_dict(
+            torch.load(qv1_optimizer_snapshot_path, map_location='cpu'))
+        qv2_optimizer.load_state_dict(
+            torch.load(qv2_optimizer_snapshot_path, map_location='cpu'))
         amp.load_state_dict(torch.load(amp_snapshot_path, map_location='cpu'))
 
     if config['is_multiprocess']:
         init_process_group(backend='nccl')
-        value_model = DistributedDataParallel(value_model)
-        value_model = convert_syncbn_model(value_model)
-        q_source1_model = DistributedDataParallel(q_source1_model)
-        q_source1_model = convert_syncbn_model(q_source1_model)
-        q_source2_model = DistributedDataParallel(q_source2_model)
-        q_source2_model = convert_syncbn_model(q_source2_model)
-        q_target1_model = DistributedDataParallel(q_target1_model)
-        q_target1_model = convert_syncbn_model(q_target1_model)
-        q_target2_model = DistributedDataParallel(q_target2_model)
-        q_target2_model = convert_syncbn_model(q_target2_model)
+        qv1_source_model = DistributedDataParallel(qv1_source_model)
+        qv1_source_model = convert_syncbn_model(qv1_source_model)
+        qv2_source_model = DistributedDataParallel(qv2_source_model)
+        qv2_source_model = convert_syncbn_model(qv2_source_model)
+        qv1_target_model = DistributedDataParallel(qv1_target_model)
+        qv1_target_model = convert_syncbn_model(qv1_target_model)
+        qv2_target_model = DistributedDataParallel(qv2_target_model)
+        qv2_target_model = convert_syncbn_model(qv2_target_model)
 
-    config['value_model'] = value_model
-    config['q_source1_model'] = q_source1_model
-    config['q_source2_model'] = q_source2_model
-    config['q_target1_model'] = q_target1_model
-    config['q_target2_model'] = q_target2_model
-    config['value_optimizer'] = value_optimizer
-    config['q1_optimizer'] = q1_optimizer
-    config['q2_optimizer'] = q2_optimizer
+    config['qv1_source_model'] = qv1_source_model
+    config['qv2_source_model'] = qv2_source_model
+    config['qv1_target_model'] = qv1_target_model
+    config['qv2_target_model'] = qv2_target_model
+    config['qv1_optimizer'] = qv1_optimizer
+    config['qv2_optimizer'] = qv2_optimizer
 
     with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
         _training(**config, writer=writer)

@@ -10,10 +10,11 @@ from kanachan.training.constants import (
     NUM_NUMERIC_FEATURES, NUM_TYPES_OF_PROGRESSION_FEATURES,
     MAX_LENGTH_OF_PROGRESSION_FEATURES, NUM_TYPES_OF_ACTIONS,
     MAX_NUM_ACTION_CANDIDATES)
+from kanachan.training.iql.reward_function import RewardFunction
 
 
 class IteratorAdaptor(object):
-    def __init__(self, path: Path, reward_scale: float) -> None:
+    def __init__(self, path: Path, get_reward: RewardFunction) -> None:
         if path.suffix == '.gz':
             self.__fp = gzip.open(path, mode='rt', encoding='UTF-8')
         elif path.suffix == '.bz2':
@@ -21,7 +22,7 @@ class IteratorAdaptor(object):
         else:
             self.__fp = open(path, encoding='UTF-8')
 
-        self.__reward_scale = reward_scale
+        self.__get_reward = get_reward
 
         if get_worker_info() is not None:
             try:
@@ -132,7 +133,10 @@ class IteratorAdaptor(object):
             next_candidates = torch.tensor(
                 next_candidates, device='cpu', dtype=torch.int32)
 
-            reward = torch.tensor(0.0, device='cpu', dtype=torch.float32)
+            reward = self.__get_reward(
+                sparse, numeric, progression, candidates, index,
+                delta_round_score, None, None)
+            reward = torch.tensor(reward, device='cpu', dtype=torch.float32)
 
             return (
                 sparse, numeric, progression, candidates, index,
@@ -140,20 +144,6 @@ class IteratorAdaptor(object):
                 reward)
         elif len(columns) == 8:
             delta_round_score, game_rank, game_score = [int(column) for column in columns[5:]]
-
-            if game_rank == 0:
-                reward = 125
-            elif game_rank == 1:
-                reward = 60
-            elif game_rank == 2:
-                reward = -5
-            elif game_rank == 3:
-                reward = -255
-            else:
-                raise RuntimeError(f'{uuid}:{game_rank}: An invalid game rank.')
-            reward += (game_score - 25000) // 1000
-            reward *= self.__reward_scale
-            reward = torch.tensor(reward, device='cpu', dtype=torch.float32)
 
             dummy_sparse = [NUM_TYPES_OF_SPARSE_FEATURES] * MAX_NUM_ACTIVE_SPARSE_FEATURES
             dummy_sparse = torch.tensor(dummy_sparse, device='cpu', dtype=torch.int32)
@@ -172,6 +162,11 @@ class IteratorAdaptor(object):
                 dummy_candidates.append(NUM_TYPES_OF_ACTIONS + 1)
             dummy_candidates = torch.tensor(
                 dummy_candidates, device='cpu', dtype=torch.int32)
+
+            reward = self.__get_reward(
+                sparse, numeric, progression, candidates, index,
+                delta_round_score, game_rank, game_score)
+            reward = torch.tensor(reward, device='cpu', dtype=torch.float32)
 
             return (
                 sparse, numeric, progression, candidates, index, dummy_sparse,
