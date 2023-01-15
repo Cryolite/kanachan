@@ -85,33 +85,32 @@ def _training(
 
         # Compute the Q target value.
         with torch.no_grad():
-            def get_q_target_and_its_max(
+            def get_q_target(
                     qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
                 q_target, _ = qv_target_model(annotation[:4])
                 assert(q_target.dim() == 2)
                 assert(q_target.size(0) == local_batch_size)
                 assert(q_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
+                q_target = q_target[
+                    torch.arange(local_batch_size), annotation[4]]
+                assert(q_target.dim() == 1)
+                assert(q_target.size(0) == local_batch_size)
 
-                q_max, _ = torch.max(q_target, dim=1)
-                assert(q_max.dim() == 1)
-                assert(q_max.size(0) == local_batch_size)
-                q_max_gathered = [
-                    torch.zeros_like(q_max) for i in range(world_size)]
-                all_gather(q_max_gathered, q_max)
-                q_max_gathered = torch.cat(q_max_gathered)
-                assert(q_max_gathered.dim() == 1)
-                assert(q_max_gathered.size(0) == batch_size)
-                q_max = torch.mean(q_max_gathered)
+                q_target_gathered = [
+                    torch.zeros_like(q_target) for i in range(world_size)]
+                all_gather(q_target_gathered, q_target)
+                q_target_gathered = torch.cat(q_target_gathered)
+                assert(q_target_gathered.dim() == 1)
+                assert(q_target_gathered.size(0) == batch_size)
+                q_batch_mean = torch.mean(q_target_gathered)
 
-                return (q_target, q_max.item())
+                return (q_target, q_batch_mean.item())
 
-            q1_target, q1_max = get_q_target_and_its_max(qv1_target_model)
-            q2_target, q2_max = get_q_target_and_its_max(qv2_target_model)
+            q1_target, q1_batch_mean = get_q_target(qv1_target_model)
+            q2_target, q2_batch_mean = get_q_target(qv2_target_model)
 
             q_target = torch.minimum(q1_target, q2_target)
             q_target = q_target.detach()
-            assert(q_target.dim() == 1)
-            assert(q_target.size(0) == local_batch_size)
 
         reward = annotation[9]
 
@@ -203,7 +202,7 @@ f' QV1 gradient norm = {qv1_gradient_norm},'
 f' QV2 gradient norm = {qv2_gradient_norm}')
             if is_main_process:
                 writer.add_scalars(
-                    'Q Max', { 'Q1 Max': q1_max, 'Q2 Max': q2_max },
+                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
                     num_samples)
                 writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
@@ -219,7 +218,7 @@ f' QV1 loss = {qv1_batch_loss},'
 f' QV2 loss = {qv2_batch_loss}')
             if is_main_process:
                 writer.add_scalars(
-                    'Q Max', { 'Q1 Max': q1_max, 'Q2 Max': q2_max },
+                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
                     num_samples)
                 writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
