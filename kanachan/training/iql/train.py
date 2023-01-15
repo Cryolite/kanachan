@@ -92,7 +92,7 @@ def _training(
                 assert(q_target.size(0) == local_batch_size)
                 assert(q_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
 
-                q_max = torch.max(q_target, dim=1)
+                q_max, _ = torch.max(q_target, dim=1)
                 assert(q_max.dim() == 1)
                 assert(q_max.size(0) == local_batch_size)
                 q_max_gathered = [
