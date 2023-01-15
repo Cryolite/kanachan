@@ -1,7 +1,7 @@
 *"It's time to get me in."* - Kana Ikeda
 
 # kanachan
-A Mahjong AI that supports a variant of rules of 4-player Japanese Riichi Mahjong that is adopted in standard games in Mahjong Soul (雀魂).
+A Mahjong AI that supports a variant of rules of 4-player Japanese Riichi Mahjong that is adopted in standard games in Mahjong Soul (雀魂, Jantama, [CN](https://www.maj-soul.com/), [JP](https://mahjongsoul.com/), [EN](https://mahjongsoul.yo-star.com/)).
 
 ## Brief Guide
 
@@ -25,7 +25,7 @@ Currently, Japanese chess (Shogi, 将棋) AI has been already considered to be f
 
 ### Extremely Large Data Set from Mahjong Soul
 
-This project supposes to use game record (牌譜) data set crawled from [Mahjong Soul (Jantama, 雀魂)](https://mahjongsoul.com/). This would become an extremely large data set, which differs in order of magnitude in both quantity and generation speed from the existing representative, i.e., the one from the Phoenix Table (houou-taku, 鳳凰卓) of [Tenhou (天鳳)](https://tenhou.net/).
+This project supposes to use game record (牌譜) data set crawled from Mahjong Soul. This would become an extremely large data set, which differs in order of magnitude in both quantity and generation speed from the existing representative, i.e., the one from the Phoenix Table (houou-taku, 鳳凰卓) of [Tenhou (天鳳)](https://tenhou.net/).
 
 Let me show you concrete numbers. Game records consisting of 17 million rounds, which were generated in 11 years from 2009 to 2019, can be obtained from the Phoenix Table of Tenhou. On the other hand, I have been crawling game records from Mahjong Soul since July 2020, and the amount of game records for 4-player Mahjong played in the Gold Room (kin-no-ma, 金の間) or the higher rooms has reached about 65 million rounds as of the end of August 2021. This number will surely surpass 100 million rounds by the end of 2021.
 
