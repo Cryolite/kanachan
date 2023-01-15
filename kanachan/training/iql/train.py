@@ -8,13 +8,13 @@ import os
 from argparse import ArgumentParser
 import logging
 import sys
-from typing import (Optional, Type,)
+from typing import (Tuple, Optional, Type,)
 import torch
 from torch import backends
 from torch import nn
 from torch.optim import (Optimizer, RAdam,)
 from torch.utils.data import DataLoader
-from torch.distributed import (init_process_group, all_gather,)
+from torch.distributed import (init_process_group, all_reduce, all_gather)
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
 from apex.parallel import (DistributedDataParallel, convert_syncbn_model,)
@@ -31,10 +31,10 @@ from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 def _training(
         *, is_multiprocess: bool, world_size: Optional[int],
         rank: Optional[int], is_main_process: bool, training_data: Path,
-        num_workers: int, device: str, qv1_source_model: nn.Module,
-        qv2_source_model: nn.Module, qv1_target_model: nn.Module,
-        qv2_target_model: nn.Module, reward_plugin: Path,
-        discount_factor: float, expectile: float, target_update_interval: int,
+        num_workers: int, device: str, qv1_source_model: QVModel,
+        qv2_source_model: QVModel, qv1_target_model: QVModel,
+        qv2_target_model: QVModel, reward_plugin: Path, discount_factor: float,
+        expectile: float, target_update_interval: int,
         target_update_rate: float, batch_size: int,
         gradient_accumulation_steps: int, max_gradient_norm: float,
         qv1_optimizer: Optimizer, qv2_optimizer: Optimizer,
@@ -85,28 +85,29 @@ def _training(
 
         # Compute the Q target value.
         with torch.no_grad():
-            q1_target, _ = qv1_target_model(annotation[:4])
-            assert(q1_target.dim() == 2)
-            assert(q1_target.size(0) == local_batch_size)
-            assert(q1_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
-            q1_target = q1_target[torch.arange(local_batch_size), annotation[4]]
-            q1_mean = [torch.zeros_like(q1_target) for _ in range(world_size)]
-            all_gather(q1_mean, q1_target)
-            q1_mean = torch.cat(q1_mean)
-            assert(q1_mean.dim() == 1)
-            assert(q1_mean.size(0) == batch_size)
-            q1_mean = torch.mean(q1_mean).item()
-            q2_target, _ = qv2_target_model(annotation[:4])
-            assert(q2_target.dim() == 2)
-            assert(q2_target.size(0) == local_batch_size)
-            assert(q2_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
-            q2_target = q2_target[torch.arange(local_batch_size), annotation[4]]
-            q2_mean = [torch.zeros_like(q2_target) for _ in range(world_size)]
-            all_gather(q2_mean, q2_target)
-            q2_mean = torch.cat(q2_mean)
-            assert(q2_mean.dim() == 1)
-            assert(q2_mean.size(0) == batch_size)
-            q2_mean = torch.mean(q2_mean).item()
+            def get_q_target_and_its_max(
+                    qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
+                q_target, _ = qv_target_model(annotation[:4])
+                assert(q_target.dim() == 2)
+                assert(q_target.size(0) == local_batch_size)
+                assert(q_target.size(1) == MAX_NUM_ACTION_CANDIDATES)
+
+                q_max = torch.max(q_target, dim=1)
+                assert(q_max.dim() == 1)
+                assert(q_max.size(0) == local_batch_size)
+                q_max_gathered = [
+                    torch.zeros_like(q_max) for i in range(world_size)]
+                all_gather(q_max_gathered, q_max)
+                q_max_gathered = torch.cat(q_max_gathered)
+                assert(q_max_gathered.dim() == 1)
+                assert(q_max_gathered.size(0) == batch_size)
+                q_max = torch.mean(q_max_gathered)
+
+                return (q_target, q_max.item())
+
+            q1_target, q1_max = get_q_target_and_its_max(qv1_target_model)
+            q2_target, q2_max = get_q_target_and_its_max(qv2_target_model)
+
             q_target = torch.minimum(q1_target, q2_target)
             q_target = q_target.detach()
             assert(q_target.dim() == 1)
@@ -114,65 +115,46 @@ def _training(
 
         reward = annotation[9]
 
+        def backward_and_get_batch_loss(
+                qv_source_model: QVModel, qv_optimizer: Optimizer) -> float:
+            q, v = qv_source_model(annotation[:4])
+            assert(q.dim() == 2)
+            assert(q.size(0) == local_batch_size)
+            assert(q.size(1) == MAX_NUM_ACTION_CANDIDATES)
+            assert(v.dim() == 1)
+            assert(v.size(0) == local_batch_size)
+            q = q[torch.arange(local_batch_size), annotation[4]]
+            _, vv = qv_source_model(annotation[5:9])
+            assert(vv.dim() == 1)
+            assert(vv.size(0) == local_batch_size)
+            q_loss = (reward + discount_factor * vv - q) ** 2.0
+            v_loss = q_target - v
+            v_loss = torch.where(
+                v_loss < 0.0, (1.0 - expectile) * (v_loss ** 2.0),
+                expectile * (v_loss ** 2.0))
+            qv_loss = q_loss + v_loss
+
+            qv_batch_loss = qv_loss.detach().clone()
+            all_reduce(qv_batch_loss)
+            qv_batch_loss /= world_size
+            qv_batch_loss = torch.mean(qv_batch_loss).item()
+
+            qv_loss = torch.mean(qv_loss)
+            if math.isnan(qv_loss.item()):
+                raise RuntimeError('QV loss becomes NaN.')
+            qv_loss /= gradient_accumulation_steps
+            with amp.scale_loss(qv_loss, qv_optimizer) as scaled_qv_loss:
+                scaled_qv_loss.backward()
+
+            return qv_batch_loss
+
         # Backprop for the QV1 source model.
-        q1, v1 = qv1_source_model(annotation[:4])
-        assert(q1.dim() == 2)
-        assert(q1.size(0) == local_batch_size)
-        assert(q1.size(1) == MAX_NUM_ACTION_CANDIDATES)
-        assert(v1.dim() == 1)
-        assert(v1.size(0) == local_batch_size)
-        q1 = q1[torch.arange(local_batch_size), annotation[4]]
-        _, vv1 = qv1_source_model(annotation[5:9])
-        assert(vv1.dim() == 1)
-        assert(vv1.size(0) == local_batch_size)
-        q1_loss = (reward + discount_factor * vv1 - q1) ** 2.0
-        v1_loss = q_target - v1
-        v1_loss = torch.where(
-            v1_loss < 0.0, (1.0 - expectile) * (v1_loss ** 2.0),
-            expectile * (v1_loss ** 2.0))
-        qv1_loss = q1_loss + v1_loss
-        qv1_batch_loss = [torch.zeros_like(q1_loss) for _ in range(world_size)]
-        all_gather(qv1_batch_loss, qv1_loss)
-        qv1_batch_loss = torch.cat(qv1_batch_loss)
-        assert(qv1_batch_loss.dim() == 1)
-        assert(qv1_batch_loss.size(0) == batch_size)
-        qv1_batch_loss = torch.mean(qv1_batch_loss).item()
-        qv1_loss = torch.mean(qv1_loss)
-        if math.isnan(qv1_loss.item()):
-            raise RuntimeError('QV1 loss becomes NaN.')
-        qv1_loss /= gradient_accumulation_steps
-        with amp.scale_loss(qv1_loss, qv1_optimizer) as scaled_qv1_loss:
-            scaled_qv1_loss.backward()
+        qv1_batch_loss = backward_and_get_batch_loss(
+            qv1_source_model, qv1_optimizer)
 
         # Backprop for the QV2 source model.
-        q2, v2 = qv2_source_model(annotation[:4])
-        assert(q2.dim() == 2)
-        assert(q2.size(0) == local_batch_size)
-        assert(q2.size(1) == MAX_NUM_ACTION_CANDIDATES)
-        assert(v2.dim() == 1)
-        assert(v2.size(0) == local_batch_size)
-        q2 = q2[torch.arange(local_batch_size), annotation[4]]
-        _, vv2 = qv2_source_model(annotation[5:9])
-        assert(vv2.dim() == 1)
-        assert(vv2.size(0) == local_batch_size)
-        q2_loss = (reward + discount_factor * vv2 - q2) ** 2.0
-        v2_loss = q_target - v2
-        v2_loss = torch.where(
-            v2_loss < 0.0, (1.0 - expectile) * (v2_loss ** 2.0),
-            expectile * (v2_loss ** 2.0))
-        qv2_loss = q2_loss + v2_loss
-        qv2_batch_loss = [torch.zeros_like(qv2_loss) for _ in range(world_size)]
-        all_gather(qv2_batch_loss, qv2_loss)
-        qv2_batch_loss = torch.cat(qv2_batch_loss)
-        assert(qv2_batch_loss.dim() == 1)
-        assert(qv2_batch_loss.size(0) == batch_size)
-        qv2_batch_loss = torch.mean(qv2_batch_loss).item()
-        qv2_loss = torch.mean(qv2_loss)
-        if math.isnan(qv2_loss.item()):
-            raise RuntimeError('QV2 loss becomes NaN.')
-        qv2_loss /= gradient_accumulation_steps
-        with amp.scale_loss(qv2_loss, qv2_optimizer) as scaled_qv2_loss:
-            scaled_qv2_loss.backward()
+        qv2_batch_loss = backward_and_get_batch_loss(
+            qv2_source_model, qv2_optimizer)
 
         num_samples += batch_size
         batch_count += 1
@@ -221,7 +203,8 @@ f' QV1 gradient norm = {qv1_gradient_norm},'
 f' QV2 gradient norm = {qv2_gradient_norm}')
             if is_main_process:
                 writer.add_scalars(
-                    'Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
+                    'Q Max', { 'Q1 Max': q1_max, 'Q2 Max': q2_max },
+                    num_samples)
                 writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
                     num_samples)
@@ -236,7 +219,8 @@ f' QV1 loss = {qv1_batch_loss},'
 f' QV2 loss = {qv2_batch_loss}')
             if is_main_process:
                 writer.add_scalars(
-                    'Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
+                    'Q Max', { 'Q1 Max': q1_max, 'Q2 Max': q2_max },
+                    num_samples)
                 writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
                     num_samples)
