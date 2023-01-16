@@ -9,7 +9,8 @@ from argparse import ArgumentParser
 import logging
 import json
 import sys
-from typing import (Optional, Type,)
+from typing import (Optional, Type, Callable)
+import yaml
 import torch
 from torch import backends
 from torch import nn
@@ -78,6 +79,10 @@ def _validate(
     return validation_loss
 
 
+SnapshotWriter = Callable[
+    [nn.Module, nn.Module, Optimizer, int, int, Optional[int]], None]
+
+
 def _training_epoch(
         config: object, *, is_multiprocess: bool, world_size: Optional[int],
         rank: Optional[int], is_main_process: bool, training_data: Path,
@@ -85,9 +90,10 @@ def _training_epoch(
         decoder: nn.Module, model: nn.Module, training_batch_size: int,
         gradient_accumulation_steps: int, max_gradient_norm: float,
         optimizer: Optimizer, iterator_adaptor_type: Type[IteratorAdaptorBase],
-        loss_function, snapshots_path: Path, num_epoch_digits: int, epoch: int,
+        loss_function, num_epoch_digits: int, epoch: int,
         snapshot_interval: int, num_samples: int, num_samples_to_skip: int,
-        writer: SummaryWriter, **kwargs) -> int:
+        summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter,
+        **kwargs) -> int:
     start_time = datetime.datetime.now()
 
     # Prepare the training data loader. Note that this data loader must iterate
@@ -100,16 +106,18 @@ def _training_epoch(
 
     last_snapshot = None
     if snapshot_interval > 0:
-        last_snapshot = num_samples
+        last_snapshot = num_samples_to_skip
 
-    skipped_samples = 0
-
+    num_skipped_samples = 0
+    num_samples_in_epoch = 0
     batch_count = 0
+
     for annotation in data_loader:
         batch_size = len(annotation[0])
 
-        if skipped_samples < num_samples_to_skip:
-            skipped_samples += batch_size
+        if num_skipped_samples < num_samples_to_skip:
+            num_skipped_samples += batch_size
+            num_samples_in_epoch += batch_size
             continue
 
         if device != 'cpu':
@@ -141,6 +149,7 @@ def _training_epoch(
             scaled_loss.backward()
 
         num_samples += batch_size
+        num_samples_in_epoch += batch_size
 
         if (batch_count + 1) % gradient_accumulation_steps == 0:
             gradient = [torch.flatten(x.grad) for x in amp.master_params(optimizer) if x.grad is not None]
@@ -155,32 +164,22 @@ def _training_epoch(
             logging.info(
                 f'sample = {num_samples}, training loss = {batch_loss}, gradient norm = {gradient_norm}')
             if is_main_process:
-                writer.add_scalar('Training loss', batch_loss, num_samples)
-                writer.add_scalar('Gradient norm', gradient_norm, num_samples)
+                summary_writer.add_scalar(
+                    'Training loss', batch_loss, num_samples)
+                summary_writer.add_scalar(
+                    'Gradient norm', gradient_norm, num_samples)
         else:
             logging.info(
                 f'sample = {num_samples}, training loss = {batch_loss}')
             if is_main_process:
-                writer.add_scalar('Training loss', batch_loss, num_samples)
+                summary_writer.add_scalar(
+                    'Training loss', batch_loss, num_samples)
 
-        if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
-            snapshots_path.mkdir(parents=False, exist_ok=True)
-            epoch_str = str(epoch).zfill(num_epoch_digits)
-            infix = f'.{epoch_str}.{num_samples}'
-            torch.save(
-                encoder.state_dict(), snapshots_path / f'encoder{infix}.pth')
-            torch.save(
-                decoder.state_dict(), snapshots_path / f'decoder{infix}.pth')
-            optimizer_state = {
-                'optimizer': optimizer.state_dict(),
-                'amp': amp.state_dict(),
-            }
-            torch.save(
-                optimizer_state, snapshots_path / f'optimizer{infix}.pth')
-            with open(snapshots_path / f'progress{infix}.json', 'w') as f:
-                progress_data = {'num_samples': num_samples}
-                json.dump(progress_data, f, separators=(',', ':'))
-            last_snapshot = num_samples
+        if is_main_process and last_snapshot is not None and num_samples_in_epoch - last_snapshot >= snapshot_interval:
+            snapshot_writer(
+                encoder, decoder, optimizer, num_samples, epoch,
+                num_samples_in_epoch)
+            last_snapshot = num_samples_in_epoch
 
         batch_count += 1
 
@@ -193,25 +192,11 @@ def _training_epoch(
         with ModelMode(config['model'], 'validation'):
             validation_loss = _validate(**config)
         if is_main_process:
-            writer.add_scalar(
+            summary_writer.add_scalar(
                 'Validation epoch loss', validation_loss, epoch + 1)
 
     if is_main_process:
-        snapshots_path.mkdir(parents=False, exist_ok=True)
-        epoch_str = str(epoch + 1).zfill(num_epoch_digits)
-        torch.save(
-            encoder.state_dict(), snapshots_path / f'encoder.{epoch_str}.pth')
-        torch.save(
-            decoder.state_dict(), snapshots_path / f'decoder.{epoch_str}.pth')
-        optimizer_state = {
-            'optimizer': optimizer.state_dict(),
-            'amp': amp.state_dict(),
-        }
-        torch.save(
-            optimizer_state, snapshots_path / f'optimizer.{epoch_str}.pth')
-        with open(snapshots_path / f'progress.{epoch_str}.json', 'w') as f:
-            progress_data = {'num_samples': num_samples}
-            json.dump(progress_data, f, separators=(',', ':'))
+        snapshot_writer(encoder, decoder, optimizer, num_samples, epoch + 1)
 
     return num_samples
 
@@ -271,14 +256,24 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         metavar='PATH')
     ap_training = ap.add_argument_group(title='Training')
     ap_training.add_argument(
+        '--checkpointing', action='store_true', help='enable checkpointing')
+    ap_training.add_argument(
+        '--freeze-encoder', action='store_true',
+        help='freeze encoder parameters during training')
+    ap_training.add_argument(
         '--training-batch-size', type=int, required=True,
         help='training batch size', metavar='N')
     ap_training.add_argument(
         '--validation-batch-size', type=int, help='validation batch size',
         metavar='N')
     ap_training.add_argument(
-        '--freeze-encoder', action='store_true',
-        help='freeze encoder parameters during training')
+        '--gradient-accumulation-steps', default=1, type=int,
+        help='# of steps for gradient accumulation (defaults to `1`)',
+        metavar='NSTEPS')
+    ap_training.add_argument(
+        '--max-gradient-norm', default=math.inf, type=float,
+        help='norm threshold for gradient clipping (defaults to `INF`)',
+        metavar='NORM')
     ap_training.add_argument(
         '--optimizer', default=default_optimizer,
         choices=('sgd', 'adam', 'radam', 'lamb',),
@@ -296,16 +291,6 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         help='epsilon parameter; only meaningful for Adam, RAdam, and LAMB\
  (defaults to `1.0e-8` for Adam and RAdam, `1.0e-6` for LAMB)',
         metavar='EPS')
-    ap_training.add_argument(
-        '--checkpointing', action='store_true', help='enable checkpointing')
-    ap_training.add_argument(
-        '--gradient-accumulation-steps', default=1, type=int,
-        help='# of steps for gradient accumulation (defaults to `1`)',
-        metavar='NSTEPS')
-    ap_training.add_argument(
-        '--max-gradient-norm', default=1.0, type=float,
-        help='norm threshold for gradient clipping (defaults to `1.0`)',
-        metavar='NORM')
     ap_training.add_argument(
         '--initial-optimizer', type=Path,
         help='path to the initial optimizer state; mutually exclusive to `--resume`',
@@ -420,6 +405,8 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         raise RuntimeError(f'`--initial-decoder` conflicts with `--resume`')
     initial_decoder = config.initial_decoder
 
+    freeze_encoder = config.freeze_encoder
+
     if config.training_batch_size < 1:
         raise RuntimeError(
             f'{config.training_batch_size}: invalid training batch size')
@@ -433,7 +420,12 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         raise RuntimeError(
             f'{config.validation_batch_size}: invalid validation batch size')
 
-    freeze_encoder = config.freeze_encoder
+    if config.gradient_accumulation_steps < 1:
+        raise RuntimeError(
+            f'{config.gradient_accumulation_steps}: invalid steps for gradient accumulation')
+    if config.max_gradient_norm <= 0.0:
+        raise RuntimeError(
+            f'{config.max_gradient_norm}: invalid norm for gradient clipping')
 
     if config.optimizer == 'sgd':
         if config.learning_rate is None:
@@ -462,13 +454,6 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
             epsilon = 1.0e-6
     if epsilon is not None and epsilon <= 0.0:
         raise RuntimeError(f'{epsilon}: invalid value for epsilon parameter')
-
-    if config.gradient_accumulation_steps < 1:
-        raise RuntimeError(
-            f'{config.gradient_accumulation_steps}: invalid steps for gradient accumulation')
-    if config.max_gradient_norm <= 0.0:
-        raise RuntimeError(
-            f'{config.max_gradient_norm}: invalid norm for gradient clipping')
 
     if config.initial_optimizer is not None and not config.initial_optimizer.exists():
         raise RuntimeError(f'{config.initial_optimizer}: does not exist')
@@ -601,23 +586,23 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         logging.info(f'Initial decoder: (initialized randomly)')
     elif initial_decoder is not None:
         logging.info(f'Initial decoder: {initial_decoder}')
+    logging.info(f'Checkpointing: {config.checkpointing}')
+    logging.info(f'Freeze encoder: {freeze_encoder}')
     logging.info(f'Training batch size: {config.training_batch_size}')
     if config.validation_batch_size is not None:
         logging.info(f'Validation batch size: {config.validation_batch_size}')
-    logging.info(f'Freeze encoder: {freeze_encoder}')
-    logging.info(f'Optimizer: {config.optimizer}')
-    logging.info(f'Learning rate: {learning_rate}')
-    if config.optimizer == 'sgd':
-        logging.info(f'Momentum factor: {momentum}')
-    if config.optimizer in ('adam', 'radam', 'lamb',):
-        logging.info(f'Epsilon parameter: {epsilon}')
-    logging.info(f'Checkpointing: {config.checkpointing}')
     logging.info(
         f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
     logging.info(
         f'Virtual training batch size: {config.training_batch_size * config.gradient_accumulation_steps}')
     logging.info(
         f'norm threshold for gradient clipping: {config.max_gradient_norm}')
+    logging.info(f'Optimizer: {config.optimizer}')
+    logging.info(f'Learning rate: {learning_rate}')
+    if config.optimizer == 'sgd':
+        logging.info(f'Momentum factor: {momentum}')
+    if config.optimizer in ('adam', 'radam', 'lamb',):
+        logging.info(f'Epsilon parameter: {epsilon}')
     if initial_optimizer is None and not resume:
         logging.info(f'Initial optimizer state: (initialized normally)')
     elif initial_optimizer is not None:
@@ -665,7 +650,6 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         'max_gradient_norm': config.max_gradient_norm,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
-        'snapshots_path': snapshots_path,
         'tensorboard_path': tensorboard_path,
         'num_epoch_digits': config.num_epoch_digits,
         'epoch': epoch,
@@ -750,17 +734,77 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
     config['loss_function'] = loss_function
     config['optimizer'] = optimizer
 
-    with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
+    def snapshot_writer(
+            encoder: nn.Module, decoder: nn.Module, optimizer: Optimizer,
+            num_samples: int, epoch: int,
+            num_samples_in_epoch: Optional[int]=None) -> None:
+        snapshots_path.mkdir(parents=False, exist_ok=True)
+
+        epoch_str = str(epoch).zfill(config['num_epoch_digits'])
+        if num_samples_in_epoch is not None:
+            infix = f'.{epoch_str}.{num_samples_in_epoch}'
+        else:
+            infix = f'.{epoch_str}'
+
+        torch.save(
+            encoder.state_dict(), snapshots_path / f'encoder{infix}.pth')
+        torch.save(
+            decoder.state_dict(), snapshots_path / f'decoder{infix}.pth')
+        optimizer_state = {
+            'optimizer': optimizer.state_dict(),
+            'amp': amp.state_dict(),
+        }
+        torch.save(
+            optimizer_state, snapshots_path / f'optimizer{infix}.pth')
+        progress_data = {'num_samples': num_samples}
+        with open(snapshots_path / f'progress{infix}.json', 'w', encoding='UTF-8') as f:
+            json.dump(progress_data, f, separators=(',', ':'))
+        model_config = {
+            'encoder': {
+                'module': 'kanachan.training.bert.encoder',
+                'class': 'Encoder',
+                'kwargs': {
+                    'dimension': config['dimension'],
+                    'num_heads': config['num_heads'],
+                    'dim_feedforward': config['dim_feedforward'],
+                    'activation_function': config['activation_function'],
+                    'dropout': 0.0,
+                    'num_layers': config['num_layers'],
+                    'checkpointing': False
+                },
+                'snapshot': f'./encoder{infix}.pth'
+            },
+            'decoder': {
+                'module': decoder_type.__module__,
+                'class': decoder_type.__qualname__,
+                'kwargs': {
+                    'dimension': config['dimension'],
+                    'dim_final_feedforward': config['dim_final_feedforward'],
+                    'activation_function': config['activation_function'],
+                    'dropout': 0.0
+                },
+                'snapshot': f'./decoder{infix}.pth'
+            },
+            'model': {
+                'module': model_type.__module__,
+                'class': model_type.__qualname__
+            }
+        }
+        with open(snapshots_path / f'model{infix}.yaml', 'w', encoding='UTF-8') as f:
+            yaml.dump(model_config, f, Dumper=yaml.Dumper)
+
+    with SummaryWriter(log_dir=config['tensorboard_path']) as summary_writer:
         if config['validation_data'] is not None and snapshot_index == 0:
             assert(config['validation_batch_size'] is not None)
             with ModelMode(config['model'], 'validation'):
                 validation_loss = _validate(**config)
             if config['is_main_process']:
-                writer.add_scalar(
+                summary_writer.add_scalar(
                     'Validation epoch loss', validation_loss, epoch)
 
         initial_epoch = config['epoch']
         while num_epochs == -1 or config['epoch'] < initial_epoch + num_epochs:
             config['num_samples'] = _training_epoch(
-                config, **config, writer=writer)
+                config, **config, summary_writer=summary_writer,
+                snapshot_writer=snapshot_writer)
             config['epoch'] += 1
