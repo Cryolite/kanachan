@@ -1,66 +1,97 @@
 #!/usr/bin/env python3
 
-import math
+from typing import (Optional,)
 import torch
 from torch import nn
-from kanachan.training.constants import (
-    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.iql.value_model import ValueDecoder
-
-
-class QDecoder(nn.Module):
-    def __init__(
-            self, *, dimension: int, dim_final_feedforward: int,
-            activation_function: str, dropout: float, **kwargs) -> None:
-        super(QDecoder, self).__init__()
-
-        self.value_decoder = ValueDecoder(
-            dimension=dimension, dim_final_feedforward=dim_final_feedforward,
-            activation_function=activation_function, dropout=dropout, **kwargs)
-
-        # The final layer is position-wise feed-forward network.
-        self.semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
-        if activation_function == 'relu':
-            self.semifinal_activation = nn.ReLU()
-        elif activation_function == 'gelu':
-            self.semifinal_activation = nn.GELU()
-        else:
-            raise ValueError(
-                f'{activation_function}: An invalid activation function.')
-        self.semifinal_dropout = nn.Dropout(p=dropout)
-        self.final_linear = nn.Linear(dim_final_feedforward, 1)
-
-    def forward(self, x) -> torch.Tensor:
-        candidates, encode = x
-
-        value_decode = self.value_decoder(x)
-        value_decode = torch.unsqueeze(value_decode, dim=1)
-        value_decode = value_decode.expand(-1, MAX_NUM_ACTION_CANDIDATES)
-
-        advantage_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
-        advantage_decode = self.semifinal_linear(advantage_encode)
-        advantage_decode = self.semifinal_activation(advantage_decode)
-        advantage_decode = self.semifinal_dropout(advantage_decode)
-        advantage_decode = self.final_linear(advantage_decode)
-        advantage_decode = torch.squeeze(advantage_decode, dim=2)
-        assert(advantage_decode.dim() == 2)
-        assert(advantage_decode.size(0) == candidates.size(0))
-        assert(advantage_decode.size(1) == MAX_NUM_ACTION_CANDIDATES)
-        prediction = value_decode + advantage_decode
-        prediction = torch.where(
-            candidates < NUM_TYPES_OF_ACTIONS, prediction, -math.inf)
-
-        return prediction
+from kanachan.training.iql.qv_model import (QVDecoder, QVModel,)
 
 
 class QModel(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: QDecoder) -> None:
+    def __init__(
+            self, *,
+            dimension: Optional[int]=None,
+            num_heads: Optional[int]=None,
+            num_layers: Optional[int]=None,
+            dim_feedforward: Optional[int]=None,
+            dim_final_feedforward: Optional[int]=None,
+            activation_function: Optional[str]=None,
+            dropout: Optional[float]=None,
+            checkpointing: Optional[bool]=None,
+            qv1_model: Optional[QVModel]=None,
+            qv2_model: Optional[QVModel]=None,
+            **kwargs) -> None:
         super(QModel, self).__init__()
-        self.encoder = encoder
-        self.decoder = decoder
+
+        if dimension is not None:
+            if num_heads is None:
+                raise ValueError('`num_heads` must be specified.')
+            if num_layers is None:
+                raise ValueError('`num_layers` must be specified.')
+            if dim_feedforward is None:
+                raise ValueError('`dim_feedforward` must be specified.')
+            if dim_final_feedforward is None:
+                raise ValueError('`dim_final_feedforward` must be specified.')
+            if activation_function is None:
+                raise ValueError('`activation_function` must be specified.')
+            if dropout is None:
+                raise ValueError('`dropout` must be specified.')
+            if checkpointing is None:
+                raise ValueError('`checkpointing` must be specified.')
+            if qv1_model is not None:
+                raise ValueError('`qv1_model` must not be specified.')
+            if qv2_model is not None:
+                raise ValueError('`qv2_model` must not be specified.')
+
+            qv1_encoder = Encoder(
+                dimension=dimension, num_heads=num_heads, num_layers=num_layers,
+                dim_feedforward=dim_feedforward,
+                activation_function=activation_function, dropout=dropout,
+                checkpointing=checkpointing)
+            qv1_decoder = QVDecoder(
+                dimension=dimension, dim_final_feedforward=dim_final_feedforward,
+                activation_function=activation_function, dropout=dropout)
+            self._qv1_model = QVModel(qv1_encoder, qv1_decoder)
+
+            qv2_encoder = Encoder(
+                dimension=dimension, num_heads=num_heads, num_layers=num_layers,
+                dim_feedforward=dim_feedforward,
+                activation_function=activation_function, dropout=dropout,
+                checkpointing=checkpointing)
+            qv2_decoder = QVDecoder(
+                dimension=dimension, dim_final_feedforward=dim_final_feedforward,
+                activation_function=activation_function, dropout=dropout)
+            self._qv2_model = QVModel(qv2_encoder, qv2_decoder)
+        else:
+            if num_heads is not None:
+                raise ValueError('`num_heads` must not be specified.')
+            if num_layers is not None:
+                raise ValueError('`num_layers` must not be specified.')
+            if dim_feedforward is not None:
+                raise ValueError('`dim_feedforward` must not be specified.')
+            if dim_final_feedforward is not None:
+                raise ValueError(
+                    '`dim_final_feedforward` must not be specified.')
+            if activation_function is not None:
+                raise ValueError(
+                    '`activation_function` must not be specified.')
+            if dropout is not None:
+                raise ValueError('`dropout` must not be specified.')
+            if checkpointing is not None:
+                raise ValueError('`checkpointing` must not be specified.')
+            if qv1_model is None:
+                raise ValueError('`qv1_model` must be specified.')
+            if qv2_model is None:
+                raise ValueError('`qv2_model` must be specified.')
+
+            self._qv1_model = qv1_model
+            self._qv2_model = qv2_model
+
+    def mode(self, mode: str) -> None:
+        if mode not in ('training', 'validation', 'prediction'):
+            raise ValueError(mode)
 
     def forward(self, x) -> torch.Tensor:
-        encode = self.encoder(x)
-        decode = self.decoder((x[3], encode))
-        return decode
+        q1, _ = self._qv1_model(x)
+        q2, _ = self._qv2_model(x)
+        return torch.minimum(q1, q2)
