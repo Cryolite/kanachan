@@ -4,11 +4,15 @@ import re
 import datetime
 import math
 from pathlib import Path
+import bz2
 import os
+import io
 from argparse import ArgumentParser
 import logging
+from base64 import b64encode
 import sys
-from typing import (Tuple, Optional, Type,)
+from typing import (Tuple, Optional, Callable,)
+import yaml
 import torch
 from torch import backends
 from torch import nn
@@ -23,9 +27,15 @@ from kanachan.training.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES, NUM_TYPES_OF_ACTIONS,
     MAX_NUM_ACTION_CANDIDATES,)
 from kanachan.training.common import (initialize_logging, Dataset,)
+from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.qv_model import (QVDecoder, QVModel,)
-from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
+from kanachan.training.iql.q_model import QModel
+
+
+SnapshotWriter = Callable[
+    [QModel, QModel, QModel, QModel, Optimizer, Optimizer, Optional[int]],
+    None]
 
 
 def _training(
@@ -38,8 +48,8 @@ def _training(
         target_update_rate: float, batch_size: int,
         gradient_accumulation_steps: int, max_gradient_norm: float,
         qv1_optimizer: Optimizer, qv2_optimizer: Optimizer,
-        snapshots_path: Path, snapshot_interval: int, num_samples: int,
-        writer: SummaryWriter, **kwargs) -> None:
+        snapshot_interval: int, num_samples: int, writer: SummaryWriter,
+        snapshot_writer: SnapshotWriter, **kwargs) -> None:
     start_time = datetime.datetime.now()
 
     # Load the reward plugin.
@@ -225,27 +235,10 @@ f' QV2 loss = {qv2_batch_loss}')
                     num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
-            snapshots_path.mkdir(parents=False, exist_ok=True)
-            torch.save(
-                qv1_source_model.state_dict(),
-                snapshots_path / f'qv1-source.{num_samples}.pth')
-            torch.save(
-                qv2_source_model.state_dict(),
-                snapshots_path / f'qv2-source.{num_samples}.pth')
-            torch.save(
-                qv1_target_model.state_dict(),
-                snapshots_path / f'qv1-target.{num_samples}.pth')
-            torch.save(
-                qv2_target_model.state_dict(),
-                snapshots_path / f'qv2-target.{num_samples}.pth')
-            torch.save(
-                qv1_optimizer.state_dict(),
-                snapshots_path / f'qv1-optimizer.{num_samples}.pth')
-            torch.save(
-                qv2_optimizer.state_dict(),
-                snapshots_path / f'qv2-optimizer.{num_samples}.pth')
-            torch.save(
-                amp.state_dict(), snapshots_path / f'amp.{num_samples}.pth')
+            snapshot_writer(
+                qv1_source_model, qv2_source_model,
+                qv1_target_model, qv2_target_model,
+                qv1_optimizer, qv2_optimizer, num_samples)
             last_snapshot = num_samples
 
     elapsed_time = datetime.datetime.now() - start_time
@@ -253,20 +246,10 @@ f' QV2 loss = {qv2_batch_loss}')
         f'A training has finished (elapsed time = {elapsed_time}).')
 
     if is_main_process:
-        snapshots_path.mkdir(parents=False, exist_ok=True)
-        torch.save(
-            qv1_source_model.state_dict(), snapshots_path / f'qv1-source.pth')
-        torch.save(
-            qv2_source_model.state_dict(), snapshots_path / f'qv2-source.pth')
-        torch.save(
-            qv1_target_model.state_dict(), snapshots_path / f'qv1-target.pth')
-        torch.save(
-            qv2_target_model.state_dict(), snapshots_path / f'qv2-target.pth')
-        torch.save(
-            qv1_optimizer.state_dict(), snapshots_path / f'qv1-optimizer.pth')
-        torch.save(
-            qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer.pth')
-        torch.save(amp.state_dict(), snapshots_path / f'amp.pth')
+        snapshot_writer(
+            qv1_source_model, qv2_source_model,
+            qv1_target_model, qv2_target_model,
+            qv1_optimizer, qv2_optimizer)
 
 
 def main() -> None:
@@ -778,7 +761,6 @@ def main() -> None:
         'target_update_rate': config.target_update_rate,
         'experiment_name': experiment_name,
         'experiment_path': experiment_path,
-        'snapshots_path': snapshots_path,
         'tensorboard_path': tensorboard_path,
         'snapshot_interval': config.snapshot_interval,
         'num_samples': num_samples,
@@ -977,8 +959,65 @@ def main() -> None:
     config['qv1_optimizer'] = qv1_optimizer
     config['qv2_optimizer'] = qv2_optimizer
 
+    def snapshot_writer(
+            qv1_source_model: QVModel, qv2_source_model: QVModel,
+            qv1_target_model: QVModel, qv2_target_model: QVModel,
+            qv1_optimizer: Optimizer, qv2_optimizer: Optimizer,
+            num_samples: Optional[int]=None) -> None:
+        snapshots_path.mkdir(parents=False, exist_ok=True)
+
+        infix = '' if num_samples is None else f'.{num_samples}'
+
+        torch.save(
+            qv1_source_model.state_dict(),
+            snapshots_path / f'qv1-source{infix}.pth')
+        torch.save(
+            qv2_source_model.state_dict(),
+            snapshots_path / f'qv2-source{infix}.pth')
+        torch.save(
+            qv1_target_model.state_dict(),
+            snapshots_path / f'qv1-target{infix}.pth')
+        torch.save(
+            qv2_target_model.state_dict(),
+            snapshots_path / f'qv2-target{infix}.pth')
+        torch.save(
+            qv1_optimizer.state_dict(),
+            snapshots_path / f'qv1-optimizer{infix}.pth')
+        torch.save(
+            qv2_optimizer.state_dict(),
+            snapshots_path / f'qv2-optimizer{infix}.pth')
+        torch.save(
+            amp.state_dict(), snapshots_path / f'amp{infix}.pth')
+
+        q_model = QModel(
+            qv1_model=qv1_target_model, qv2_model=qv2_target_model)
+        with io.BytesIO() as f:
+            torch.save(q_model, f)
+            q_snapshot = f.getvalue()
+        q_snapshot = bz2.compress(q_snapshot)
+        q_snapshot_encode = b64encode(q_snapshot).decode('UTF-8')
+        q_model_config = {
+            'model': {
+                'module': 'kanachan.training.iql.q_model',
+                'class': 'QModel',
+                'kwargs': {
+                    'dimension': config['dimension'],
+                    'num_heads': config['num_heads'],
+                    'num_layers': config['num_layers'],
+                    'dim_feedforward': config['dim_feedforward'],
+                    'dim_final_feedforward': config['dim_final_feedforward'],
+                    'activation_function': config['activation_function'],
+                    'dropout': 0.0,
+                    'checkpointing': False
+                },
+                'snapshot': f'data:application/x-bzip2;base64,{q_snapshot_encode}'
+            }
+        }
+        with open(snapshots_path / f'q-model{infix}.yaml', 'w', encoding='UTF-8') as f:
+            yaml.dump(q_model_config, f, Dumper=yaml.Dumper)
+
     with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
-        _training(**config, writer=writer)
+        _training(**config, writer=writer, snapshot_writer=snapshot_writer)
 
 
 if __name__ == '__main__':
