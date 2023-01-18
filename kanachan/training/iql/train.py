@@ -991,11 +991,8 @@ def main() -> None:
 
         q_model = QModel(
             qv1_model=qv1_target_model, qv2_model=qv2_target_model)
-        with io.BytesIO() as f:
-            torch.save(q_model, f)
-            q_snapshot = f.getvalue()
-        q_snapshot = bz2.compress(q_snapshot)
-        q_snapshot_encode = b64encode(q_snapshot).decode('UTF-8')
+        torch.save(
+            q_model.state_dict(), snapshots_path / f'q-model{infix}.pth')
         q_model_config = {
             'model': {
                 'module': 'kanachan.training.iql.q_model',
@@ -1010,7 +1007,7 @@ def main() -> None:
                     'dropout': 0.0,
                     'checkpointing': False
                 },
-                'snapshot': f'data:application/x-bzip2;base64,{q_snapshot_encode}'
+                'snapshot': f'./q-model{infix}.pth'
             }
         }
         with open(snapshots_path / f'q-model{infix}.yaml', 'w', encoding='UTF-8') as f:
