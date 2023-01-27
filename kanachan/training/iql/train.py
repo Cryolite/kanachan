@@ -446,6 +446,7 @@ def _main() -> None:
         raise RuntimeError('`--initial-model-index` conflicts with `--resume`.')
     initial_model_index = config.initial_model_index
 
+    num_samples = 0
     if initial_model_prefix is not None:
         if initial_encoder is not None:
             raise RuntimeError('`--initial-model-prefix` conflicts with `--initial-encoder`.')
@@ -462,6 +463,7 @@ def _main() -> None:
                     initial_model_index = int(match[1])
         if initial_model_index is None:
             raise RuntimeError(f'{initial_model_prefix}: No model found.')
+        num_samples = initial_model_index
         qv1_source_snapshot_path = initial_model_prefix / f'qv1-source.{initial_model_index}.pth'
         if not qv1_source_snapshot_path.exists():
             raise RuntimeError(f'{qv1_source_snapshot_path}: Does not exist.')
@@ -580,7 +582,6 @@ def _main() -> None:
 
     resume = config.resume
 
-    num_samples = 0
     if resume:
         assert initial_encoder is None
         assert initial_model_prefix is None
