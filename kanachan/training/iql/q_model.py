@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import (Optional,)
+from typing import (Optional, Dict)
 import torch
 from torch import nn
 from kanachan.training.bert.encoder import Encoder
@@ -95,3 +95,11 @@ class QModel(nn.Module):
         q1, _ = self._qv1_model(x)
         q2, _ = self._qv2_model(x)
         return torch.minimum(q1, q2)
+
+    def state_dict(self, **kwargs: object) -> Dict[str, object]:
+        state_dict_ = super(QModel, self).state_dict(**kwargs)
+        if 'module' in state_dict_['_qv1_model']:
+            state_dict_['_qv1_model'] = state_dict_['_qv1_model']['module']
+        if 'module' in state_dict_['_qv2_model']:
+            state_dict_['_qv2_model'] = state_dict_['_qv2_model']['module']
+        return state_dict_
