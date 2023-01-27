@@ -643,6 +643,8 @@ def _main() -> None:
         logging.info('World size: %s', world_size)
         logging.info('Process rank: %s', rank)
     logging.info('Training data: %s', config.training_data)
+    if num_samples > 0:
+        logging.info('# of training samples consumed so far: %s', num_samples)
     logging.info('# of workers: %s', config.num_workers)
     logging.info('Device: %s', device)
     if backends.cudnn.is_available():
@@ -710,7 +712,6 @@ def _main() -> None:
         logging.info('QV1 source network optimizer snapshot: %s', qv1_optimizer_snapshot_path)
         logging.info('QV2 source network optimizer snapshot: %s', qv2_optimizer_snapshot_path)
         logging.info('AMP snapshot: %s', amp_snapshot_path)
-        logging.info('# of training samples so far: %s', num_samples)
     else:
         logging.info('Experiment output: %s', experiment_path)
     if config.snapshot_interval == 0:
