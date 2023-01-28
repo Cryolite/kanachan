@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import (Optional, Dict)
+from typing import Optional
 import torch
 from torch import nn
 from kanachan.training.bert.encoder import Encoder
@@ -84,8 +84,16 @@ class QModel(nn.Module):
             if qv2_model is None:
                 raise ValueError('`qv2_model` must be specified.')
 
-            self._qv1_model = qv1_model
-            self._qv2_model = qv2_model
+            # TODO: Replace the following conditions with `isinstance(_, DistributedDataParallel)`
+            #       when `torch.nn.parallel.DistributedDataParallel` is introduced.
+            if hasattr(self._qv1_model, 'module'):
+                self._qv1_model = qv1_model.module
+            else:
+                self._qv1_model = qv1_model
+            if hasattr(self._qv2_model, 'module'):
+                self._qv2_model = qv2_model.module
+            else:
+                self._qv2_model = qv2_model
 
     def mode(self, mode: str) -> None:
         if mode not in ('training', 'validation', 'prediction'):
@@ -95,11 +103,3 @@ class QModel(nn.Module):
         q1, _ = self._qv1_model(x)
         q2, _ = self._qv2_model(x)
         return torch.minimum(q1, q2)
-
-    def state_dict(self, **kwargs: object) -> Dict[str, object]:
-        state_dict_ = super(QModel, self).state_dict(**kwargs)
-        if 'module' in state_dict_['_qv1_model']:
-            state_dict_['_qv1_model'] = state_dict_['_qv1_model']['module']
-        if 'module' in state_dict_['_qv2_model']:
-            state_dict_['_qv2_model'] = state_dict_['_qv2_model']['module']
-        return state_dict_
