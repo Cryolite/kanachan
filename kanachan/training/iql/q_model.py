@@ -86,11 +86,12 @@ class QModel(nn.Module):
 
             # TODO: Replace the following conditions with `isinstance(_, DistributedDataParallel)`
             #       when `torch.nn.parallel.DistributedDataParallel` is introduced.
-            if hasattr(self._qv1_model, 'module'):
+            assert hasattr(qv1_model, 'module') == hasattr(qv2_model, 'module')
+            if hasattr(qv1_model, 'module'):
                 self._qv1_model = qv1_model.module
             else:
                 self._qv1_model = qv1_model
-            if hasattr(self._qv2_model, 'module'):
+            if hasattr(qv2_model, 'module'):
                 self._qv2_model = qv2_model.module
             else:
                 self._qv2_model = qv2_model
