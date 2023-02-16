@@ -14,7 +14,7 @@ from torch import backends
 from torch import nn
 from torch.optim import Optimizer, RAdam
 from torch.utils.data import DataLoader
-from torch.distributed import init_process_group, all_reduce, all_gather
+from torch.distributed import init_process_group, all_reduce, all_gather, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
 from apex.parallel import DistributedDataParallel, convert_syncbn_model
@@ -64,26 +64,22 @@ def _training(
 
     batch_count = 0
     for annotation in data_loader:
-        batch_size = len(annotation[0])
-        local_batch_size = batch_size
+        if device != 'cpu':
+            annotation = [t.cuda() for t in annotation]
+
+        local_batch_size = len(annotation[0])
+
+        world_batch_size = local_batch_size
+        if is_multiprocess:
+            assert world_size is not None
+            assert rank is not None
+            world_batch_size *= world_size
 
         if skipped_samples < num_samples:
-            skipped_samples += batch_size
-            continue
-
-        if device != 'cpu':
             if is_multiprocess:
-                assert world_size is not None
-                assert rank is not None
-                if batch_size % world_size != 0:
-                    raise RuntimeError(
-                        'Batch size must be divisible by the world size.')
-                local_batch_size //= world_size
-                first = local_batch_size * rank
-                last = local_batch_size * (rank + 1)
-                annotation = tuple(x[first:last].cuda() for x in annotation)
-            else:
-                annotation = tuple(x.cuda() for x in annotation)
+                barrier()
+            skipped_samples += world_batch_size
+            continue
 
         # Compute the Q target value.
         with torch.no_grad():
@@ -100,7 +96,7 @@ def _training(
                 all_gather(q_target_gathered, q_target)
                 q_target_gathered = torch.cat(q_target_gathered)
                 assert q_target_gathered.dim() == 1
-                assert q_target_gathered.size(0) == batch_size
+                assert q_target_gathered.size(0) == world_batch_size
                 q_batch_mean = torch.mean(q_target_gathered)
 
                 return (q_target, q_batch_mean.item())
@@ -151,7 +147,7 @@ def _training(
         # Backprop for the QV2 source model.
         qv2_batch_loss = backward_and_get_batch_loss(qv2_source_model, qv2_optimizer)
 
-        num_samples += batch_size
+        num_samples += world_batch_size
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
@@ -245,8 +241,8 @@ def _main() -> None:
         '--training-data', type=Path, required=True,
         help='path to training data', metavar='PATH')
     ap_data.add_argument(
-        '--num-workers', default=2, type=int,
-        help='# of worker processes in data loading (defaults to `2`)',
+        '--num-workers', type=int,
+        help='# of worker processes in data loading (default to `2` for multiprocessing, `0` otherwise)',
         metavar='NWORKERS')
 
     ap_device = ap.add_argument_group(title='Device')
@@ -361,8 +357,20 @@ def _main() -> None:
         raise RuntimeError(f'{config.training_data}: Does not exist.')
     if not config.training_data.is_file():
         raise RuntimeError(f'{config.training_data}: Not a file.')
-    if config.num_workers < 0:
-        raise RuntimeError(f'{config.num_workers}: An invalid number of workers.')
+
+    if is_multiprocess:
+        if config.num_workers is None:
+            config.num_workers = 2
+        if config.num_workers < 0:
+            raise RuntimeError(f'{config.num_workers}: An invalid number of workers.')
+        if config.num_workers == 0:
+            raise RuntimeError(
+                f'{config.num_workers}: An invalid number of workers for multiprocessing.')
+    else:
+        if config.num_workers is None:
+            config.num_workers = 0
+        if config.num_workers < 0:
+            raise RuntimeError(f'{config.num_workers}: An invalid number of workers.')
 
     if config.device is not None:
         match = re.search('^(?:cpu|cuda(\\d*))$', config.device)
@@ -547,6 +555,8 @@ def _main() -> None:
             epsilon = 1.0e-8
         elif config.optimizer == 'lamb':
             epsilon = 1.0e-6
+        else:
+            epsilon = None
     else:
         epsilon = config.epsilon
     if epsilon is not None and epsilon <= 0.0:
@@ -676,9 +686,19 @@ def _main() -> None:
     logging.info('Checkpointing: %s', config.checkpointing)
     logging.info('Discount factor: %s', config.discount_factor)
     logging.info('Expectile: %s', config.expectile)
-    logging.info('Batch size: %s', config.batch_size)
+    if world_size is None:
+        logging.info('Batch size: %s', config.batch_size)
+    else:
+        logging.info('Local batch size: %s', config.batch_size)
+        logging.info('World batch size: %s', config.batch_size * world_size)
     logging.info('# of steps for gradient accumulation: %s', config.gradient_accumulation_steps)
-    logging.info('Virtual batch size: %s', config.batch_size * config.gradient_accumulation_steps)
+    if world_size is None:
+        logging.info(
+            'Virtual batch size: %s', config.batch_size * config.gradient_accumulation_steps)
+    else:
+        logging.info(
+            'Virtual batch size: %s',
+            config.batch_size * world_size * config.gradient_accumulation_steps)
     logging.info('Norm threshold for gradient clipping: %s', config.max_gradient_norm)
     logging.info('Optimizer: %s', config.optimizer)
     logging.info('Learning rate: %s', learning_rate)
