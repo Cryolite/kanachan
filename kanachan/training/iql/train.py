@@ -39,9 +39,9 @@ def _training(
         qv1_source_model: QVModel, qv2_source_model: QVModel, qv1_target_model: QVModel,
         qv2_target_model: QVModel, reward_plugin: Path, discount_factor: float, expectile: float,
         target_update_interval: int, target_update_rate: float, batch_size: int,
-        gradient_accumulation_steps: int, max_gradient_norm: float, qv1_optimizer: Optimizer,
-        qv2_optimizer: Optimizer, snapshot_interval: int, num_samples: int, writer: SummaryWriter,
-        snapshot_writer: SnapshotWriter, **kwargs) -> None:
+        v_loss_scaling: float, gradient_accumulation_steps: int, max_gradient_norm: float,
+        qv1_optimizer: Optimizer, qv2_optimizer: Optimizer, snapshot_interval: int,
+        num_samples: int, writer: SummaryWriter, snapshot_writer: SnapshotWriter, **kwargs) -> None:
     start_time = datetime.datetime.now()
 
     # Load the reward plugin.
@@ -125,7 +125,7 @@ def _training(
             v_loss = torch.where(
                 v_loss < 0.0, (1.0 - expectile) * (v_loss ** 2.0),
                 expectile * (v_loss ** 2.0))
-            qv_loss = q_loss + v_loss
+            qv_loss = q_loss + v_loss_scaling * v_loss
 
             qv_batch_loss = qv_loss.detach().clone()
             all_reduce(qv_batch_loss)
@@ -294,6 +294,8 @@ def _main() -> None:
         '--discount-factor', type=float, required=True, metavar='GAMMA')
     ap_training.add_argument(
         '--expectile', type=float, required=True, metavar='TAU')
+    ap_training.add_argument(
+        '--v-loss-scaling', default=1.0, type=float, metavar='SCALING')
     ap_training.add_argument(
         '--batch-size', type=int, required=True,
         help='batch size', metavar='N')
@@ -517,6 +519,9 @@ def _main() -> None:
         raise RuntimeError(
             f'{config.expectile}: An invalid value for `--expectile`.')
 
+    if config.v_loss_scaling < 0.0:
+        raise RuntimeError(f'{config.v_loss_scaling}: An invalid value for `--v-loss-scaling`.')
+
     if config.batch_size < 1:
         raise RuntimeError(
             f'{config.batch_size}: An invalid value for `--batch-size`.')
@@ -686,6 +691,7 @@ def _main() -> None:
     logging.info('Checkpointing: %s', config.checkpointing)
     logging.info('Discount factor: %s', config.discount_factor)
     logging.info('Expectile: %s', config.expectile)
+    logging.info('V loss scaling: %s', config.v_loss_scaling)
     if world_size is None:
         logging.info('Batch size: %s', config.batch_size)
     else:
@@ -758,6 +764,7 @@ def _main() -> None:
         'checkpointing': config.checkpointing,
         'discount_factor': config.discount_factor,
         'expectile': config.expectile,
+        'v_loss_scaling': config.v_loss_scaling,
         'batch_size': config.batch_size,
         'gradient_accumulation_steps': config.gradient_accumulation_steps,
         'max_gradient_norm': config.max_gradient_norm,
