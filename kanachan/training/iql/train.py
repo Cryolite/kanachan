@@ -12,12 +12,13 @@ from typing import Tuple, Optional, Callable
 import torch
 from torch import backends
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Optimizer, RAdam
 from torch.utils.data import DataLoader
 from torch.distributed import init_process_group, all_reduce, all_gather, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
-from apex.parallel import DistributedDataParallel, convert_syncbn_model
+from apex.parallel import convert_syncbn_model
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import initialize_logging, Dataset
