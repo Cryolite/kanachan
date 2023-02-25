@@ -943,10 +943,6 @@ def _main() -> None:
         qv1_source_model = convert_syncbn_model(qv1_source_model)
         qv2_source_model = DistributedDataParallel(qv2_source_model)
         qv2_source_model = convert_syncbn_model(qv2_source_model)
-        qv1_target_model = DistributedDataParallel(qv1_target_model)
-        qv1_target_model = convert_syncbn_model(qv1_target_model)
-        qv2_target_model = DistributedDataParallel(qv2_target_model)
-        qv2_target_model = convert_syncbn_model(qv2_target_model)
 
     config['qv1_source_model'] = qv1_source_model
     config['qv2_source_model'] = qv2_source_model
