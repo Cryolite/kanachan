@@ -92,9 +92,12 @@ def _training(
                 assert q_target.dim() == 1
                 assert q_target.size(0) == local_batch_size
 
-                q_target_gathered = [torch.zeros_like(q_target) for i in range(world_size)]
-                all_gather(q_target_gathered, q_target)
-                q_target_gathered = torch.cat(q_target_gathered)
+                if not is_multiprocess:
+                    q_target_gathered = q_target
+                else:
+                    q_target_gathered = [torch.zeros_like(q_target) for i in range(world_size)]
+                    all_gather(q_target_gathered, q_target)
+                    q_target_gathered = torch.cat(q_target_gathered)
                 assert q_target_gathered.dim() == 1
                 assert q_target_gathered.size(0) == world_batch_size
                 q_batch_mean = torch.mean(q_target_gathered)
@@ -117,6 +120,17 @@ def _training(
             assert v.dim() == 1
             assert v.size(0) == local_batch_size
             q = q[torch.arange(local_batch_size), annotation[4]]
+
+            if not is_multiprocess:
+                v_gathered = v
+            else:
+                v_gathered = [torch.zeros_like(v) for i in range(world_size)]
+                all_gather(v_gathered, v)
+                v_gathered = torch.cat(v_gathered)
+            assert v_gathered.dim() == 1
+            assert v_gathered.size(0) == world_batch_size
+            v_batch_mean = torch.mean(v_gathered).item()
+
             _, vv = qv_source_model(annotation[5:9])
             is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES)
             vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
