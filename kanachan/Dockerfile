@@ -19,8 +19,8 @@ USER ubuntu
 
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
-RUN pip3 install -U \
-      mahjong==1.1.11 \
+RUN pip3 install -U pip && \
+    pip3 install -U \
       setuptools \
       wheel
 
