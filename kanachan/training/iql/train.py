@@ -590,7 +590,7 @@ def _main() -> None:
         raise RuntimeError(
             f'{config.target_update_interval}: An invalid value for `--target-update-interval`.')
 
-    if config.target_update_rate <= 0.0 or 1.0 <= config.target_update_rate:
+    if config.target_update_rate <= 0.0 or 1.0 < config.target_update_rate:
         raise RuntimeError(
             f'{config.target_update_rate}: An invalid value for `--target-update-rate`.')
 
