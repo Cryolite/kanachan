@@ -122,19 +122,22 @@ def _training(
             vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
             assert vv.dim() == 1
             assert vv.size(0) == local_batch_size
-            q_loss = (reward + discount_factor * vv - q) ** 2.0
+
+            q_loss = torch.square(reward + discount_factor * vv - q)
+            q_loss = torch.mean(q_loss)
             v_loss = q_target - v
             v_loss = torch.where(
-                v_loss < 0.0, (1.0 - expectile) * (v_loss ** 2.0),
-                expectile * (v_loss ** 2.0))
+                v_loss < 0.0, (1.0 - expectile) * torch.square(v_loss),
+                expectile * torch.square(v_loss))
+            v_loss = torch.mean(v_loss)
             qv_loss = q_loss + v_loss_scaling * v_loss
 
             qv_batch_loss = qv_loss.detach().clone()
-            all_reduce(qv_batch_loss)
-            qv_batch_loss /= world_size
-            qv_batch_loss = torch.mean(qv_batch_loss).item()
+            if is_multiprocess:
+                all_reduce(qv_batch_loss)
+                qv_batch_loss /= world_size
+            qv_batch_loss = qv_batch_loss.item()
 
-            qv_loss = torch.mean(qv_loss)
             if math.isnan(qv_loss.item()):
                 raise RuntimeError('QV loss becomes NaN.')
             qv_loss /= gradient_accumulation_steps
