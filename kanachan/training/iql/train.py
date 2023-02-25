@@ -114,7 +114,7 @@ def _training(
 
         reward = annotation[9]
 
-        def backward_and_get_batch_loss(qv_source_model: QVModel, qv_optimizer: Optimizer) -> float:
+        def backward(qv_source_model: QVModel, qv_optimizer: Optimizer) -> Tuple[float, float]:
             q, v = qv_source_model(annotation[:4])
             assert q.dim() == 2
             assert q.size(0) == local_batch_size
@@ -161,13 +161,13 @@ def _training(
                 with amp.scale_loss(qv_loss, qv_optimizer) as scaled_qv_loss:
                     scaled_qv_loss.backward()
 
-            return qv_batch_loss
+            return (q_loss, v_loss, v_batch_mean, qv_batch_loss)
 
         # Backprop for the QV1 source model.
-        qv1_batch_loss = backward_and_get_batch_loss(qv1_source_model, qv1_optimizer)
+        q1_loss, v1_loss, v1_batch_mean, qv1_batch_loss = backward(qv1_source_model, qv1_optimizer)
 
         # Backprop for the QV2 source model.
-        qv2_batch_loss = backward_and_get_batch_loss(qv2_source_model, qv2_optimizer)
+        q2_loss, v2_loss, v2_batch_mean, qv2_batch_loss = backward(qv2_source_model, qv2_optimizer)
 
         num_samples += world_batch_size
         batch_count += 1
@@ -243,6 +243,9 @@ def _training(
                     'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
                     num_samples)
                 writer.add_scalars(
+                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean },
+                    num_samples)
+                writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
                     num_samples)
                 writer.add_scalars(
@@ -256,6 +259,9 @@ def _training(
             if is_main_process:
                 writer.add_scalars(
                     'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
+                    num_samples)
+                writer.add_scalars(
+                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean },
                     num_samples)
                 writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
