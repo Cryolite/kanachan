@@ -19,7 +19,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
 from apex.parallel import DistributedDataParallel, convert_syncbn_model
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
+from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import initialize_logging, Dataset
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
@@ -118,6 +118,8 @@ def _training(
             assert v.size(0) == local_batch_size
             q = q[torch.arange(local_batch_size), annotation[4]]
             _, vv = qv_source_model(annotation[5:9])
+            is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES)
+            vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
             assert vv.dim() == 1
             assert vv.size(0) == local_batch_size
             q_loss = (reward + discount_factor * vv - q) ** 2.0
