@@ -1,8 +1,6 @@
-include_directories(/home/ubuntu/.local/include)
-link_directories(/home/ubuntu/.local/lib)
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
 
-add_library(_simulation SHARED
+add_library(simulation SHARED
   simulate.cpp
   duplicated_games.cpp
   game.cpp
@@ -27,7 +25,7 @@ add_library(_simulation SHARED
   game_state.cpp
   model_wrapper.cpp
   utility.cpp)
-target_link_libraries(_simulation
+target_link_libraries(simulation
   PRIVATE common
   PRIVATE marisa
   PRIVATE Boost::python

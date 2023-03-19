@@ -1,8 +1,5 @@
 if (DEFINED SHANTEN_NUMBER_SOURCE_PATH)
-  include_directories(
-    "${MARISA_TRIE_ROOT}/include"
-    "${SHANTEN_NUMBER_SOURCE_PATH}")
-  link_directories("${MARISA_TRIE_ROOT}/lib")
+  include_directories("${SHANTEN_NUMBER_SOURCE_PATH}")
 
   add_executable(make_trie
     "${SHANTEN_NUMBER_SOURCE_PATH}/calsht.cpp"
