@@ -8,7 +8,7 @@ from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
 class Decoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_final_feedforward: int,
-            dropout: float, activation_function: str, **kwargs) -> None:
+            dropout: float, activation_function: str, **_) -> None:
         super(Decoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
@@ -19,8 +19,7 @@ class Decoder(nn.Module):
         elif activation_function == 'gelu':
             self.semifinal_activation = nn.GELU()
         else:
-            raise ValueError(
-                f'{activation_function}: invalid activation function')
+            raise ValueError(f'{activation_function}: invalid activation function')
         self.final_linear = nn.Linear(dim_final_feedforward, 1)
 
     def forward(self, encode):

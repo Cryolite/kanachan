@@ -12,7 +12,7 @@ from kanachan.training.bert import training
 if __name__ == '__main__':
     loss_function = nn.CrossEntropyLoss(ignore_index=NUM_TYPES_OF_ACTIONS + 1)
     training.main(
-        program_description='BERT training phase1 - imitate human players.',
-        decoder_type=Decoder, model_type=Model, default_optimizer='lamb',
-        iterator_adaptor_type=IteratorAdaptor, loss_function=loss_function)
+            program_description='BERT training phase1 - imitate human players.',
+            decoder_type=Decoder, model_type=Model, default_optimizer='lamb',
+            iterator_adaptor_type=IteratorAdaptor, loss_function=loss_function)
     sys.exit(0)
