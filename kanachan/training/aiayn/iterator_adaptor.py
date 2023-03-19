@@ -9,20 +9,21 @@ from kanachan.training.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_NUMERIC_FEATURES, NUM_TYPES_OF_PROGRESSION_FEATURES,
     MAX_LENGTH_OF_PROGRESSION_FEATURES, NUM_TYPES_OF_ACTIONS,
-    MAX_NUM_ACTION_CANDIDATES)
+    MAX_NUM_ACTION_CANDIDATES
+)
 
 
 class IteratorAdaptor(object):
     def __init__(self, path: pathlib.Path, num_dimensions: int, dtype) -> None:
-        self.__fp = open(path)
+        self.__fp = open(path, encoding='UTF-8')
         self.__num_dimensions = num_dimensions
         self.__dtype = dtype
 
         if get_worker_info() is not None:
             try:
-                for i in range(get_worker_info().id):
+                for _ in range(get_worker_info().id):
                     next(self.__fp)
-            except StopIteration as e:
+            except StopIteration as _:
                 pass
 
     def __del__(self) -> None:
@@ -30,7 +31,7 @@ class IteratorAdaptor(object):
 
     def __parse_line(self, line: str):
         line = line.rstrip('\n')
-        uuid, sparse, numeric, positional, candidates, index, results = line.split('\t')
+        uuid, sparse, numeric, positional, candidates, index, _ = line.split('\t')
 
         sparse = json.loads('[' + sparse + ']')
         if len(sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
@@ -84,8 +85,8 @@ class IteratorAdaptor(object):
             line = next(self.__fp)
             try:
                 assert(get_worker_info().num_workers >= 1)
-                for i in range(get_worker_info().num_workers - 1):
+                for _ in range(get_worker_info().num_workers - 1):
                     next(self.__fp)
-            except StopIteration as e:
+            except StopIteration as _:
                 pass
             return self.__parse_line(line)

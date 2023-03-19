@@ -4,7 +4,8 @@ import torch
 from torch import nn
 from kanachan.training.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES, NUM_TYPES_OF_PROGRESSION_FEATURES,
-    MAX_LENGTH_OF_PROGRESSION_FEATURES,)
+    MAX_LENGTH_OF_PROGRESSION_FEATURES
+)
 from kanachan.training.positional_embedding import PositionalEmbedding
 
 

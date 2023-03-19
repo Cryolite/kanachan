@@ -2,7 +2,7 @@
 
 import torch
 from torch import nn
-from kanachan.training.constants import (NUM_TYPES_OF_ACTIONS,)
+from kanachan.training.constants import NUM_TYPES_OF_ACTIONS
 
 
 class Decoder(nn.Module):

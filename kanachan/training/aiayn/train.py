@@ -16,20 +16,19 @@ from torch.utils.data import DataLoader
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils import tensorboard
-from kanachan.training.common import (initialize_logging, Dataset,)
+from apex import amp
+from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
+from kanachan.training.common import initialize_logging, Dataset
 from kanachan.training.aiayn.iterator_adaptor import IteratorAdaptor
 from kanachan.training.aiayn.encoder import Encoder
 from kanachan.training.aiayn.decoder import Decoder
 from kanachan.training.aiayn.model import Model
-from apex import amp
-from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 
 
 def _training_epoch(
-        data_loader: DataLoader, model: Model, optimizer, device: str, writer,
-        batch_count: int, snapshot_interval: int, is_main_process: bool,
-        is_multiprocess: bool, rank: Optional[int],
-        snapshots_path: pathlib.Path) -> None:
+        data_loader: DataLoader, encoder: Encoder, decoder: Decoder, model: Model, optimizer,
+        device: str, writer, batch_count: int, snapshot_interval: int, is_main_process: bool,
+        is_multiprocess: bool, rank: Optional[int], snapshots_path: pathlib.Path) -> None:
     start_time = datetime.datetime.now()
 
     loss_function = nn.CrossEntropyLoss()
@@ -63,8 +62,7 @@ def _training_epoch(
         optimizer.step()
 
         if is_main_process:
-            logging.info(
-                f'batch = {batch_count}, training loss = {loss.item()}')
+            logging.info('batch = %d, training loss = %E', batch_count, loss.item())
             writer.add_scalar('Training batch loss', batch_loss, batch_count)
 
         batch_count += 1
@@ -82,8 +80,8 @@ def _training_epoch(
                 snapshots_path / f'optimizer.{batch_count}.pth')
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info(f'Pretraining has finished (elapsed time = {elapsed_time}).')
-    logging.info(f'The final training loss = {training_loss / batch_count}')
+    logging.info('Pretraining has finished (elapsed time = %f).', elapsed_time)
+    logging.info('The final training loss = %E', training_loss / batch_count)
 
     if is_main_process:
         snapshots_path.mkdir(parents=False, exist_ok=True)
@@ -95,7 +93,7 @@ def _training_epoch(
             optimizer.state_dict(), snapshots_path / f'optimizer.{batch_count}.pth')
 
 
-if __name__ == '__main__':
+def _main() -> None:
     ap = ArgumentParser(
         description='Pre-train the model by imitating human players.')
     ap_data = ap.add_argument_group(title='Data')
@@ -221,11 +219,11 @@ if __name__ == '__main__':
     if config.initial_encoder is not None and not config.initial_encoder.exists():
         raise RuntimeError(f'{config.initial_encoder}: does not exist')
     if config.initial_encoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`')
+        raise RuntimeError('`--initial-encoder` conflicts with `--resume`')
     if config.initial_decoder is not None and not config.initial_decoder.exists():
         raise RuntimeError(f'{config.initial_decoder}: does not exist')
     if config.initial_decoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-decoder` conflicts with `--resume`')
+        raise RuntimeError('`--initial-decoder` conflicts with `--resume`')
 
     if config.batch_size < 1:
         raise RuntimeError(f'{config.batch_size}: invalid batch size')
@@ -252,7 +250,7 @@ if __name__ == '__main__':
     if config.initial_optimizer is not None and not config.initial_optimizer.exists():
         raise RuntimeError(f'{config.initial_optimizer}: does not exist')
     if config.initial_optimizer is not None and config.resume:
-        raise RuntimeError(f'`--initial-optimizer` conflicts with `--resume`')
+        raise RuntimeError('`--initial-optimizer` conflicts with `--resume`')
 
     if config.experiment_name is None:
         now = datetime.datetime.now()
@@ -277,49 +275,49 @@ if __name__ == '__main__':
     experiment_path.mkdir(parents=True, exist_ok=True)
     initialize_logging(experiment_path, rank)
 
-    logging.info(f'Training data: {config.training_data}')
-    logging.info(f'# of workers: {config.num_workers}')
-    logging.info(f'Device: {device}')
+    logging.info('Training data: %s', str(config.training_data))
+    logging.info('# of workers: %d', config.num_workers)
+    logging.info('Device: %s', device)
     if backends.cudnn.is_available():
-        logging.info(f'cuDNN: available')
+        logging.info('cuDNN: available')
         backends.cudnn.benchmark = True
     else:
-        logging.info(f'cuDNN: N/A')
-    logging.info(f'dtype: {dtype}')
-    logging.info(f'# of dimensions: {config.num_dimensions}')
-    logging.info(f'# of heads: {config.num_heads}')
-    logging.info(f'# of layers: {config.num_layers}')
-    logging.info(f'# of final dimensions: {config.num_final_dimensions}')
+        logging.info('cuDNN: N/A')
+    logging.info('dtype: %s', dtype)
+    logging.info('# of dimensions: %d', config.num_dimensions)
+    logging.info('# of heads: %d', config.num_heads)
+    logging.info('# of layers: %d', config.num_layers)
+    logging.info('# of final dimensions: %d', config.num_final_dimensions)
     if config.initial_encoder is None and not config.resume:
-        logging.info(f'Initial encoder: (initialized randomly)')
+        logging.info('Initial encoder: (initialized randomly)')
     elif config.initial_encoder is not None:
-        logging.info(f'Initial encoder: {config.initial_encoder}')
+        logging.info('Initial encoder: %s', str(config.initial_encoder))
     if config.initial_decoder is None and not config.resume:
-        logging.info(f'Initial decoder: (initialized randomly)')
+        logging.info('Initial decoder: (initialized randomly)')
     elif config.initial_decoder is not None:
-        logging.info(f'Initial decoder: {config.initial_decoder}')
-    logging.info(f'Batch size: {config.batch_size}')
-    logging.info(f'Optimizer: {config.optimizer}')
+        logging.info('Initial decoder: %s', str(config.initial_decoder))
+    logging.info('Batch size: %d', config.batch_size)
+    logging.info('Optimizer: %s', config.optimizer)
     if config.optimizer in ('adam', 'lamb',):
-        logging.info(f'Epsilon parameter: {config.epsilon}')
+        logging.info('Epsilon parameter: %E', config.epsilon)
     if config.optimizer == 'sgd':
-        logging.info(f'Momentum factor: {config.momentum}')
-    logging.info(f'Sparse: {sparse}')
-    logging.info(f'Learning rate: {learning_rate}')
-    logging.info(f'Dropout: {config.dropout}')
+        logging.info('Momentum factor: %f', config.momentum)
+    logging.info('Sparse: %s', sparse)
+    logging.info('Learning rate: %E', learning_rate)
+    logging.info('Dropout: %f', config.dropout)
     if config.initial_optimizer is None and not config.resume:
-        logging.info(f'Initial optimizer: (initialized normally)')
+        logging.info('Initial optimizer: (initialized normally)')
     elif config.initial_optimizer is not None:
-        logging.info(f'Initial optimizer: {config.initial_optimizer}')
+        logging.info('Initial optimizer: %s', str(config.initial_optimizer))
     if rank is None:
-        logging.info(f'Process rank: N/A (single process)')
+        logging.info('Process rank: N/A (single process)')
     else:
-        logging.info(f'Process rank: {rank}')
-    logging.info(f'Snapshot interval: {config.snapshot_interval}')
+        logging.info('Process rank: %d', rank)
+    logging.info('Snapshot interval: %d', config.snapshot_interval)
     if config.resume:
-        logging.info(f'Resume from {experiment_path}')
+        logging.info('Resume from %s', str(experiment_path))
     else:
-        logging.info(f'Experiment output: {experiment_path}')
+        logging.info('Experiment output: %s', str(experiment_path))
 
     config = {
         'training_data': config.training_data,
@@ -427,8 +425,11 @@ if __name__ == '__main__':
             drop_last=is_multiprocess)
 
         _training_epoch(
-            data_loader, model, optimizer, config['device'], writer,
-            batch_count, config['snapshot_interval'], is_main_process,
-            is_multiprocess, rank, config['snapshots_path'])
+            data_loader, encoder, decoder, model, optimizer, config['device'], writer, batch_count,
+            config['snapshot_interval'], is_main_process, is_multiprocess, rank,
+            config['snapshots_path'])
 
+
+if __name__ == '__main__':
+    _main()
     sys.exit(0)
