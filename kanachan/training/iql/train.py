@@ -690,11 +690,12 @@ def _main() -> None:
             raise RuntimeError(f'{qv2_optimizer_snapshot_path}: Does not exist.')
         if not qv2_optimizer_snapshot_path.is_file():
             raise RuntimeError(f'{qv2_optimizer_snapshot_path}: Not a file.')
-        amp_snapshot_path = snapshots_path / f'amp.{num_samples}.pth'
-        if not amp_snapshot_path.exists():
-            raise RuntimeError(f'{amp_snapshot_path}: Does not exist.')
-        if not amp_snapshot_path.is_file():
-            raise RuntimeError(f'{amp_snapshot_path}: Not a file.')
+        if config.optimizer != 'mtadam':
+            amp_snapshot_path = snapshots_path / f'amp.{num_samples}.pth'
+            if not amp_snapshot_path.exists():
+                raise RuntimeError(f'{amp_snapshot_path}: Does not exist.')
+            if not amp_snapshot_path.is_file():
+                raise RuntimeError(f'{amp_snapshot_path}: Not a file.')
 
     experiment_path.mkdir(parents=True, exist_ok=True)
     initialize_logging(experiment_path, rank)
@@ -787,7 +788,8 @@ def _main() -> None:
         logging.info('QV2 target network snapshot: %s', qv2_target_snapshot_path)
         logging.info('QV1 source network optimizer snapshot: %s', qv1_optimizer_snapshot_path)
         logging.info('QV2 source network optimizer snapshot: %s', qv2_optimizer_snapshot_path)
-        logging.info('AMP snapshot: %s', amp_snapshot_path)
+        if config.optimizer != 'mtadam':
+            logging.info('AMP snapshot: %s', amp_snapshot_path)
     else:
         logging.info('Experiment output: %s', experiment_path)
     if config.snapshot_interval == 0:
@@ -954,8 +956,9 @@ def _main() -> None:
         assert qv1_optimizer_snapshot_path.is_file()
         assert qv2_optimizer_snapshot_path.exists()
         assert qv2_optimizer_snapshot_path.is_file()
-        assert amp_snapshot_path.exists()
-        assert amp_snapshot_path.is_file()
+        if config['optimizer'] != 'mtadam':
+            assert amp_snapshot_path.exists()
+            assert amp_snapshot_path.is_file()
         qv1_source_state_dict = torch.load(qv1_source_snapshot_path, map_location='cpu')
         qv1_source_new_state_dict = {}
         for key, value in qv1_source_state_dict.items():
@@ -986,7 +989,8 @@ def _main() -> None:
         qv2_target_model.cuda()
         qv1_optimizer.load_state_dict(torch.load(qv1_optimizer_snapshot_path, map_location='cpu'))
         qv2_optimizer.load_state_dict(torch.load(qv2_optimizer_snapshot_path, map_location='cpu'))
-        amp.load_state_dict(torch.load(amp_snapshot_path, map_location='cpu'))
+        if config['optimizer'] != 'mtadam':
+            amp.load_state_dict(torch.load(amp_snapshot_path, map_location='cpu'))
 
     if config['is_multiprocess']:
         init_process_group(backend='nccl')
