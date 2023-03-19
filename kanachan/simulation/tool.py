@@ -79,10 +79,10 @@ class Tool(object):
 
     def calculate_xiangting(self, hand: List[int]) -> int:
         try:
-            assert(isinstance(hand, list))
-            assert(sum(hand) in (1, 2, 4, 5, 7, 8, 10, 11, 13, 14))
+            assert isinstance(hand, list)
+            assert sum(hand) in (1, 2, 4, 5, 7, 8, 10, 11, 13, 14)
             return self.__shanten_calculator.calculate_shanten(hand)
-        except Exception as e:
+        except Exception:
             print_exc(file=sys.stderr)
             raise
 
@@ -91,15 +91,17 @@ class Tool(object):
     def __append_zimohu_candidate(
             self, hand: List[int], melds: List[_Meld], zimo_tile: int,
             tool_config: int, candidates: List[int]) -> None:
-        assert(isinstance(hand, list))
-        assert(isinstance(melds, list))
-        assert(isinstance(zimo_tile, int))
-        assert(0 <= zimo_tile and zimo_tile < 37)
-        assert(isinstance(tool_config, int))
-        assert(tool_config >= 0)
-        assert(isinstance(candidates, list))
+        assert isinstance(hand, list)
+        assert isinstance(melds, list)
+        assert isinstance(zimo_tile, int)
+        assert 0 <= zimo_tile and zimo_tile < 37
+        assert isinstance(tool_config, int)
+        assert tool_config >= 0
+        assert isinstance(candidates, list)
 
-        melds = [Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1)) for meld_type, tiles, opened in melds]
+        melds = [
+                Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
+                for meld_type, tiles, opened in melds]
         win_tile = self._convert_to_win_tile(zimo_tile)
         hand_config = self._decode_tool_config(tool_config)
 
@@ -123,25 +125,27 @@ class Tool(object):
         try:
             self.__append_zimohu_candidate(
                 hand, melds, zimo_tile, tool_config, candidates)
-        except Exception as e:
+        except Exception:
             print_exc(file=sys.stderr)
             raise
 
     def __append_rong_candidate(
             self, relseat: int, hand: List[int], melds: List[_Meld],
             zimo_tile: int, tool_config: int, candidates: List[int]) -> None:
-        assert(isinstance(relseat, int))
-        assert(0 <= relseat and relseat < 3)
-        assert(isinstance(hand, list))
-        assert(len(hand) in (2, 5, 8, 11, 14))
-        assert(isinstance(melds, list))
-        assert(isinstance(zimo_tile, int))
-        assert(0 <= zimo_tile and zimo_tile < 37)
-        assert(isinstance(tool_config, int))
-        assert(tool_config >= 0)
-        assert(isinstance(candidates, list))
+        assert isinstance(relseat, int)
+        assert 0 <= relseat and relseat < 3
+        assert isinstance(hand, list)
+        assert len(hand) in (2, 5, 8, 11, 14)
+        assert isinstance(melds, list)
+        assert isinstance(zimo_tile, int)
+        assert 0 <= zimo_tile and zimo_tile < 37
+        assert isinstance(tool_config, int)
+        assert tool_config >= 0
+        assert isinstance(candidates, list)
 
-        melds = [Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1)) for meld_type, tiles, opened in melds]
+        melds = [
+                Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
+                for meld_type, tiles, opened in melds]
         win_tile = self._convert_to_win_tile(zimo_tile)
         hand_config = self._decode_tool_config(tool_config)
 
@@ -164,30 +168,32 @@ class Tool(object):
             zimo_tile: int, tool_config: int, candidates: List[int]) -> None:
         try:
             self.__append_rong_candidate(
-                relseat, hand, melds, zimo_tile, tool_config, candidates)
-        except Exception as e:
+                    relseat, hand, melds, zimo_tile, tool_config, candidates)
+        except Exception:
             print_exc(file=sys.stderr)
             raise
 
     def __calculate_hand(
             self, hand: List[int], melds: List[_Meld], hupai: int,
             dora_indicators: List[int], tool_config: int) -> Tuple[int, int]:
-        assert(isinstance(hand, list))
-        assert(len(hand) in (2, 5, 8, 11, 14))
-        assert(isinstance(melds, list))
-        assert(isinstance(hupai, int))
-        assert(0 <= hupai and hupai < 37)
-        assert(isinstance(dora_indicators, list))
-        assert(isinstance(tool_config, int))
-        assert(tool_config >= 0)
+        assert isinstance(hand, list)
+        assert len(hand) in (2, 5, 8, 11, 14)
+        assert isinstance(melds, list)
+        assert isinstance(hupai, int)
+        assert 0 <= hupai and hupai < 37
+        assert isinstance(dora_indicators, list)
+        assert isinstance(tool_config, int)
+        assert tool_config >= 0
 
         win_tile = self._convert_to_win_tile(hupai)
-        melds = [Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1)) for meld_type, tiles, opened in melds]
+        melds = [
+                Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
+                for meld_type, tiles, opened in melds]
         hand_config = self._decode_tool_config(tool_config)
 
         response = self.__hand_calculator.estimate_hand_value(
-            tiles=hand, win_tile=win_tile, melds=melds,
-            dora_indicators=dora_indicators, config=hand_config)
+                tiles=hand, win_tile=win_tile, melds=melds,
+                dora_indicators=dora_indicators, config=hand_config)
 
         if response.error is None:
             if 13 <= response.han and response.han < 26:
@@ -203,8 +209,7 @@ class Tool(object):
             self, hand: List[int], melds: List[_Meld], hupai: int,
             dora_indicators: List[int], tool_config: int) -> Tuple[int, int]:
         try:
-            return self.__calculate_hand(
-                hand, melds, hupai, dora_indicators, tool_config)
-        except Exception as e:
+            return self.__calculate_hand(hand, melds, hupai, dora_indicators, tool_config)
+        except Exception:
             print_exc(file=sys.stderr)
             raise

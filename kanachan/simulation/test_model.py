@@ -2,13 +2,11 @@
 
 import math
 from typing import List
-import sys
-from traceback import print_exc
 import torch
 from kanachan.training.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_TYPES_OF_PROGRESSION_FEATURES, MAX_LENGTH_OF_PROGRESSION_FEATURES,
-    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
+    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES)
 
 
 class TestModel(object):
@@ -44,7 +42,7 @@ class TestModel(object):
             message = ''
             sparse = torch.squeeze(sparse)
             sparse_ = list(decision['sparse'])
-            for i in range(len(sparse_), MAX_NUM_ACTIVE_SPARSE_FEATURES):
+            for _ in range(len(sparse_), MAX_NUM_ACTIVE_SPARSE_FEATURES):
                 # Padding.
                 sparse_.append(NUM_TYPES_OF_SPARSE_FEATURES)
             sparse_ = torch.tensor(
@@ -62,7 +60,7 @@ class TestModel(object):
                 message += "numeric != decision['numeric']\n"
             progression = torch.squeeze(progression)
             progression_ = list(decision['progression'])
-            for i in range(len(progression_), MAX_LENGTH_OF_PROGRESSION_FEATURES):
+            for _ in range(len(progression_), MAX_LENGTH_OF_PROGRESSION_FEATURES):
                 # Padding.
                 progression_.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
             progression_ = torch.tensor(
@@ -73,7 +71,7 @@ class TestModel(object):
                 message += "progression != decision['progression']\n"
             candidates = torch.squeeze(candidates)
             candidates_ = list(decision['candidates'])
-            for i in range(len(candidates_), MAX_NUM_ACTION_CANDIDATES):
+            for _ in range(len(candidates_), MAX_NUM_ACTION_CANDIDATES):
                 # Padding.
                 candidates_.append(NUM_TYPES_OF_ACTIONS + 1)
             candidates_ = torch.tensor(

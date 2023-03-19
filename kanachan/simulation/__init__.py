@@ -2,4 +2,4 @@
 
 from .tool import Tool
 from .test_model import TestModel
-from ._simulation import (simulate, test)
+from ._simulation import simulate, test # pylint: disable=import-error

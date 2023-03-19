@@ -2,12 +2,9 @@
 
 import re
 from pathlib import Path
-from argparse import ArgumentParser
-from typing import (Tuple, List, Callable,)
+from argparse import ArgumentParser, Namespace
+from typing import Tuple, List, Callable
 import sys
-import importlib
-import yaml
-import jsonschema
 import torch
 from torch import backends
 from kanachan.training.bert.model_loader import load_model
@@ -15,46 +12,51 @@ from kanachan.training.bert.model_mode import ModelMode
 from kanachan.simulation import simulate
 
 
-def main():
-    ap = ArgumentParser(description='Run Mahjong Soul game simulation.')
-    ap.add_argument('--device', help='device', metavar='DEV')
-    ap.add_argument(
-        '--dtype', default='float16', choices=('float16', 'float32',),
+def _parse_arguments() -> Namespace:
+    parser = ArgumentParser(description='Run Mahjong Soul game simulation.')
+    parser.add_argument('--device', help='device', metavar='DEV')
+    parser.add_argument(
+        '--dtype', default='float16',
+        choices=('half', 'float16', 'float', 'float32',),
         help='data type (defaults to `float16`)', metavar='DTYPE')
-    ap.add_argument(
+    parser.add_argument(
         '--baseline-model', type=Path, required=True,
         help='path to config file for baseline model', metavar='BASELINE_MODEL')
-    ap.add_argument(
+    parser.add_argument(
         '--baseline-grade', type=int, required=True,
         help='grade of baseline model', metavar='BASELINE_GRADE')
-    ap.add_argument(
+    parser.add_argument(
         '--proposed-model', type=Path, required=True,
         help='path to config file for proposed model', metavar='PROPOSED_MODEL')
-    ap.add_argument(
+    parser.add_argument(
         '--proposed-grade', type=int, required=True,
         help='grade of proposed model', metavar='PROPOSED_GRADE')
-    ap.add_argument(
+    parser.add_argument(
         '--room', choices=('bronze', 'silver', 'gold', 'jade', 'throne',),
         required=True, help='room for simulation')
-    ap.add_argument(
+    parser.add_argument(
         '--dongfengzhan', action='store_true',
         help='simulate dong feng zhan (東風戦)')
-    ap.add_argument(
+    parser.add_argument(
         '--mode', default='2vs2', choices=('2vs2', '1vs3',),
         help='simulation mode (defaults to `2vs2`)')
-    ap.add_argument(
+    parser.add_argument(
         '--non-duplicated', action='store_true',
         help='disable duplicated simulation')
-    ap.add_argument(
+    parser.add_argument(
         '-n', default=1, type=int,
         help='# of sets to simulate (defaults to `1`)',
         metavar='N')
 
-    config = ap.parse_args()
+    return parser.parse_args()
+
+
+def _main():
+    config = _parse_arguments()
 
     if config.device is not None:
-        m = re.search('^(?:cpu|cuda(\\d*))$', config.device)
-        if m is None:
+        match = re.search('^(?:cpu|cuda(\\d*))$', config.device)
+        if match is None:
             raise RuntimeError(f'{config.device}: invalid device')
         device = config.device
     elif backends.cuda.is_built():
@@ -62,10 +64,10 @@ def main():
     else:
         device = 'cpu'
 
-    if config.dtype == 'float16':
-        dtype = torch.float16
-    elif config.dtype == 'float32':
-        dtype = torch.float32
+    if config.dtype in ('half', 'float16'):
+        dtype = torch.half
+    elif config.dtype == ('float', 'float32'):
+        dtype = torch.float
     else:
         raise ValueError(f'{config.dtype}: An invalid data type.')
 
@@ -108,52 +110,52 @@ def main():
     results = []
     with ModelMode(baseline_model, 'prediction'), ModelMode(proposed_model, 'prediction'):
         for i in range(config.n):
-            r = simulate(
+            result = simulate(
                 device, dtype, mode, config.baseline_grade, baseline_model,
                 config.proposed_grade, proposed_model)
-            results.extend(r)
+            results.extend(result)
 
     num_games = len(results)
 
     def get_grading_point(ranking: int, score: int) -> int:
         return [125, 60, -5, -255][ranking] + (score - 25000) // 1000
 
-    def get_soul_point(ranking: int, score: int) -> float:
+    def get_soul_point(ranking: int, _: int) -> float:
         return [0.5, 0.2, -0.2, -0.5][ranking]
 
     Statistic = Tuple[float, float]
 
     def get_statistic(
             results: List[object], proposed: int,
-            f: Callable[[int, int], float]) -> Statistic:
-        assert(proposed in (0, 1))
+            callback: Callable[[int, int], float]) -> Statistic:
+        assert proposed in (0, 1)
         average = 0.0
-        n = 0
+        num_proposed = 0
         for game in results:
-            assert(len(game['proposed']) == 4)
-            assert(len(game['ranking']) == 4)
+            assert len(game['proposed']) == 4
+            assert len(game['ranking']) == 4
             for i in range(4):
-                assert(game['proposed'][i] in (0, 1))
+                assert game['proposed'][i] in (0, 1)
                 ranking = game['ranking'][i]
                 score = game['scores'][i]
                 if game['proposed'][i] == proposed:
-                    average += f(ranking, score)
-                    n += 1
-        assert(n >= 1)
-        average /= n
+                    average += callback(ranking, score)
+                    num_proposed += 1
+        assert num_proposed >= 1
+        average /= num_proposed
 
         variance = 0.0
-        n = 0
+        num_proposed = 0
         for game in results:
             for i in range(4):
                 ranking = game['ranking'][i]
                 score = game['scores'][i]
                 if game['proposed'][i] == proposed:
-                    variance += (f(ranking, score) - average) ** 2.0
-                    n += 1
-        assert(n >= 1)
+                    variance += (callback(ranking, score) - average) ** 2.0
+                    num_proposed += 1
+        assert num_proposed >= 1
         # Unbiased sample variance.
-        variance /= (n - 1)
+        variance /= (num_proposed - 1)
 
         return average, variance
 
@@ -166,28 +168,29 @@ def main():
         soul_point_statistic = get_statistic(results, proposed, get_soul_point)
 
         top_rate = 0.0
-        n = 0
+        num_proposed = 0
         for game in results:
             for i in range(4):
                 if game['proposed'][i] == proposed:
-                    n += 1
+                    num_proposed += 1
                     if game['ranking'][i] == 0:
                         top_rate += 1.0
-        top_rate /= n
+        top_rate /= num_proposed
         # Unbiased sample variance.
-        top_rate_variance = top_rate * (1.0 - top_rate) / (n - 1)
+        top_rate_variance = top_rate * (1.0 - top_rate) / (num_proposed - 1)
 
         quinella_rate = 0.0
-        n = 0
+        num_proposed = 0
         for game in results:
             for i in range(4):
                 if game['proposed'][i] == proposed:
-                    n += 1
+                    num_proposed += 1
                     if game['ranking'][i] <= 1:
                         quinella_rate += 1.0
-        quinella_rate /= n
+        quinella_rate /= num_proposed
         # Unbiased sample variance.
-        quinella_rate_variance = quinella_rate * (1.0 - quinella_rate) / (n - 1)
+        quinella_rate_variance \
+            = quinella_rate * (1.0 - quinella_rate) / (num_proposed - 1)
 
         return (
             ranking_statistic,
@@ -211,11 +214,11 @@ def main():
                 num_baseline += 1
                 baseline_ranking += ranking
             else:
-                assert(game['proposed'][i] == 1)
+                assert game['proposed'][i] == 1
                 num_proposed += 1
                 proposed_ranking += ranking
-        assert(num_baseline >= 1)
-        assert(num_proposed >= 1)
+        assert num_baseline >= 1
+        assert num_proposed >= 1
         baseline_ranking /= num_baseline
         proposed_ranking /= num_proposed
         diff = proposed_ranking - baseline_ranking
@@ -234,11 +237,11 @@ def main():
                 num_baseline += 1
                 baseline_ranking += ranking
             else:
-                assert(game['proposed'][i] == 1)
+                assert game['proposed'][i] == 1
                 num_proposed += 1
                 proposed_ranking += ranking
-        assert(num_baseline >= 1)
-        assert(num_proposed >= 1)
+        assert num_baseline >= 1
+        assert num_proposed >= 1
         baseline_ranking /= num_baseline
         proposed_ranking /= num_proposed
         diff = proposed_ranking - baseline_ranking
@@ -288,5 +291,5 @@ difference:
 
 
 if __name__ == '__main__':
-    main()
+    _main()
     sys.exit(0)
