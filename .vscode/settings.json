@@ -1,0 +1,9 @@
+{
+    "python.analysis.extraPaths": [
+        "/home/vscode/.local/lib/python3.10/site-packages"
+    ],
+    "python.linting.pylintArgs": [
+        "--generated-members=numpy.* ,torch.*"
+    ],
+    "explorer.excludeGitIgnore": true
+}
