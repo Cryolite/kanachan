@@ -14,16 +14,16 @@ class Model(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.freeze_encoder = freeze_encoder
-        self.mode = 'training'
+        self._mode = 'training'
 
     def mode(self, mode: str) -> None:
         if mode not in ('training', 'validation', 'prediction'):
             raise ValueError(mode)
         self.decoder.mode(mode)
-        self.mode = mode
+        self._mode = mode
 
     def forward(self, x):
-        if self.mode == 'prediction':
+        if self._mode == 'prediction':
             encode = self.encoder(x)
         else:
             if self.freeze_encoder:

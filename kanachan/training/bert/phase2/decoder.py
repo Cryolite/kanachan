@@ -8,7 +8,7 @@ from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
 class Decoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_final_feedforward: int, dropout: float,
-            activation_function: str, **kwargs) -> None:
+            activation_function: str, **_) -> None:
         super(Decoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
@@ -23,15 +23,15 @@ class Decoder(nn.Module):
                 f'{activation_function}: invalid activation function')
         self.final_linear = nn.Linear(dim_final_feedforward, 1)
 
-        self.mode = 'training'
+        self._mode = 'training'
 
     def mode(self, mode: str) -> None:
         if mode not in ('training', 'validation', 'prediction'):
             raise ValueError(mode)
-        self.mode = mode
+        self._mode = mode
 
     def forward(self, encode):
-        if self.mode == 'prediction':
+        if self._mode == 'prediction':
             encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         else:
             encode, index = encode
