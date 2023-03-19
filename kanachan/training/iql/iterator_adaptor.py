@@ -84,9 +84,8 @@ class IteratorAdaptor(object):
         index = int(index)
         index = torch.tensor(index, device='cpu', dtype=torch.int64)
 
-        if len(columns) == 10:
-            next_sparse, next_numeric, next_progression, next_candidates, delta_round_score = columns[5:]
-            delta_round_score = int(delta_round_score)
+        if len(columns) == 9:
+            next_sparse, next_numeric, next_progression, next_candidates = columns[5:]
 
             next_sparse = [int(x) for x in next_sparse.split(',')]
             if len(next_sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
@@ -133,17 +132,15 @@ class IteratorAdaptor(object):
             next_candidates = torch.tensor(
                 next_candidates, device='cpu', dtype=torch.int32)
 
-            reward = self.__get_reward(
-                sparse, numeric, progression, candidates, index,
-                delta_round_score, None, None)
+            reward = self.__get_reward(sparse, numeric, progression, candidates, index, None, None)
             reward = torch.tensor(reward, device='cpu', dtype=torch.float32)
 
             return (
                 sparse, numeric, progression, candidates, index,
                 next_sparse, next_numeric, next_progression, next_candidates,
                 reward)
-        elif len(columns) == 8:
-            delta_round_score, game_rank, game_score = [int(column) for column in columns[5:]]
+        elif len(columns) == 7:
+            game_rank, game_score = [int(column) for column in columns[5:]]
 
             dummy_sparse = [NUM_TYPES_OF_SPARSE_FEATURES] * MAX_NUM_ACTIVE_SPARSE_FEATURES
             dummy_sparse = torch.tensor(dummy_sparse, device='cpu', dtype=torch.int32)
@@ -164,8 +161,7 @@ class IteratorAdaptor(object):
                 dummy_candidates, device='cpu', dtype=torch.int32)
 
             reward = self.__get_reward(
-                sparse, numeric, progression, candidates, index,
-                delta_round_score, game_rank, game_score)
+                sparse, numeric, progression, candidates, index, game_rank, game_score)
             reward = torch.tensor(reward, device='cpu', dtype=torch.float32)
 
             return (

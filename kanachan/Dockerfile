@@ -1,7 +1,7 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.08-py3
 FROM $BASE_IMAGE
 
-RUN apt-get update && \
+RUN apt-get -y update && \
     apt-get -y dist-upgrade && \
     apt-get -y install \
       git \
@@ -12,7 +12,6 @@ RUN apt-get update && \
       python3-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     locale-gen en_US.UTF-8 ja_JP.UTF-8 && \
-    pip3 install -U pip && \
     useradd -ms /bin/bash ubuntu && \
     chown ubuntu:ubuntu /workspace
 
@@ -20,8 +19,8 @@ USER ubuntu
 
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
-RUN pip3 install -U \
-      mahjong==1.1.11 \
+RUN pip3 install -U pip && \
+    pip3 install -U \
       setuptools \
       wheel
 
@@ -46,12 +45,19 @@ RUN mkdir -p /home/ubuntu/.local/src && \
     popd && \
     popd
 
-RUN git clone https://github.com/NVIDIA/apex.git && \
+RUN git clone 'https://github.com/NVIDIA/apex.git' && \
     (cd apex && \
      MAX_JOBS=$(nproc) pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./) && \
     rm -rf apex
 
 COPY --chown=ubuntu . /workspace/kanachan
+
+RUN mkdir -p /home/ubuntu/.local/src && \
+    pushd /home/ubuntu/.local/src && \
+    git clone 'https://github.com/ItzikMalkiel/MTAdam.git' && \
+    cp MTAdam/mtadam.py /workspace/kanachan/kanachan/training && \
+    rm -rf MTAdam && \
+    popd
 
 RUN pushd /workspace/kanachan/src/common && \
     protoc -I. --cpp_out=. mahjongsoul.proto && \

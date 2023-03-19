@@ -58,7 +58,7 @@ Once test data is ready, the testing framework runs [test/annotation_vs_simulati
 
 If there is any bug in either annotation or simulation, either wrong features are passed to the dummy model, features are passed in an wrong order, or simulation returns an wrong result. The testing framework checks these indications of discrepancy between annotation and simulation, and causes the test to fail when such discrepancy is detected.
 
-This testing framework is very powerful and has allowed me to find many bugs in annotation and simulation so far. In addition, since I have been running this test framework on a set of test data consisting of more than 100 million rounds, I have even uncovered a large number of unstated corner cases of the standard rule of Mahjong Soul.
+This testing framework is very powerful and has allowed me to find many bugs in annotation and simulation so far. In addition, since I have been running this test framework on a set of test data consisting of more than 100 million rounds, I have even uncovered a large number of [unstated corner cases of the standard rule of Mahjong Soul](https://gist.github.com/Cryolite/a026f41713f6a7ca88713737f5c2cfb6).
 
 ## Appendix: JSON Schema for Test Data
 
