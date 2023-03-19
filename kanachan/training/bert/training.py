@@ -8,7 +8,6 @@ import os
 from argparse import ArgumentParser
 import logging
 import json
-import sys
 from typing import (Optional, Type, Callable)
 import yaml
 import torch
@@ -28,16 +27,14 @@ from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
 
 
 def _validate(
-        *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
-        device: str, validation_data: Path, num_workers: int, dimension: int,
-        iterator_adaptor_type: Type[IteratorAdaptorBase],
-        validation_batch_size: int, model: nn.Module, **kwargs) -> float:
+        *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int], device: str,
+        validation_data: Path, num_workers: int, iterator_adaptor_type: Type[IteratorAdaptorBase],
+        validation_batch_size: int, model: nn.Module, **_) -> float:
     start_time = datetime.datetime.now()
 
     # Prepare the validation data loader. Note that this data loader must
     # iterate the validation data set only once.
-    iterator_adaptor = lambda path: iterator_adaptor_type(path)
-    dataset = Dataset(validation_data, iterator_adaptor)
+    dataset = Dataset(validation_data, iterator_adaptor_type)
     data_loader = DataLoader(
         dataset, batch_size=validation_batch_size, num_workers=num_workers,
         pin_memory=True, drop_last=is_multiprocess)
@@ -70,11 +67,11 @@ def _validate(
             loss /= world_size
         validation_loss += loss.item()
 
-    validation_loss /= batch_count
+    validation_loss /= batch_count # pylint: disable=undefined-loop-variable
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info(f'Validation has finished (elapsed time = {elapsed_time}).')
-    logging.info(f'Validation loss = {validation_loss}')
+    logging.info('Validation has finished (elapsed time = %f).', elapsed_time)
+    logging.info('Validation loss = %E', validation_loss)
 
     return validation_loss
 
@@ -84,22 +81,18 @@ SnapshotWriter = Callable[
 
 
 def _training_epoch(
-        config: object, *, is_multiprocess: bool, world_size: Optional[int],
-        rank: Optional[int], is_main_process: bool, training_data: Path,
-        num_workers: int, device: str, dimension: int, encoder: Encoder,
+        config: object, *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
+        is_main_process: bool, training_data: Path, num_workers: int, device: str, encoder: Encoder,
         decoder: nn.Module, model: nn.Module, training_batch_size: int,
-        gradient_accumulation_steps: int, max_gradient_norm: float,
-        optimizer: Optimizer, iterator_adaptor_type: Type[IteratorAdaptorBase],
-        loss_function, num_epoch_digits: int, epoch: int,
+        gradient_accumulation_steps: int, max_gradient_norm: float, optimizer: Optimizer,
+        iterator_adaptor_type: Type[IteratorAdaptorBase], loss_function, epoch: int,
         snapshot_interval: int, num_samples: int, num_samples_to_skip: int,
-        summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter,
-        **kwargs) -> int:
+        summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter, **_) -> int:
     start_time = datetime.datetime.now()
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: iterator_adaptor_type(path)
-    dataset = Dataset(training_data, iterator_adaptor)
+    dataset = Dataset(training_data, iterator_adaptor_type)
     data_loader = DataLoader(
         dataset, batch_size=training_batch_size, num_workers=num_workers,
         pin_memory=True, drop_last=is_multiprocess)
@@ -162,18 +155,17 @@ def _training_epoch(
             optimizer.step()
             optimizer.zero_grad()
             logging.info(
-                f'sample = {num_samples}, training loss = {batch_loss}, gradient norm = {gradient_norm}')
+                'sample = %d, training loss = %E, gradient norm = %E',
+                num_samples, batch_loss, gradient_norm)
             if is_main_process:
                 summary_writer.add_scalar(
                     'Training loss', batch_loss, num_samples)
                 summary_writer.add_scalar(
                     'Gradient norm', gradient_norm, num_samples)
         else:
-            logging.info(
-                f'sample = {num_samples}, training loss = {batch_loss}')
+            logging.info('sample = %d, training loss = %E', num_samples, batch_loss)
             if is_main_process:
-                summary_writer.add_scalar(
-                    'Training loss', batch_loss, num_samples)
+                summary_writer.add_scalar('Training loss', batch_loss, num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples_in_epoch - last_snapshot >= snapshot_interval:
             snapshot_writer(
@@ -184,11 +176,10 @@ def _training_epoch(
         batch_count += 1
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info(
-        f'A training epoch has finished (elapsed time = {elapsed_time}).')
+    logging.info('A training epoch has finished (elapsed time = %f).', elapsed_time)
 
     if config['validation_data'] is not None:
-        assert(config['validation_batch_size'] is not None)
+        assert config['validation_batch_size'] is not None
         with ModelMode(config['model'], 'validation'):
             validation_loss = _validate(**config)
         if is_main_process:
@@ -396,13 +387,13 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
     if config.initial_encoder is not None and not config.initial_encoder.exists():
         raise RuntimeError(f'{config.initial_encoder}: does not exist')
     if config.initial_encoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`')
+        raise RuntimeError('`--initial-encoder` conflicts with `--resume`')
     initial_encoder = config.initial_encoder
 
     if config.initial_decoder is not None and not config.initial_decoder.exists():
         raise RuntimeError(f'{config.initial_decoder}: does not exist')
     if config.initial_decoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-decoder` conflicts with `--resume`')
+        raise RuntimeError('`--initial-decoder` conflicts with `--resume`')
     initial_decoder = config.initial_decoder
 
     freeze_encoder = config.freeze_encoder
@@ -438,7 +429,7 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         else:
             learning_rate = config.learning_rate
     else:
-        raise NotImplemented(config.optimizer)
+        raise NotImplementedError(config.optimizer)
     if learning_rate <= 0.0:
         raise RuntimeError(f'{learning_rate}: invalid value for learning rate')
 
@@ -458,7 +449,7 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
     if config.initial_optimizer is not None and not config.initial_optimizer.exists():
         raise RuntimeError(f'{config.initial_optimizer}: does not exist')
     if config.initial_optimizer is not None and config.resume:
-        raise RuntimeError(f'`--initial-optimizer` conflicts with `--resume`')
+        raise RuntimeError('`--initial-optimizer` conflicts with `--resume`')
     initial_optimizer = config.initial_optimizer
 
     if config.num_epochs <= -2:
@@ -534,14 +525,14 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         if not progress_file_path.exists():
             raise RuntimeError(f'{progress_file_path}: does not exist')
 
-        with open(progress_file_path) as f:
+        with open(progress_file_path, encoding='UTF-8') as f:
             progress_data = json.load(f)
         num_samples = progress_data['num_samples']
 
         if epoch == 0:
             num_samples_to_skip = num_samples
         else:
-            with open(snapshots_path / f'progress.{epoch_str}.json') as f:
+            with open(snapshots_path / f'progress.{epoch_str}.json', encoding='UTF-8') as f:
                 progress_data = json.load(f)
             num_samples_to_skip = num_samples - progress_data['num_samples']
 
@@ -550,81 +541,78 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
 
     if world_size is None:
         assert(rank is None)
-        logging.info(f'World size: N/A (single process)')
-        logging.info(f'Process rank: N/A (single process)')
+        logging.info('World size: N/A (single process)')
+        logging.info('Process rank: N/A (single process)')
     else:
         assert(rank is not None)
-        logging.info(f'World size: {world_size}')
-        logging.info(f'Process rank: {rank}')
-    logging.info(f'Training data: {config.training_data}')
+        logging.info('World size: %d', world_size)
+        logging.info('Process rank: %d', rank)
+    logging.info('Training data: %s', str(config.training_data))
     if config.validation_data is None:
-        logging.info(f'Validation data: N/A')
+        logging.info('Validation data: N/A')
     else:
-        logging.info(f'Validation data: {config.validation_data}')
-    logging.info(f'# of workers: {config.num_workers}')
-    logging.info(f'Device: {device}')
+        logging.info('Validation data: %s', str(config.validation_data))
+    logging.info('# of workers: %d', config.num_workers)
+    logging.info('Device: %s', device)
     if backends.cudnn.is_available():
-        logging.info(f'cuDNN: available')
+        logging.info('cuDNN: available')
         backends.cudnn.benchmark = True
     else:
-        logging.info(f'cuDNN: N/A')
-    logging.info(f'AMP optimization level: {amp_optimization_level}')
-    logging.info(f'Embedding dimension: {config.dimension}')
-    logging.info(f'# of heads: {config.num_heads}')
-    logging.info(
-        f'Dimension of the feedforward network in each layer: {config.dim_feedforward}')
-    logging.info(f'# of layers: {config.num_layers}')
-    logging.info(
-        f'Dimension of the final feedforward network: {config.dim_final_feedforward}')
-    logging.info(f'Dropout: {config.dropout}')
-    logging.info(f'Activation function: {config.activation_function}')
+        logging.info('cuDNN: N/A')
+    logging.info('AMP optimization level: %s', amp_optimization_level)
+    logging.info('Embedding dimension: %d', config.dimension)
+    logging.info('# of heads: %d', config.num_heads)
+    logging.info('Dimension of the feedforward network in each layer: %d', config.dim_feedforward)
+    logging.info('# of layers: %d', config.num_layers)
+    logging.info('Dimension of the final feedforward network: %d', config.dim_final_feedforward)
+    logging.info('Dropout: %f', config.dropout)
+    logging.info('Activation function: %s', config.activation_function)
     if initial_encoder is None and not resume:
-        logging.info(f'Initial encoder: (initialized randomly)')
+        logging.info('Initial encoder: (initialized randomly)')
     elif initial_encoder is not None:
-        logging.info(f'Initial encoder: {initial_encoder}')
+        logging.info('Initial encoder: %s', str(initial_encoder))
     if initial_decoder is None and not resume:
-        logging.info(f'Initial decoder: (initialized randomly)')
+        logging.info('Initial decoder: (initialized randomly)')
     elif initial_decoder is not None:
-        logging.info(f'Initial decoder: {initial_decoder}')
-    logging.info(f'Checkpointing: {config.checkpointing}')
-    logging.info(f'Freeze encoder: {freeze_encoder}')
-    logging.info(f'Training batch size: {config.training_batch_size}')
+        logging.info('Initial decoder: %s', str(initial_decoder))
+    logging.info('Checkpointing: %s', config.checkpointing)
+    logging.info('Freeze encoder: %s', freeze_encoder)
+    logging.info('Training batch size: %d', config.training_batch_size)
     if config.validation_batch_size is not None:
-        logging.info(f'Validation batch size: {config.validation_batch_size}')
+        logging.info('Validation batch size: %d', config.validation_batch_size)
+    logging.info('# of steps for gradient accumulation: %d', config.gradient_accumulation_steps)
     logging.info(
-        f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
-    logging.info(
-        f'Virtual training batch size: {config.training_batch_size * config.gradient_accumulation_steps}')
-    logging.info(
-        f'norm threshold for gradient clipping: {config.max_gradient_norm}')
-    logging.info(f'Optimizer: {config.optimizer}')
-    logging.info(f'Learning rate: {learning_rate}')
+        'Virtual training batch size: %d',
+        config.training_batch_size * config.gradient_accumulation_steps)
+    logging.info('norm threshold for gradient clipping: %E', config.max_gradient_norm)
+    logging.info('Optimizer: %s', config.optimizer)
+    logging.info('Learning rate: %E', learning_rate)
     if config.optimizer == 'sgd':
-        logging.info(f'Momentum factor: {momentum}')
+        logging.info('Momentum factor: %f', momentum)
     if config.optimizer in ('adam', 'radam', 'lamb',):
-        logging.info(f'Epsilon parameter: {epsilon}')
+        logging.info('Epsilon parameter: %E', epsilon)
     if initial_optimizer is None and not resume:
-        logging.info(f'Initial optimizer state: (initialized normally)')
+        logging.info('Initial optimizer state: (initialized normally)')
     elif initial_optimizer is not None:
-        logging.info(f'Initial optimizer state: {initial_optimizer}')
+        logging.info('Initial optimizer state: %s', str(initial_optimizer))
     if num_epochs == -1:
         logging.info('Number of epochs to iterate: INFINITY')
     else:
-        logging.info(f'Number of epochs to iterate: {num_epochs}')
+        logging.info('Number of epochs to iterate: %d', num_epochs)
     if resume:
-        logging.info(f'Resume from {experiment_path}')
-        logging.info(f'Encoder snapshot: {encoder_snapshot_path}')
-        logging.info(f'Decoder snapshot: {decoder_snapshot_path}')
-        logging.info(f'Optimizer snapshot: {optimizer_snapshot_path}')
-        logging.info(f'# of training samples so far: {num_samples}')
-        logging.info(f'# of samples to skip: {num_samples_to_skip}')
+        logging.info('Resume from %s', str(experiment_path))
+        logging.info('Encoder snapshot: %s', str(encoder_snapshot_path))
+        logging.info('Decoder snapshot: %s', str(decoder_snapshot_path))
+        logging.info('Optimizer snapshot: %s', str(optimizer_snapshot_path))
+        logging.info('# of training samples so far: %d', num_samples)
+        logging.info('# of samples to skip: %d', num_samples_to_skip)
     else:
-        logging.info(f'Experiment output: {experiment_path}')
-    logging.info(f'# of digits to index epochs: {config.num_epoch_digits}')
+        logging.info('Experiment output: %s', str(experiment_path))
+    logging.info('# of digits to index epochs: %d', config.num_epoch_digits)
     if config.snapshot_interval == 0:
-        logging.info(f'Snapshot interval: N/A')
+        logging.info('Snapshot interval: N/A')
     else:
-        logging.info(f'Snapshot interval: {config.snapshot_interval}')
+        logging.info('Snapshot interval: %d', config.snapshot_interval)
 
     config = {
         'is_multiprocess': is_multiprocess,
@@ -673,7 +661,7 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
     elif config['optimizer'] == 'lamb':
         optimizer = FusedLAMB(model.parameters(), lr=learning_rate, eps=epsilon)
     else:
-        raise NotImplemented(config['optimizer'])
+        raise NotImplementedError(config['optimizer'])
 
     if config['is_main_process']:
         model, optimizer = amp.initialize(
@@ -797,14 +785,14 @@ def main(*, program_description: str, decoder_type: Type[nn.Module],
         if config['validation_data'] is not None and snapshot_index == 0:
             assert(config['validation_batch_size'] is not None)
             with ModelMode(config['model'], 'validation'):
-                validation_loss = _validate(**config)
+                validation_loss = _validate(**config) # pylint: disable=missing-kwoa
             if config['is_main_process']:
                 summary_writer.add_scalar(
                     'Validation epoch loss', validation_loss, epoch)
 
         initial_epoch = config['epoch']
         while num_epochs == -1 or config['epoch'] < initial_epoch + num_epochs:
-            config['num_samples'] = _training_epoch(
+            config['num_samples'] = _training_epoch( # pylint: disable=missing-kwoa
                 config, **config, summary_writer=summary_writer,
                 snapshot_writer=snapshot_writer)
             config['epoch'] += 1
