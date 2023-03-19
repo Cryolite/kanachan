@@ -11,7 +11,7 @@ from kanachan.training.bert.encoder import Encoder
 class PolicyDecoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_final_feedforward: int,
-            activation_function: str, dropout: float, **kwargs) -> None:
+            activation_function: str, dropout: float, **_) -> None:
         super(PolicyDecoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
@@ -35,11 +35,10 @@ class PolicyDecoder(nn.Module):
         decode = self.semifinal_dropout(decode)
         prediction = self.final_linear(decode)
         prediction = torch.squeeze(prediction, dim=2)
-        prediction = torch.where(
-            candidates < NUM_TYPES_OF_ACTIONS, prediction, -math.inf)
-        assert(prediction.dim() == 2)
-        assert(prediction.size(0) == candidates.size(0))
-        assert(prediction.size(1) == MAX_NUM_ACTION_CANDIDATES)
+        prediction = torch.where(candidates < NUM_TYPES_OF_ACTIONS, prediction, -math.inf)
+        assert prediction.dim() == 2
+        assert prediction.size(0) == candidates.size(0)
+        assert prediction.size(1) == MAX_NUM_ACTION_CANDIDATES
 
         return prediction
 

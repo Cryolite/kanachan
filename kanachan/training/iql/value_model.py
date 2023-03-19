@@ -10,7 +10,7 @@ from kanachan.training.bert.encoder import Encoder
 class ValueDecoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_final_feedforward: int,
-            activation_function: str, dropout: float, **kwargs) -> None:
+            activation_function: str, dropout: float, **_) -> None:
         super(ValueDecoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
@@ -37,8 +37,8 @@ class ValueDecoder(nn.Module):
         prediction = self._final_linear(decode)
         prediction = torch.squeeze(prediction, dim=2)
         prediction = prediction[mask]
-        assert(prediction.dim() == 1)
-        assert(prediction.size(0) == candidates.size(0))
+        assert prediction.dim() == 1
+        assert prediction.size(0) == candidates.size(0)
 
         return prediction
 

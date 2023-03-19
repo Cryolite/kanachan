@@ -20,7 +20,7 @@ class QModel(nn.Module):
             checkpointing: Optional[bool]=None,
             qv1_model: Optional[QVModel]=None,
             qv2_model: Optional[QVModel]=None,
-            **kwargs) -> None:
+            **_) -> None:
         super(QModel, self).__init__()
 
         if dimension is not None:

@@ -8,25 +8,22 @@ import os
 from argparse import ArgumentParser
 import logging
 import sys
-from typing import (Optional, Type,)
+from typing import Optional
 import yaml
 import torch
 from torch import backends
 from torch import nn
-from torch.optim import (Optimizer, RAdam,)
+from torch.optim import Optimizer, RAdam
 from torch.utils.data import DataLoader
-from torch.distributed import (init_process_group, all_reduce, ReduceOp)
+from torch.distributed import init_process_group, all_reduce, ReduceOp
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
-from apex.parallel import (DistributedDataParallel, convert_syncbn_model,)
-from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB,)
-from kanachan.training.constants import (
-    NUM_TYPES_OF_SPARSE_FEATURES, NUM_TYPES_OF_ACTIONS,
-    MAX_NUM_ACTION_CANDIDATES,)
-from kanachan.training.common import (initialize_logging, Dataset,)
+from apex.parallel import DistributedDataParallel, convert_syncbn_model
+from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
+from kanachan.training.common import initialize_logging, Dataset
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.bert.model_loader import load_model
-from kanachan.training.iql.policy_model import (PolicyDecoder, PolicyModel,)
+from kanachan.training.iql.policy_model import PolicyDecoder, PolicyModel
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 
 
@@ -49,7 +46,7 @@ def _take_snapshot(
     torch.save(
         amp.state_dict(),
         snapshots_path / f'policy-amp{infix}.pth')
-    with open(snapshots_path / f'policy-progress{infix}.yaml', 'w') as f:
+    with open(snapshots_path / f'policy-progress{infix}.yaml', 'w', encoding='UTF-8') as f:
         print(f'''---
 num_samples: {num_samples}''', file=f)
 
@@ -64,13 +61,12 @@ def _training_epoch(
         optimizer: Optimizer, snapshots_path: Path, num_epoch_digits: int,
         snapshot_interval: int, epoch: int, epoch_sample_offset,
         num_samples: int, num_samples_to_skip: int, writer: SummaryWriter,
-        **kwargs) -> int:
+        **_) -> int:
     start_time = datetime.datetime.now()
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: IteratorAdaptor(path)
-    dataset = Dataset(training_data, iterator_adaptor)
+    dataset = Dataset(training_data, IteratorAdaptor)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers,
         pin_memory=True, drop_last=is_multiprocess)
@@ -91,8 +87,8 @@ def _training_epoch(
 
         if device != 'cpu':
             if is_multiprocess:
-                assert(world_size is not None)
-                assert(rank is not None)
+                assert world_size is not None
+                assert rank is not None
                 if batch_size % world_size != 0:
                     raise RuntimeError(
                         'Batch size must be divisible by the world size.')
@@ -155,19 +151,16 @@ def _training_epoch(
             optimizer.zero_grad()
 
             logging.info(
-                f'sample = {num_samples},'
-f' max advantage = {max_advantage},'
-f' loss = {batch_loss},'
-f' gradient norm = {gradient_norm}')
+                'sample = %d, max advantage = %E, loss = %E, gradient norm = %E',
+                num_samples, max_advantage, batch_loss, gradient_norm)
             if is_main_process:
                 writer.add_scalar('Max Advantage', max_advantage, num_samples)
                 writer.add_scalar('Loss', batch_loss, num_samples)
                 writer.add_scalar('Gradient Norm', gradient_norm, num_samples)
         else:
             logging.info(
-                f'sample = {num_samples},'
-f' max advantage = {max_advantage},'
-f' loss = {batch_loss}')
+                'sample = %d, max advantage = %E, loss = %E',
+                num_samples, max_advantage, batch_loss)
             if is_main_process:
                 writer.add_scalar('Max Advantage', max_advantage, num_samples)
                 writer.add_scalar('Loss', batch_loss, num_samples)
@@ -181,8 +174,7 @@ f' loss = {batch_loss}')
             last_snapshot = num_samples
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info(
-        f'The {epoch}-th training epoch has finished (elapsed time = {elapsed_time}).')
+    logging.info('The %d-th training epoch has finished (elapsed time = %f).', epoch, elapsed_time)
 
     if is_main_process:
         infix = '.' + str(epoch + 1).zfill(num_epoch_digits)
@@ -382,7 +374,8 @@ def main() -> None:
         config.dim_final_feedforward = config.dim_feedforward
     if config.dim_final_feedforward < 1:
         raise RuntimeError(
-            f'{config.dim_final_feedforward}: An invalid dimension of the final feedforward network.')
+            f'{config.dim_final_feedforward}:'
+            ' An invalid dimension of the final feedforward network.')
 
     if config.dropout < 0.0 or 1.0 <= config.dropout:
         raise RuntimeError(f'{config.dropout}: An invalid value for `--dropout`.')
@@ -392,7 +385,7 @@ def main() -> None:
     if config.initial_encoder is not None and not config.initial_encoder.is_file():
         raise RuntimeError(f'{config.initial_encoder}: Not a file.')
     if config.initial_encoder is not None and config.resume:
-        raise RuntimeError(f'`--initial-encoder` conflicts with `--resume`.')
+        raise RuntimeError('`--initial-encoder` conflicts with `--resume`.')
     initial_encoder = config.initial_encoder
 
     if config.value_model is not None and not config.value_model.exists():
@@ -436,7 +429,7 @@ def main() -> None:
         else:
             learning_rate = config.learning_rate
     else:
-        raise NotImplemented(config.optimizer)
+        raise NotImplementedError(config.optimizer)
     if learning_rate <= 0.0:
         raise RuntimeError(f'{learning_rate}: An invalid value for `--learning-rate`.')
 
@@ -455,7 +448,8 @@ def main() -> None:
 
     if config.gradient_accumulation_steps < 1:
         raise RuntimeError(
-            f'{config.gradient_accumulation_steps}: An invalid value for `--gradient-accumulation`.')
+            f'{config.gradient_accumulation_steps}:'
+            ' An invalid value for `--gradient-accumulation`.')
     if config.max_gradient_norm <= 0.0:
         raise RuntimeError(
             f'{config.max_gradient_norm}: An invalid norm for `--max-gradient-norm`.')
@@ -494,7 +488,7 @@ def main() -> None:
     num_samples = 0
     num_samples_to_skip = 0
     if resume:
-        assert(initial_encoder is None)
+        assert initial_encoder is None
         if not snapshots_path.exists():
             raise RuntimeError(f'{snapshots_path}: Does not exist.')
         snapshot_index = 0
@@ -544,14 +538,14 @@ def main() -> None:
         if not progress_file_path.is_file():
             raise RuntimeError(f'{progress_file_path}: Not a file.')
 
-        with open(progress_file_path) as f:
+        with open(progress_file_path, encoding='UTF-8') as f:
             progress_data = yaml.load(f, Loader=yaml.Loader)
         num_samples = progress_data['num_samples']
 
         if epoch == 0:
             num_samples_to_skip = num_samples
         else:
-            with open(snapshots_path / f'policy-progress.{epoch_str}.yaml') as f:
+            with open(snapshots_path / f'policy-progress.{epoch_str}.yaml', encoding='UTF-8') as f:
                 progress_data = yaml.load(f, Loader=yaml.Loader)
             num_samples_to_skip = num_samples - progress_data['num_samples']
 
@@ -559,73 +553,68 @@ def main() -> None:
     initialize_logging(experiment_path, rank)
 
     if world_size is None:
-        assert(rank is None)
-        logging.info(f'World size: N/A (single process)')
-        logging.info(f'Process rank: N/A (single process)')
+        assert rank is None
+        logging.info('World size: N/A (single process)')
+        logging.info('Process rank: N/A (single process)')
     else:
-        assert(rank is not None)
-        logging.info(f'World size: {world_size}')
-        logging.info(f'Process rank: {rank}')
-    logging.info(f'Training data: {config.training_data}')
-    logging.info(f'# of workers: {config.num_workers}')
-    logging.info(f'Device: {device}')
+        assert rank is not None
+        logging.info('World size: %d', world_size)
+        logging.info('Process rank: %d', rank)
+    logging.info('Training data: %s', str(config.training_data))
+    logging.info('# of workers: %d', config.num_workers)
+    logging.info('Device: %s', device)
     if backends.cudnn.is_available():
-        logging.info(f'cuDNN: available')
+        logging.info('cuDNN: available')
         backends.cudnn.benchmark = True
     else:
-        logging.info(f'cuDNN: N/A')
-    logging.info(f'AMP optimization level: {amp_optimization_level}')
-    logging.info(f'Embedding dimension: {config.dimension}')
-    logging.info(f'# of heads: {config.num_heads}')
-    logging.info(
-        f'Dimension of the feedforward network in each layer: {config.dim_feedforward}')
-    logging.info(f'# of layers: {config.num_layers}')
-    logging.info(
-        f'Dimension of the final feedforward network: {config.dim_final_feedforward}')
-    logging.info(f'Activation function: {config.activation_function}')
-    logging.info(f'Dropout: {config.dropout}')
+        logging.info('cuDNN: N/A')
+    logging.info('AMP optimization level: %s', amp_optimization_level)
+    logging.info('Embedding dimension: %d', config.dimension)
+    logging.info('# of heads: %d', config.num_heads)
+    logging.info('Dimension of the feedforward network in each layer: %d', config.dim_feedforward)
+    logging.info('# of layers: %d', config.num_layers)
+    logging.info('Dimension of the final feedforward network: %d', config.dim_final_feedforward)
+    logging.info('Activation function: %s', config.activation_function)
+    logging.info('Dropout: %f', config.dropout)
     if initial_encoder is None and not resume:
-        logging.info(f'Initial encoder: (initialized randomly)')
+        logging.info('Initial encoder: (initialized randomly)')
     elif initial_encoder is not None:
-        logging.info(f'Initial encoder: {initial_encoder}')
-    logging.info(f'Value model: {value_model}')
-    logging.info(f'Q1 model: {q1_model}')
-    logging.info(f'Q2 model: {q2_model}')
-    logging.info(f'Inverse temperature: {config.inverse_temperature}')
-    logging.info(f'Advantage threshold: {config.advantage_threshold}')
-    logging.info(f'Batch size: {config.batch_size}')
-    logging.info(f'Optimizer: {config.optimizer}')
-    logging.info(f'Learning rate: {learning_rate}')
+        logging.info('Initial encoder: %s', str(initial_encoder))
+    logging.info('Value model: %s', str(value_model))
+    logging.info('Q1 model: %s', str(q1_model))
+    logging.info('Q2 model: %s', str(q2_model))
+    logging.info('Inverse temperature: %E', config.inverse_temperature)
+    logging.info('Advantage threshold: %E', config.advantage_threshold)
+    logging.info('Batch size: %d', config.batch_size)
+    logging.info('Optimizer: %s', config.optimizer)
+    logging.info('Learning rate: %E', learning_rate)
     if config.optimizer == 'sgd':
-        logging.info(f'Momentum factor: {momentum}')
+        logging.info('Momentum factor: %f', momentum)
     if config.optimizer in ('adam', 'radam', 'lamb',):
-        logging.info(f'Epsilon parameter: {epsilon}')
-    logging.info(f'Checkpointing: {config.checkpointing}')
-    logging.info(
-        f'# of steps for gradient accumulation: {config.gradient_accumulation_steps}')
-    logging.info(
-        f'Virtual batch size: {config.batch_size * config.gradient_accumulation_steps}')
-    logging.info(
-        f'Norm threshold for gradient clipping: {config.max_gradient_norm}')
+        logging.info('Epsilon parameter: %E', epsilon)
+    logging.info('Checkpointing: %s', config.checkpointing)
+    logging.info('# of steps for gradient accumulation: %d', config.gradient_accumulation_steps)
+    logging.info('Virtual batch size: %d', config.batch_size * config.gradient_accumulation_steps)
+    logging.info('Norm threshold for gradient clipping: %E', config.max_gradient_norm)
     if num_epochs == -1:
         logging.info('Number of epochs to iterate: INFINITY')
     else:
-        logging.info(f'Number of epochs to iterate: {num_epochs}')
+        logging.info('Number of epochs to iterate: %d', num_epochs)
     if resume:
-        logging.info(f'Resume from {experiment_path}')
-        logging.info(f'Policy encoder snapshot: {encoder_snapshot_path}')
-        logging.info(f'Policy decoder snapshot: {decoder_snapshot_path}')
-        logging.info(f'Policy optimizer snapshot: {optimizer_snapshot_path}')
-        logging.info(f'Policy AMP snapshot: {amp_snapshot_path}')
-        logging.info(f'# of training samples so far: {num_samples}')
-        logging.info(f'# of samples to skip: {num_samples_to_skip}')
+        logging.info('Resume from %s', str(experiment_path))
+        logging.info('Policy encoder snapshot: %s', str(encoder_snapshot_path))
+        logging.info('Policy decoder snapshot: %s', str(decoder_snapshot_path))
+        logging.info('Policy optimizer snapshot: %s', str(optimizer_snapshot_path))
+        logging.info('Policy AMP snapshot: %s', str(amp_snapshot_path))
+        logging.info('# of training samples so far: %d', num_samples)
+        logging.info('# of samples to skip: %d', num_samples_to_skip)
     else:
-        logging.info(f'Experiment output: {experiment_path}')
-    logging.info(f'# of digits to index epochs: {config.num_epoch_digits}')
+        logging.info('Experiment output: %s', str(experiment_path))
+    logging.info('# of digits to index epochs: %d', config.num_epoch_digits)
     if config.snapshot_interval == 0:
-        logging.info(f'Snapshot interval: N/A')
+        logging.info('Snapshot interval: N/A')
     else:
-        logging.info(f'Snapshot interval: {config.snapshot_interval}')
+        logging.info('Snapshot interval: %d', config.snapshot_interval)
 
     config = {
         'is_multiprocess': is_multiprocess,
@@ -690,7 +679,7 @@ def main() -> None:
         construct = lambda model: FusedLAMB(
             model.parameters(), lr=learning_rate, eps=epsilon)
     else:
-        raise NotImplemented(config['optimizer'])
+        raise NotImplementedError(config['optimizer'])
     optimizer = construct(policy_model)
 
     if config['is_main_process']:
@@ -702,22 +691,22 @@ def main() -> None:
             verbosity=0)
 
     if initial_encoder is not None:
-        assert(not resume)
-        assert(initial_encoder.exists())
-        assert(initial_encoder.is_file())
+        assert not resume
+        assert initial_encoder.exists()
+        assert initial_encoder.is_file()
         policy_encoder.load_state_dict(
             torch.load(initial_encoder, map_location='cpu'))
         policy_encoder.cuda()
     if resume:
-        assert(initial_encoder is None)
-        assert(encoder_snapshot_path.exists())
-        assert(encoder_snapshot_path.is_file())
-        assert(decoder_snapshot_path.exists())
-        assert(decoder_snapshot_path.is_file())
-        assert(optimizer_snapshot_path.exists())
-        assert(optimizer_snapshot_path.is_file())
-        assert(amp_snapshot_path.exists())
-        assert(amp_snapshot_path.is_file())
+        assert initial_encoder is None
+        assert encoder_snapshot_path.exists()
+        assert encoder_snapshot_path.is_file()
+        assert decoder_snapshot_path.exists()
+        assert decoder_snapshot_path.is_file()
+        assert optimizer_snapshot_path.exists()
+        assert optimizer_snapshot_path.is_file()
+        assert amp_snapshot_path.exists()
+        assert amp_snapshot_path.is_file()
         policy_encoder.load_state_dict(
             torch.load(encoder_snapshot_path, map_location='cpu'))
         policy_encoder.cuda()
@@ -742,9 +731,9 @@ def main() -> None:
 
     with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
         while num_epochs == -1 or config['epoch'] < num_epochs:
-            assert(config['num_samples'] >= config['num_samples_to_skip'])
+            assert config['num_samples'] >= config['num_samples_to_skip']
             config['epoch_sample_offset'] = config['num_samples'] - config['num_samples_to_skip']
-            config['num_samples'] = _training_epoch(**config, writer=writer)
+            config['num_samples'] = _training_epoch(**config, writer=writer) # pylint: disable=missing-kwoa
             config['epoch'] += 1
             config['num_samples_to_skip'] = 0
 

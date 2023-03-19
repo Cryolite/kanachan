@@ -43,16 +43,17 @@ def _training(
         target_update_interval: int, target_update_rate: float, batch_size: int,
         v_loss_scaling: float, gradient_accumulation_steps: int, max_gradient_norm: float,
         qv1_optimizer: Optimizer, qv2_optimizer: Optimizer, snapshot_interval: int,
-        num_samples: int, writer: SummaryWriter, snapshot_writer: SnapshotWriter, **kwargs) -> None:
+        num_samples: int, writer: SummaryWriter, snapshot_writer: SnapshotWriter, **_) -> None:
     start_time = datetime.datetime.now()
 
     # Load the reward plugin.
     with open(reward_plugin, encoding='UTF-8') as file_pointer:
-        exec(file_pointer.read(), globals())
+        exec(file_pointer.read(), globals()) # pylint: disable=exec-used
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    iterator_adaptor = lambda path: IteratorAdaptor(path, get_reward)
+    def iterator_adaptor(path: Path) -> IteratorAdaptor:
+        return IteratorAdaptor(path, get_reward) # type: ignore pylint: disable=undefined-variable
     dataset = Dataset(training_data, iterator_adaptor)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers,
@@ -86,13 +87,13 @@ def _training(
         # Compute the Q target value.
         with torch.no_grad():
             def get_q_target(qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
-                q_target, _ = qv_target_model(annotation[:4])
+                q_target, _ = qv_target_model(annotation[:4]) # pylint: disable=cell-var-from-loop
                 assert q_target.dim() == 2
-                assert q_target.size(0) == local_batch_size
+                assert q_target.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
                 assert q_target.size(1) == MAX_NUM_ACTION_CANDIDATES
-                q_target = q_target[torch.arange(local_batch_size), annotation[4]]
+                q_target = q_target[torch.arange(local_batch_size), annotation[4]] # pylint: disable=cell-var-from-loop
                 assert q_target.dim() == 1
-                assert q_target.size(0) == local_batch_size
+                assert q_target.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
 
                 if not is_multiprocess:
                     q_target_gathered = q_target
@@ -101,7 +102,7 @@ def _training(
                     all_gather(q_target_gathered, q_target)
                     q_target_gathered = torch.cat(q_target_gathered)
                 assert q_target_gathered.dim() == 1
-                assert q_target_gathered.size(0) == world_batch_size
+                assert q_target_gathered.size(0) == world_batch_size # pylint: disable=cell-var-from-loop
                 q_batch_mean = torch.mean(q_target_gathered)
 
                 return (q_target, q_batch_mean.item())
@@ -115,13 +116,13 @@ def _training(
         reward = annotation[9]
 
         def backward(qv_source_model: QVModel, qv_optimizer: Optimizer) -> Tuple[float, float]:
-            q, v = qv_source_model(annotation[:4])
+            q, v = qv_source_model(annotation[:4]) # pylint: disable=cell-var-from-loop
             assert q.dim() == 2
-            assert q.size(0) == local_batch_size
+            assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
             assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
             assert v.dim() == 1
-            assert v.size(0) == local_batch_size
-            q = q[torch.arange(local_batch_size), annotation[4]]
+            assert v.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
+            q = q[torch.arange(local_batch_size), annotation[4]] # pylint: disable=cell-var-from-loop
 
             if not is_multiprocess:
                 v_gathered = v
@@ -130,18 +131,18 @@ def _training(
                 all_gather(v_gathered, v)
                 v_gathered = torch.cat(v_gathered)
             assert v_gathered.dim() == 1
-            assert v_gathered.size(0) == world_batch_size
+            assert v_gathered.size(0) == world_batch_size # pylint: disable=cell-var-from-loop
             v_batch_mean = torch.mean(v_gathered).item()
 
-            _, vv = qv_source_model(annotation[5:9])
-            is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES)
+            _, vv = qv_source_model(annotation[5:9]) # pylint: disable=cell-var-from-loop
+            is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES) # pylint: disable=cell-var-from-loop
             vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
             assert vv.dim() == 1
-            assert vv.size(0) == local_batch_size
+            assert vv.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
 
-            q_loss = torch.square(reward + discount_factor * vv - q)
+            q_loss = torch.square(reward + discount_factor * vv - q) # pylint: disable=cell-var-from-loop
             q_loss = torch.mean(q_loss)
-            v_loss = q_target - v
+            v_loss = q_target - v # pylint: disable=cell-var-from-loop
             v_loss = torch.where(
                 v_loss < 0.0, (1.0 - expectile) * torch.square(v_loss),
                 expectile * torch.square(v_loss))
@@ -1059,7 +1060,7 @@ def _main() -> None:
         torch.save(compiled_q_model, snapshots_path / f'q-model{infix}.kanachan')
 
     with SummaryWriter(log_dir=config['tensorboard_path']) as writer:
-        _training(**config, writer=writer, snapshot_writer=snapshot_writer)
+        _training(**config, writer=writer, snapshot_writer=snapshot_writer) # pylint: disable=missing-kwoa
 
 
 if __name__ == '__main__':

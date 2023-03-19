@@ -45,9 +45,9 @@ class QVDecoder(nn.Module):
         advantage_decode = self._semifinal_dropout(advantage_decode)
         advantage_decode = self._final_linear(advantage_decode)
         advantage_decode = torch.squeeze(advantage_decode, dim=2)
-        assert(advantage_decode.dim() == 2)
-        assert(advantage_decode.size(0) == candidates.size(0))
-        assert(advantage_decode.size(1) == MAX_NUM_ACTION_CANDIDATES)
+        assert advantage_decode.dim() == 2
+        assert advantage_decode.size(0) == candidates.size(0)
+        assert advantage_decode.size(1) == MAX_NUM_ACTION_CANDIDATES
 
         q_decode = value_expanded + advantage_decode
         q_decode = torch.where(
