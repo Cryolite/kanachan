@@ -20,7 +20,6 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce, all_gather, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
-from apex import amp
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from mtadam import MTAdam
 from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
@@ -500,10 +499,6 @@ def _main(config: DictConfig) -> None:
         if not qv2_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
             qv2_optimizer_snapshot_path = None
 
-        amp_snapshot_path = config.initial_model_prefix / f'amp.{config.initial_model_index}.pth'
-        if not amp_snapshot_path.is_file() or config.optimizer.initialze:
-            amp_snapshot_path = None
-
     if not config.reward_plugin.exists():
         raise RuntimeError(f'{config.reward_plugin}: Does not exist.')
     if not config.reward_plugin.is_file():
@@ -656,8 +651,6 @@ def _main(config: DictConfig) -> None:
                 logging.info('Initial QV1 optimizer snapshot: %s', qv1_optimizer_snapshot_path)
             if qv2_optimizer_snapshot_path is not None:
                 logging.info('Initial QV2 optimizer snapshot: %s', qv2_optimizer_snapshot_path)
-            if amp_snapshot_path is not None:
-                logging.info('Initial AMP snapshot: %s', amp_snapshot_path)
         logging.info('Experiment output: %s', experiment_path)
         if config.snapshot_interval == 0:
             logging.info('Snapshot interval: N/A')
@@ -837,9 +830,6 @@ def _main(config: DictConfig) -> None:
             qv2_optimizer.load_state_dict(
                 torch.load(qv2_optimizer_snapshot_path, map_location='cpu'))
 
-        if amp_snapshot_path is not None:
-            amp.load_state_dict(torch.load(amp_snapshot_path, map_location='cpu'))
-
     if is_multiprocess:
         init_process_group(backend='nccl')
         qv1_source_model = DistributedDataParallel(qv1_source_model)
@@ -860,8 +850,6 @@ def _main(config: DictConfig) -> None:
         torch.save(qv2_target_model.state_dict(), snapshots_path / f'qv2-target{infix}.pth')
         torch.save(qv1_optimizer.state_dict(), snapshots_path / f'qv1-optimizer{infix}.pth')
         torch.save(qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer{infix}.pth')
-        if config.optimizer.type != 'mtadam':
-            torch.save(amp.state_dict(), snapshots_path / f'amp{infix}.pth')
 
         q_model = QModel(qv1_model=qv1_target_model, qv2_model=qv2_target_model)
         q_model_state_dict = q_model.state_dict()
