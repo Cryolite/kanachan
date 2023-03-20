@@ -1,7 +1,6 @@
 /build/
 /src/common/mahjongsoul.pb.h
 /src/common/mahjongsoul.pb.cc
-/kanachan/training/mtadam.py
 /kanachan/simulation/_simulation.so
 /kanachan.egg-info/
 __pycache__
