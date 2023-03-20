@@ -171,7 +171,6 @@ mkdir -p "$HOME/.local/share/kanachan"
 src/xiangting/make_trie /workspaces/shanten-number "$HOME/.local/share/kanachan"
 cp src/simulation/libsimulation.so ../kanachan/simulation/_simulation.so
 popd
-rm -rf /workspaces/shanten-number
 
 # Install kanachan.
 pushd /workspaces/kanachan
