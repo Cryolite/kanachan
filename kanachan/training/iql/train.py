@@ -564,7 +564,7 @@ def _main(config: DictConfig) -> None:
     if config.snapshot_interval < 0:
         raise RuntimeError(f'{config.snapshot_interval}: An invalid value for `snapshot_interval`.')
 
-    experiment_path = Path(HydraConfig.get().runtime.output_dir())
+    experiment_path = Path(HydraConfig.get().runtime.output_dir)
 
     tensorboard_path = experiment_path / 'tensorboard'
     tensorboard_path.mkdir(parents=True, exist_ok=True)
@@ -706,24 +706,24 @@ def _main(config: DictConfig) -> None:
     qv2_target_model.requires_grad_(False)
     qv2_target_model.to(device=config.device.type, dtype=dtype)
 
-    if config['optimizer'] == 'sgd':
+    if config.optimizer.type == 'sgd':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return FusedSGD(
                 model.parameters(), lr=config.optimizer.learning_rate,
                 momentum=config.optimizer.momentum)
-    elif config['optimizer'] == 'adam':
+    elif config.optimizer.type == 'adam':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return FusedAdam(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
-    elif config['optimizer'] == 'radam':
+    elif config.optimizer.type == 'radam':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return RAdam(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
-    elif config['optimizer'] == 'mtadam':
+    elif config.optimizer.type == 'mtadam':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return MTAdam(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
-    elif config['optimizer'] == 'lamb':
+    elif config.optimizer.type == 'lamb':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return FusedLAMB(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
@@ -732,8 +732,8 @@ def _main(config: DictConfig) -> None:
     qv1_optimizer = construct_optimizer(qv1_source_model)
     qv2_optimizer = construct_optimizer(qv2_source_model)
 
-    if config['optimizer'] != 'mtadam':
-        if config['is_main_process']:
+    if config.optimizer.type != 'mtadam':
+        if is_main_process:
             qv1_source_model, qv1_optimizer = amp.initialize(
                 qv1_source_model, qv1_optimizer, opt_level='O2')
             qv2_source_model, qv2_optimizer = amp.initialize(
@@ -860,7 +860,7 @@ def _main(config: DictConfig) -> None:
         torch.save(qv2_target_model.state_dict(), snapshots_path / f'qv2-target{infix}.pth')
         torch.save(qv1_optimizer.state_dict(), snapshots_path / f'qv1-optimizer{infix}.pth')
         torch.save(qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer{infix}.pth')
-        if config['optimizer'] != 'mtadam':
+        if config.optimizer.type != 'mtadam':
             torch.save(amp.state_dict(), snapshots_path / f'amp{infix}.pth')
 
         q_model = QModel(qv1_model=qv1_target_model, qv2_model=qv2_target_model)
