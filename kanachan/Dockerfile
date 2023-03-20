@@ -56,7 +56,7 @@ requires-python = ">=3.8"\n\
 dependencies = [\n\
     "tensorflow",\n\
 ]\n\
-version = "0.0.1"\n' > pyproject.toml; \ 
+version = "0.0.1"\n' > pyproject.toml; \
     python3 -m pip install .; \
     popd; \
     rm -rf MTAdam; \
@@ -124,7 +124,6 @@ COPY --chown=ubuntu . /workspace/kanachan
 
 # Install `kanachan`.
 RUN set -euxo pipefail; \
-    ls -lA /workspace/kanachan; \
     pushd /workspace/kanachan/src/common; \
     protoc -I. --cpp_out=. mahjongsoul.proto; \
     popd; \
