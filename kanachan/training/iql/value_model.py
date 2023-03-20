@@ -9,12 +9,12 @@ from kanachan.training.bert.encoder import Encoder
 
 class ValueDecoder(nn.Module):
     def __init__(
-            self, *, dimension: int, dim_final_feedforward: int,
-            activation_function: str, dropout: float, **_) -> None:
+            self, *, dimension: int, dim_feedforward: int, activation_function: str, dropout: float,
+            num_layers: int) -> None:
         super(ValueDecoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
-        self._semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
+        self._semifinal_linear = nn.Linear(dimension, dim_feedforward)
         if activation_function == 'relu':
             self._semifinal_activation = nn.ReLU()
         elif activation_function == 'gelu':
@@ -23,7 +23,7 @@ class ValueDecoder(nn.Module):
             raise ValueError(
                 f'{activation_function}: An invalid activation function.')
         self._semifinal_dropout = nn.Dropout(p=dropout)
-        self._final_linear = nn.Linear(dim_final_feedforward, 1)
+        self._final_linear = nn.Linear(dim_feedforward, 1)
 
     def forward(self, x) -> torch.Tensor:
         candidates, encode = x

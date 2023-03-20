@@ -12,16 +12,16 @@ from kanachan.training.iql.value_model import ValueDecoder
 
 class QVDecoder(nn.Module):
     def __init__(
-            self, *, dimension: int, dim_final_feedforward: int,
-            activation_function: str, dropout: float, **kwargs) -> None:
+            self, *, dimension: int, dim_feedforward: int,
+            activation_function: str, dropout: float, num_layers: int) -> None:
         super(QVDecoder, self).__init__()
 
         self._value_decoder = ValueDecoder(
-            dimension=dimension, dim_final_feedforward=dim_final_feedforward,
-            activation_function=activation_function, dropout=dropout, **kwargs)
+            dimension=dimension, dim_feedforward=dim_feedforward,
+            activation_function=activation_function, dropout=dropout, num_layers=num_layers)
 
         # The final layer is position-wise feed-forward network.
-        self._semifinal_linear = nn.Linear(dimension, dim_final_feedforward)
+        self._semifinal_linear = nn.Linear(dimension, dim_feedforward)
         if activation_function == 'relu':
             self._semifinal_activation = nn.ReLU()
         elif activation_function == 'gelu':
@@ -30,7 +30,7 @@ class QVDecoder(nn.Module):
             raise ValueError(
                 f'{activation_function}: An invalid activation function.')
         self._semifinal_dropout = nn.Dropout(p=dropout)
-        self._final_linear = nn.Linear(dim_final_feedforward, 1)
+        self._final_linear = nn.Linear(dim_feedforward, 1)
 
     def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor]:
         candidates, encode = x
