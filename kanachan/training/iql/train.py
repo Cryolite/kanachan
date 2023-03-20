@@ -669,11 +669,12 @@ def _main(config: DictConfig) -> None:
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing)
+        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
+        device=config.device, dtype=dtype)
     qv1_source_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers)
+        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
     qv1_source_model = QVModel(qv1_source_encoder, qv1_source_decoder)
     qv1_source_model.to(device=config.device.type, dtype=dtype)
 
@@ -681,11 +682,12 @@ def _main(config: DictConfig) -> None:
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing)
+        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
+        device=config.device, dtype=dtype)
     qv2_source_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers)
+        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
     qv2_source_model = QVModel(qv2_source_encoder, qv2_source_decoder)
     qv2_source_model.to(device=config.device.type, dtype=dtype)
 
@@ -693,11 +695,12 @@ def _main(config: DictConfig) -> None:
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing)
+        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
+        device=config.device, dtype=dtype)
     qv1_target_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers)
+        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
     qv1_target_model = QVModel(qv1_target_encoder, qv1_target_decoder)
     qv1_target_model.requires_grad_(False)
     qv1_target_model.to(device=config.device.type, dtype=dtype)
@@ -706,11 +709,12 @@ def _main(config: DictConfig) -> None:
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing)
+        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
+        device=config.device, dtype=dtype)
     qv2_target_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers)
+        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
     qv2_target_model = QVModel(qv2_target_encoder, qv2_target_decoder)
     qv2_target_model.requires_grad_(False)
     qv2_target_model.to(device=config.device.type, dtype=dtype)

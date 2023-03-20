@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from typing import Tuple
 import torch
 from torch import nn
 from kanachan.training.constants import (
@@ -10,11 +11,11 @@ from kanachan.training.bert.encoder import Encoder
 class ValueDecoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_feedforward: int, activation_function: str, dropout: float,
-            num_layers: int) -> None:
+            num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
         super(ValueDecoder, self).__init__()
 
         # The final layer is position-wise feed-forward network.
-        self._semifinal_linear = nn.Linear(dimension, dim_feedforward)
+        self._semifinal_linear = nn.Linear(dimension, dim_feedforward, device=device, dtype=dtype)
         if activation_function == 'relu':
             self._semifinal_activation = nn.ReLU()
         elif activation_function == 'gelu':
@@ -23,9 +24,9 @@ class ValueDecoder(nn.Module):
             raise ValueError(
                 f'{activation_function}: An invalid activation function.')
         self._semifinal_dropout = nn.Dropout(p=dropout)
-        self._final_linear = nn.Linear(dim_feedforward, 1)
+        self._final_linear = nn.Linear(dim_feedforward, 1, device=device, dtype=dtype)
 
-    def forward(self, x) -> torch.Tensor:
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         candidates, encode = x
 
         mask = (candidates == NUM_TYPES_OF_ACTIONS)
@@ -49,7 +50,7 @@ class ValueModel(nn.Module):
         self._encoder = encoder
         self._decoder = decoder
 
-    def forward(self, x) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         encode = self._encoder(x)
         prediction = self._decoder((x[3], encode))
         return prediction

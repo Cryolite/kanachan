@@ -4,24 +4,24 @@ import math
 from typing import (Tuple,)
 import torch
 from torch import nn
-from kanachan.training.constants import (
-    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
+from kanachan.training.constants import NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.value_model import ValueDecoder
 
 
 class QVDecoder(nn.Module):
     def __init__(
-            self, *, dimension: int, dim_feedforward: int,
-            activation_function: str, dropout: float, num_layers: int) -> None:
+            self, *, dimension: int, dim_feedforward: int, activation_function: str, dropout: float,
+            num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
         super(QVDecoder, self).__init__()
 
         self._value_decoder = ValueDecoder(
             dimension=dimension, dim_feedforward=dim_feedforward,
-            activation_function=activation_function, dropout=dropout, num_layers=num_layers)
+            activation_function=activation_function, dropout=dropout, num_layers=num_layers,
+            device=device, dtype=dtype)
 
         # The final layer is position-wise feed-forward network.
-        self._semifinal_linear = nn.Linear(dimension, dim_feedforward)
+        self._semifinal_linear = nn.Linear(dimension, dim_feedforward, device=device, dtype=dtype)
         if activation_function == 'relu':
             self._semifinal_activation = nn.ReLU()
         elif activation_function == 'gelu':
@@ -30,9 +30,9 @@ class QVDecoder(nn.Module):
             raise ValueError(
                 f'{activation_function}: An invalid activation function.')
         self._semifinal_dropout = nn.Dropout(p=dropout)
-        self._final_linear = nn.Linear(dim_feedforward, 1)
+        self._final_linear = nn.Linear(dim_feedforward, 1, device=device, dtype=dtype)
 
-    def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         candidates, encode = x
 
         value_decode = self._value_decoder(x)
@@ -62,6 +62,6 @@ class QVModel(nn.Module):
         self._encoder = encoder
         self._decoder = decoder
 
-    def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         encode = self._encoder(x)
         return self._decoder((x[3], encode))
