@@ -237,11 +237,12 @@ def _training(
                     param2_target *= (1.0 - target_update_rate)
                     param2_target += target_update_rate * param2_source
 
-            logging.info(
-                'sample = %s, QV1 loss = %s, QV2 loss = %s,'
-                ' QV1 gradient norm = %s, QV2 gradient norm = %s',
-                num_samples, qv1_batch_loss, qv2_batch_loss, qv1_gradient_norm, qv2_gradient_norm)
             if is_main_process:
+                logging.info(
+                    'sample = %s, QV1 loss = %s, QV2 loss = %s, '
+                    'QV1 gradient norm = %s, QV2 gradient norm = %s',
+                    num_samples, qv1_batch_loss, qv2_batch_loss, qv1_gradient_norm,
+                    qv2_gradient_norm)
                 summary_writer.add_scalars(
                     'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
                     num_samples)
@@ -256,10 +257,10 @@ def _training(
                     { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm },
                     num_samples)
         else:
-            logging.info(
-                'sample = %s, QV1 loss = %s, QV2 loss = %s',
-                num_samples, qv1_batch_loss, qv2_batch_loss)
             if is_main_process:
+                logging.info(
+                    'sample = %s, QV1 loss = %s, QV2 loss = %s',
+                    num_samples, qv1_batch_loss, qv2_batch_loss)
                 summary_writer.add_scalars(
                     'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
                     num_samples)
@@ -278,9 +279,9 @@ def _training(
             last_snapshot = num_samples
 
     elapsed_time = datetime.datetime.now() - start_time
-    logging.info('A training has finished (elapsed time = %s).', elapsed_time)
 
     if is_main_process:
+        logging.info('A training has finished (elapsed time = %s).', elapsed_time)
         snapshot_writer(
             qv1_source_model, qv2_source_model,
             qv1_target_model, qv2_target_model,
