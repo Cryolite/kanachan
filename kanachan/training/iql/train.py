@@ -17,6 +17,7 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Optimizer, RAdam
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce, all_gather, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex import amp
@@ -39,13 +40,14 @@ SnapshotWriter = Callable[
 
 def _training(
         *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
-        is_main_process: bool, training_data: Path, num_workers: int, device: str,
-        qv1_source_model: QVModel, qv2_source_model: QVModel, qv1_target_model: QVModel,
-        qv2_target_model: QVModel, reward_plugin: Path, discount_factor: float, expectile: float,
-        target_update_interval: int, target_update_rate: float, batch_size: int,
-        v_loss_scaling: float, gradient_accumulation_steps: int, max_gradient_norm: float,
-        qv1_optimizer: Optimizer, qv2_optimizer: Optimizer, snapshot_interval: int,
-        num_samples: int, summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
+        is_main_process: bool, training_data: Path, num_workers: int, device: torch.device,
+        amp_dtype: torch.dtype, qv1_source_model: QVModel, qv2_source_model: QVModel,
+        qv1_target_model: QVModel, qv2_target_model: QVModel, reward_plugin: Path,
+        discount_factor: float, expectile: float, target_update_interval: int,
+        target_update_rate: float, batch_size: int, v_loss_scaling: float,
+        gradient_accumulation_steps: int, max_gradient_norm: float, qv1_optimizer: Optimizer,
+        qv2_optimizer: Optimizer, snapshot_interval: int, num_samples: int,
+        summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
     # Load the reward plugin.
@@ -66,8 +68,15 @@ def _training(
         last_snapshot = num_samples
 
     skipped_samples = 0
-
     batch_count = 0
+
+    grad_scaler = None
+    if device != 'cpu' and not isinstance(qv1_optimizer, MTAdam):
+        assert not isinstance(qv2_optimizer, MTAdam)
+        grad_scaler = GradScaler()
+    else:
+        assert isinstance(qv2_optimizer, MTAdam)
+
     for annotation in data_loader:
         if is_multiprocess:
             assert world_size is not None
@@ -92,7 +101,7 @@ def _training(
             continue
 
         # Compute the Q target value.
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype):
             def get_q_target(qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
                 q_target, _ = qv_target_model(annotation[:4]) # pylint: disable=cell-var-from-loop
                 assert q_target.dim() == 2
@@ -123,7 +132,8 @@ def _training(
         reward = annotation[9]
 
         def backward(qv_source_model: QVModel, qv_optimizer: Optimizer) -> Tuple[float, float]:
-            q, v = qv_source_model(annotation[:4]) # pylint: disable=cell-var-from-loop
+            with torch.autocast(device_type=device, dtype=amp_dtype):
+                q, v = qv_source_model(annotation[:4]) # pylint: disable=cell-var-from-loop
             assert q.dim() == 2
             assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
             assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
@@ -134,14 +144,15 @@ def _training(
             if not is_multiprocess:
                 v_gathered = v
             else:
-                v_gathered = [torch.zeros_like(v) for i in range(world_size)]
+                v_gathered = [torch.zeros_like(v) for _ in range(world_size)]
                 all_gather(v_gathered, v)
                 v_gathered = torch.cat(v_gathered)
             assert v_gathered.dim() == 1
             assert v_gathered.size(0) == world_batch_size # pylint: disable=cell-var-from-loop
             v_batch_mean = torch.mean(v_gathered).item()
 
-            _, vv = qv_source_model(annotation[5:9]) # pylint: disable=cell-var-from-loop
+            with torch.autocast(device_type=device, dtype=amp_dtype):
+                _, vv = qv_source_model(annotation[5:9]) # pylint: disable=cell-var-from-loop
             is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES) # pylint: disable=cell-var-from-loop
             vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
             assert vv.dim() == 1
@@ -166,8 +177,10 @@ def _training(
                 raise RuntimeError('QV loss becomes NaN.')
             qv_loss /= gradient_accumulation_steps
             if not isinstance(qv_optimizer, MTAdam):
-                with amp.scale_loss(qv_loss, qv_optimizer) as scaled_qv_loss:
-                    scaled_qv_loss.backward()
+                if grad_scaler is None:
+                    qv_loss.backward()
+                else:
+                    grad_scaler.scale(qv_loss).backward()
 
             return (q_loss, v_loss, v_batch_mean, qv_batch_loss)
 
@@ -182,61 +195,45 @@ def _training(
 
         if batch_count % gradient_accumulation_steps == 0:
             if not isinstance(qv1_optimizer, MTAdam):
-                qv1_gradient = [
-                    torch.flatten(x.grad) for x in amp.master_params(qv1_optimizer)
-                    if x.grad is not None
-                ]
+                if grad_scaler is not None:
+                    grad_scaler.unscale_(qv1_optimizer)
+                qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
                 qv1_gradient = torch.cat(qv1_gradient)
                 qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
-                if qv1_gradient_norm > max_gradient_norm:
-                    nn.utils.clip_grad_norm_(
-                        amp.master_params(qv1_optimizer), max_gradient_norm,
-                        error_if_nonfinite=False)
+                nn.utils.clip_grad_norm_(
+                    qv1_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
                 qv1_optimizer.step()
             else:
                 qv1_optimizer.step((q1_loss, v1_loss), (1.0, 1.0), None)
-                qv1_gradient = [
-                    torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None
-                ]
+                qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
                 qv1_gradient = torch.cat(qv1_gradient)
                 qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
             qv1_optimizer.zero_grad()
 
             if not isinstance(qv2_optimizer, MTAdam):
-                qv2_gradient = [
-                    torch.flatten(x.grad) for x in amp.master_params(qv2_optimizer)
-                    if x.grad is not None
-                ]
+                if grad_scaler is not None:
+                    grad_scaler.unscale_(qv2_optimizer)
+                qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
                 qv2_gradient = torch.cat(qv2_gradient)
                 qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
-                if qv2_gradient_norm > max_gradient_norm:
-                    nn.utils.clip_grad_norm_(
-                        amp.master_params(qv2_optimizer), max_gradient_norm,
-                        error_if_nonfinite=False)
+                nn.utils.clip_grad_norm_(
+                    qv2_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
                 qv2_optimizer.step()
             else:
                 qv2_optimizer.step((q2_loss, v2_loss), (1.0, 1.0), None)
-                qv2_gradient = [
-                    torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None
-                ]
+                qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
                 qv2_gradient = torch.cat(qv2_gradient)
                 qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
             qv2_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
-                if not isinstance(qv1_optimizer, MTAdam):
-                    param1_source_iter = amp.master_params(qv1_optimizer)
-                else:
-                    param1_source_iter = qv1_source_model.parameters()
+                param1_source_iter = qv1_source_model.parameters()
                 param1_target_iter = qv1_target_model.parameters()
                 for param1_source, param1_target in zip(param1_source_iter, param1_target_iter):
                     param1_target *= (1.0 - target_update_rate)
                     param1_target += target_update_rate * param1_source
 
-                if not isinstance(qv2_optimizer, MTAdam):
-                    param2_source_iter = amp.master_params(qv2_optimizer)
-                else:
-                    param2_source_iter = qv2_source_model.parameters()
+                param2_source_iter = qv2_source_model.parameters()
                 param2_target_iter = qv2_target_model.parameters()
                 for param2_source, param2_target in zip(param2_source_iter, param2_target_iter):
                     param2_target *= (1.0 - target_update_rate)
@@ -530,6 +527,8 @@ def _main(config: DictConfig) -> None:
         raise RuntimeError(
             f'{config.gradient_accumulation_steps}: '
             'An invalid value for `gradient_accumulation_steps`.')
+    if config.gradient_accumulation_steps >= 2 and config.optimizer.type == 'mtadam':
+        raise RuntimeError('`mtadam` does not support for gradient accumulation.')
 
     if config.max_gradient_norm <= 0.0:
         raise RuntimeError(f'{config.max_gradient_norm}: An invalid value for `max_gradient_norm`.')
@@ -745,18 +744,6 @@ def _main(config: DictConfig) -> None:
     qv1_optimizer = construct_optimizer(qv1_source_model)
     qv2_optimizer = construct_optimizer(qv2_source_model)
 
-    if config.optimizer.type != 'mtadam':
-        if is_main_process:
-            qv1_source_model, qv1_optimizer = amp.initialize(
-                qv1_source_model, qv1_optimizer, opt_level='O2')
-            qv2_source_model, qv2_optimizer = amp.initialize(
-                qv2_source_model, qv2_optimizer, opt_level='O2')
-        else:
-            qv1_source_model, qv1_optimizer = amp.initialize(
-                qv1_source_model, qv1_optimizer, opt_level='O2', verbosity=0)
-            qv2_source_model, qv2_optimizer = amp.initialize(
-                qv2_source_model, qv2_optimizer, opt_level='O2', verbosity=0)
-
     if config.encoder.load_from is not None:
         encoder_state_dict = torch.load(config.encoder.load_from, map_location='cpu')
         encoder_new_state_dict = {}
@@ -905,7 +892,7 @@ def _main(config: DictConfig) -> None:
         _training(
             is_multiprocess=is_multiprocess, world_size=world_size, rank=rank,
             is_main_process=is_main_process, training_data=config.training_data,
-            num_workers=config.num_workers, device=config.device.type,
+            num_workers=config.num_workers, device=config.device.type, amp_dtype=amp_dtype,
             qv1_source_model=qv1_source_model, qv2_source_model=qv2_source_model,
             qv1_target_model=qv1_target_model, qv2_target_model=qv2_target_model,
             reward_plugin=config.reward_plugin, discount_factor=config.discount_factor,
