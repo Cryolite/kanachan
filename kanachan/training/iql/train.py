@@ -26,7 +26,7 @@ from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.qv_model import QVDecoder, QVModel
 from kanachan.training.iql.q_model import QModel
-from kanachan.training.mtadam import MTAdam
+from mtadam import MTAdam
 
 
 SnapshotWriter = Callable[

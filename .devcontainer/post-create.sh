@@ -39,10 +39,7 @@ sudo apt-get -y install cuda
 # Install prerequisite Python packages.
 python3 -m pip install -U pip
 python3 -m pip install -U \
-  jsonschema \
-  mahjong==1.1.11 \
   packaging \
-  pyyaml \
   setuptools \
   torch \
   wheel
@@ -59,7 +56,28 @@ popd
 # Install MTAdam.
 pushd /workspaces
 git clone 'https://github.com/ItzikMalkiel/MTAdam.git'
-cp MTAdam/mtadam.py /workspaces/kanachan/kanachan/training
+pushd MTAdam
+mkdir mtadam
+cp mtadam.py mtadam
+echo 'from .mtadam import MTAdam' > mtadam/__init__.py
+echo '''[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MTAdam"
+authors = [
+    {"name" = "Itzik Malkiel"},
+]
+description = "Automatic Balancing of Multiple Training Loss Terms"
+readme = "README.txt"
+requires-python = ">=3.8"
+dependencies = [
+    "tensorflow",
+]
+version = "0.0.1"''' > pyproject.toml
+python3 -m pip install .
+popd
 rm -rf MTAdam
 popd
 
