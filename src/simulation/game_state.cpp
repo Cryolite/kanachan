@@ -25,7 +25,6 @@ GameState::GameState(
   KANACHAN_ASSERT((room_ < 5u));
   for (auto [grade, model] : seats_) {
     KANACHAN_ASSERT((grade < 16u));
-    KANACHAN_ASSERT((!model.is_none()));
   }
 }
 

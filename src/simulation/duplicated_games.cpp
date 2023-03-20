@@ -27,9 +27,7 @@ python::list simulateDuplicatedGames(
 {
   KANACHAN_ASSERT((room < 5u));
   KANACHAN_ASSERT((baseline_grade < 16u));
-  KANACHAN_ASSERT((!baseline_model.is_none()));
   KANACHAN_ASSERT((proposed_grade < 16u));
-  KANACHAN_ASSERT((!proposed_model.is_none()));
 
   std::vector<std::uint_least32_t> seed = Kanachan::getRandomSeed();
 

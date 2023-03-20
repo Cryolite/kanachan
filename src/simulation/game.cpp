@@ -32,7 +32,6 @@ python::dict simulateGame(
   KANACHAN_ASSERT((room < 5u));
   for (auto [grade, model] : seats) {
     KANACHAN_ASSERT((grade < 16u));
-    KANACHAN_ASSERT((!model.is_none()));
   }
 
   bool const test = !test_paishan_list.empty();
