@@ -69,20 +69,25 @@ def _training(
 
     batch_count = 0
     for annotation in data_loader:
+        if is_multiprocess:
+            assert world_size is not None
+            assert rank is not None
+            assert batch_size % world_size == 0
+            first = (batch_size // world_size) * rank
+            last = (batch_size // world_size) * (rank + 1)
+            annotation = tuple(x[first:last] for x in annotation)
+
         if device != 'cpu':
-            annotation = [t.cuda() for t in annotation]
+            annotation = tuple(t.cuda() for t in annotation)
 
         local_batch_size = len(annotation[0])
-
         world_batch_size = local_batch_size
         if is_multiprocess:
             assert world_size is not None
             assert rank is not None
-            world_batch_size *= world_size
+            local_batch_size //= world_size
 
         if skipped_samples < num_samples:
-            if is_multiprocess:
-                barrier()
             skipped_samples += world_batch_size
             continue
 
@@ -277,6 +282,9 @@ def _training(
                 qv1_target_model, qv2_target_model,
                 qv1_optimizer, qv2_optimizer, num_samples)
             last_snapshot = num_samples
+
+    if is_multiprocess:
+        barrier()
 
     elapsed_time = datetime.datetime.now() - start_time
 
