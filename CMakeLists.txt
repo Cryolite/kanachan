@@ -1,7 +1,18 @@
-cmake_minimum_required(VERSION 3.16.3)
+cmake_minimum_required(VERSION 3.25.0)
 project(kanachan)
 
 enable_testing()
+
+if (NOT DEFINED PYTHON_VERSION)
+  execute_process(
+    COMMAND bash "-c" "python --version | grep -Eo '^Python [[:digit:]]+\\.[[:digit:]]+' | grep -Eo '[[:digit:]]+\\.[[:digit:]]+'"
+    OUTPUT_VARIABLE PYTHON_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+
+if (NOT DEFINED PYTHON_INCLUDE_PATH)
+  set(PYTHON_INCLUDE_PATH /usr/include/python${PYTHON_VERSION})
+endif()
 
 message("PYTHON_VERSION=${PYTHON_VERSION}")
 message("PYTHON_INCLUDE_PATH=${PYTHON_INCLUDE_PATH}")
@@ -93,7 +104,7 @@ else()
   set(Boost_USE_RELEASE_LIBS ON)
 endif()
 
-set(BOOST_ROOT /usr/local)
+set(BOOST_ROOT "$ENV{HOME}/.local")
 find_package(Boost
   REQUIRED
   COMPONENTS stacktrace_backtrace python)
