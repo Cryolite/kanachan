@@ -18,7 +18,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Optimizer, RAdam
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
-from torch.distributed import init_process_group, all_reduce, all_gather, barrier
+from torch.distributed import init_process_group, all_reduce, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from mtadam import MTAdam
@@ -59,8 +59,8 @@ def _training(
         return IteratorAdaptor(path, get_reward) # type: ignore pylint: disable=undefined-variable
     dataset = Dataset(training_data, iterator_adaptor)
     data_loader = DataLoader(
-        dataset, batch_size=batch_size, num_workers=num_workers,
-        pin_memory=True, drop_last=is_multiprocess)
+        dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=(num_workers >= 1),
+        drop_last=is_multiprocess)
 
     last_snapshot = None
     if snapshot_interval > 0:
@@ -86,14 +86,14 @@ def _training(
             annotation = tuple(x[first:last] for x in annotation)
 
         if device != 'cpu':
-            annotation = tuple(t.cuda() for t in annotation)
+            annotation = tuple(x.cuda() for x in annotation)
 
-        local_batch_size = len(annotation[0])
+        local_batch_size = annotation[0].size(0)
         world_batch_size = local_batch_size
         if is_multiprocess:
             assert world_size is not None
             assert rank is not None
-            local_batch_size //= world_size
+            world_batch_size *= world_size
 
         if skipped_samples < num_samples:
             skipped_samples += world_batch_size
@@ -103,6 +103,7 @@ def _training(
         with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype):
             def get_q_target(qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
                 q_target, _ = qv_target_model(annotation[:4]) # pylint: disable=cell-var-from-loop
+                q_target: torch.Tensor
                 assert q_target.dim() == 2
                 assert q_target.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
                 assert q_target.size(1) == MAX_NUM_ACTION_CANDIDATES
@@ -110,15 +111,10 @@ def _training(
                 assert q_target.dim() == 1
                 assert q_target.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
 
-                if not is_multiprocess:
-                    q_target_gathered = q_target
-                else:
-                    q_target_gathered = [torch.zeros_like(q_target) for i in range(world_size)]
-                    all_gather(q_target_gathered, q_target)
-                    q_target_gathered = torch.cat(q_target_gathered)
-                assert q_target_gathered.dim() == 1
-                assert q_target_gathered.size(0) == world_batch_size # pylint: disable=cell-var-from-loop
-                q_batch_mean = torch.mean(q_target_gathered)
+                q_batch_mean = q_target.detach().clone()
+                if is_multiprocess:
+                    all_reduce(q_batch_mean)
+                    q_batch_mean /= world_batch_size # pylint: disable=cell-var-from-loop
 
                 return (q_target, q_batch_mean.item())
 
@@ -130,9 +126,13 @@ def _training(
 
         reward = annotation[9]
 
-        def backward(qv_source_model: QVModel, qv_optimizer: Optimizer) -> Tuple[float, float]:
+        def backward(
+                qv_source_model: QVModel,
+                qv_optimizer: Optimizer) -> Tuple[torch.Tensor, torch.Tensor, float, float]:
             with torch.autocast(device_type=device, dtype=amp_dtype):
                 q, v = qv_source_model(annotation[:4]) # pylint: disable=cell-var-from-loop
+            q: torch.Tensor
+            v: torch.Tensor
             assert q.dim() == 2
             assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
             assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
@@ -140,15 +140,10 @@ def _training(
             assert v.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
             q = q[torch.arange(local_batch_size), annotation[4]] # pylint: disable=cell-var-from-loop
 
-            if not is_multiprocess:
-                v_gathered = v
-            else:
-                v_gathered = [torch.zeros_like(v) for _ in range(world_size)]
-                all_gather(v_gathered, v)
-                v_gathered = torch.cat(v_gathered)
-            assert v_gathered.dim() == 1
-            assert v_gathered.size(0) == world_batch_size # pylint: disable=cell-var-from-loop
-            v_batch_mean = torch.mean(v_gathered).item()
+            v_batch_mean = v.detach().clone()
+            if is_multiprocess:
+                all_reduce(v_batch_mean)
+                v_batch_mean /= world_size
 
             with torch.autocast(device_type=device, dtype=amp_dtype):
                 _, vv = qv_source_model(annotation[5:9]) # pylint: disable=cell-var-from-loop
@@ -170,10 +165,10 @@ def _training(
             if is_multiprocess:
                 all_reduce(qv_batch_loss)
                 qv_batch_loss /= world_size
-            qv_batch_loss = qv_batch_loss.item()
 
             if math.isnan(qv_loss.item()):
                 raise RuntimeError('QV loss becomes NaN.')
+
             qv_loss /= gradient_accumulation_steps
             if not isinstance(qv_optimizer, MTAdam):
                 if grad_scaler is None:
@@ -181,7 +176,7 @@ def _training(
                 else:
                     grad_scaler.scale(qv_loss).backward()
 
-            return (q_loss, v_loss, v_batch_mean, qv_batch_loss)
+            return (q_loss, v_loss, v_batch_mean.item(), qv_batch_loss.item())
 
         # Backprop for the QV1 source model.
         q1_loss, v1_loss, v1_batch_mean, qv1_batch_loss = backward(qv1_source_model, qv1_optimizer)
@@ -193,36 +188,30 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if not isinstance(qv1_optimizer, MTAdam):
-                if grad_scaler is not None:
-                    grad_scaler.unscale_(qv1_optimizer)
-                qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
-                qv1_gradient = torch.cat(qv1_gradient)
-                qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
-                nn.utils.clip_grad_norm_(
-                    qv1_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-                qv1_optimizer.step()
-            else:
+            if grad_scaler is not None:
+                grad_scaler.unscale_(qv1_optimizer)
+            qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
+            qv1_gradient = torch.cat(qv1_gradient)
+            qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
+            nn.utils.clip_grad_norm_(
+                qv1_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+            if isinstance(qv1_optimizer, MTAdam):
                 qv1_optimizer.step((q1_loss, v1_loss), (1.0, 1.0), None)
-                qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
-                qv1_gradient = torch.cat(qv1_gradient)
-                qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
+            else:
+                qv1_optimizer.step()
             qv1_optimizer.zero_grad()
 
-            if not isinstance(qv2_optimizer, MTAdam):
-                if grad_scaler is not None:
-                    grad_scaler.unscale_(qv2_optimizer)
-                qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
-                qv2_gradient = torch.cat(qv2_gradient)
-                qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
-                nn.utils.clip_grad_norm_(
-                    qv2_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-                qv2_optimizer.step()
-            else:
+            if grad_scaler is not None:
+                grad_scaler.unscale_(qv2_optimizer)
+            qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
+            qv2_gradient = torch.cat(qv2_gradient)
+            qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
+            nn.utils.clip_grad_norm_(
+                qv2_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+            if isinstance(qv2_optimizer, MTAdam):
                 qv2_optimizer.step((q2_loss, v2_loss), (1.0, 1.0), None)
-                qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
-                qv2_gradient = torch.cat(qv2_gradient)
-                qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
+            else:
+                qv2_optimizer.step()
             qv2_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
@@ -245,37 +234,29 @@ def _training(
                     num_samples, qv1_batch_loss, qv2_batch_loss, qv1_gradient_norm,
                     qv2_gradient_norm)
                 summary_writer.add_scalars(
-                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
-                    num_samples)
+                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean }, num_samples)
                 summary_writer.add_scalars(
-                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean },
-                    num_samples)
+                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean }, num_samples)
                 summary_writer.add_scalars(
-                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
-                    num_samples)
+                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss }, num_samples)
                 summary_writer.add_scalars(
                     'QV Gradient Norm',
-                    { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm },
-                    num_samples)
+                    { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm }, num_samples)
         else:
             if is_main_process:
                 logging.info(
                     'sample = %s, QV1 loss = %s, QV2 loss = %s',
                     num_samples, qv1_batch_loss, qv2_batch_loss)
                 summary_writer.add_scalars(
-                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean },
-                    num_samples)
+                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean }, num_samples)
                 summary_writer.add_scalars(
-                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean },
-                    num_samples)
+                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean }, num_samples)
                 summary_writer.add_scalars(
-                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss },
-                    num_samples)
+                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss }, num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
             snapshot_writer(
-                qv1_source_model, qv2_source_model,
-                qv1_target_model, qv2_target_model,
+                qv1_source_model, qv2_source_model, qv1_target_model, qv2_target_model,
                 qv1_optimizer, qv2_optimizer, num_samples)
             last_snapshot = num_samples
 
