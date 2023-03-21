@@ -12,5 +12,5 @@ class PositionEmbedding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x: torch.Tensor):
-        x += self.position_embedding(torch.arange(x.size(1), device=x.device, dtype=x.dtype))
+        x += self.position_embedding(torch.arange(x.size(1), device=x.device, dtype=torch.long))
         return self.dropout(x)
