@@ -88,12 +88,12 @@ def _training(
         if device != 'cpu':
             annotation = tuple(t.cuda() for t in annotation)
 
-        local_batch_size = len(annotation[0])
+        local_batch_size = annotation[0].size(0)
         world_batch_size = local_batch_size
         if is_multiprocess:
             assert world_size is not None
             assert rank is not None
-            local_batch_size //= world_size
+            world_batch_size *= world_size
 
         if skipped_samples < num_samples:
             skipped_samples += world_batch_size
@@ -201,7 +201,11 @@ def _training(
                 qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
                 nn.utils.clip_grad_norm_(
                     qv1_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-                qv1_optimizer.step()
+                if grad_scaler is None:
+                    qv1_optimizer.step()
+                else:
+                    grad_scaler.step(qv1_optimizer)
+                    grad_scaler.update()
             else:
                 qv1_optimizer.step((q1_loss, v1_loss), (1.0, 1.0), None)
                 qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
@@ -217,7 +221,11 @@ def _training(
                 qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
                 nn.utils.clip_grad_norm_(
                     qv2_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-                qv2_optimizer.step()
+                if grad_scaler is None:
+                    qv2_optimizer.step()
+                else:
+                    grad_scaler.step(qv2_optimizer)
+                    grad_scaler.update()
             else:
                 qv2_optimizer.step((q2_loss, v2_loss), (1.0, 1.0), None)
                 qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
@@ -662,11 +670,11 @@ def _main(config: DictConfig) -> None:
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
         num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device, dtype=dtype)
+        device=config.device.type, dtype=dtype)
     qv1_source_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
+        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
     qv1_source_model = QVModel(qv1_source_encoder, qv1_source_decoder)
     qv1_source_model.to(device=config.device.type, dtype=dtype)
 
@@ -675,11 +683,11 @@ def _main(config: DictConfig) -> None:
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
         num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device, dtype=dtype)
+        device=config.device.type, dtype=dtype)
     qv2_source_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
+        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
     qv2_source_model = QVModel(qv2_source_encoder, qv2_source_decoder)
     qv2_source_model.to(device=config.device.type, dtype=dtype)
 
@@ -688,11 +696,11 @@ def _main(config: DictConfig) -> None:
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
         num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device, dtype=dtype)
+        device=config.device.type, dtype=dtype)
     qv1_target_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
+        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
     qv1_target_model = QVModel(qv1_target_encoder, qv1_target_decoder)
     qv1_target_model.requires_grad_(False)
     qv1_target_model.to(device=config.device.type, dtype=dtype)
@@ -702,11 +710,11 @@ def _main(config: DictConfig) -> None:
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
         num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device, dtype=dtype)
+        device=config.device.type, dtype=dtype)
     qv2_target_decoder = QVDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, device=config.device, dtype=dtype)
+        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
     qv2_target_model = QVModel(qv2_target_encoder, qv2_target_decoder)
     qv2_target_model.requires_grad_(False)
     qv2_target_model.to(device=config.device.type, dtype=dtype)
