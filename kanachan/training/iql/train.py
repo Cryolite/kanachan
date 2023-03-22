@@ -66,7 +66,7 @@ def _training(
     if snapshot_interval > 0:
         last_snapshot = num_samples
 
-    skipped_samples = 0
+    num_consumed_samples = 0
     batch_count = 0
 
     grad_scaler = None
@@ -77,6 +77,12 @@ def _training(
         assert isinstance(qv2_optimizer, MTAdam)
 
     for annotation in data_loader:
+        if num_consumed_samples < num_samples:
+            num_consumed_samples += batch_size
+            continue
+
+        barrier()
+
         if is_multiprocess:
             assert world_size is not None
             assert rank is not None
@@ -89,15 +95,7 @@ def _training(
             annotation = tuple(x.cuda() for x in annotation)
 
         local_batch_size = annotation[0].size(0)
-        world_batch_size = local_batch_size
-        if is_multiprocess:
-            assert world_size is not None
-            assert rank is not None
-            world_batch_size *= world_size
-
-        if skipped_samples < num_samples:
-            skipped_samples += world_batch_size
-            continue
+        world_batch_size = batch_size
 
         # Compute the Q target value.
         with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype):
@@ -111,7 +109,7 @@ def _training(
                 assert q_target.dim() == 1
                 assert q_target.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
 
-                q_batch_mean = q_target.detach().clone()
+                q_batch_mean = q_target.detach().clone().mean()
                 if is_multiprocess:
                     all_reduce(q_batch_mean)
                     q_batch_mean /= world_batch_size # pylint: disable=cell-var-from-loop
@@ -140,7 +138,7 @@ def _training(
             assert v.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
             q = q[torch.arange(local_batch_size), annotation[4]] # pylint: disable=cell-var-from-loop
 
-            v_batch_mean = v.detach().clone()
+            v_batch_mean = v.detach().clone().mean()
             if is_multiprocess:
                 all_reduce(v_batch_mean)
                 v_batch_mean /= world_size
@@ -161,7 +159,7 @@ def _training(
             v_loss = torch.mean(v_loss)
             qv_loss = q_loss + v_loss_scaling * v_loss
 
-            qv_batch_loss = qv_loss.detach().clone()
+            qv_batch_loss = qv_loss.detach().clone().mean()
             if is_multiprocess:
                 all_reduce(qv_batch_loss)
                 qv_batch_loss /= world_size
@@ -185,6 +183,7 @@ def _training(
         q2_loss, v2_loss, v2_batch_mean, qv2_batch_loss = backward(qv2_source_model, qv2_optimizer)
 
         num_samples += world_batch_size
+        num_consumed_samples += world_batch_size
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
@@ -432,53 +431,56 @@ def _main(config: DictConfig) -> None:
         assert config.initial_model is None
 
         if config.initial_model_index is None:
-            config.initial_model_index = 0
             for child in os.listdir(config.initial_model_prefix):
                 match = re.search(
-                    '^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer)\\.(\\d+)\\.pth$', child)
+                    '^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer)(?:\\.(\\d+))?\\.pth$', child)
                 if match is None:
+                    continue
+                if match[1] is None:
+                    config.initial_model_index = sys.maxsize
                     continue
                 if int(match[1]) > config.initial_model_index:
                     config.initial_model_index = int(match[1])
+                    continue
         if config.initial_model_index is None:
             raise RuntimeError(f'{config.initial_model_prefix}: No model snapshot found.')
-        num_samples = config.initial_model_index
 
-        qv1_source_snapshot_path \
-            = config.initial_model_prefix / f'qv1-source.{config.initial_model_index}.pth'
+        if config.initial_model_index == sys.maxsize:
+            config.initial_model_index = 0
+            infix = ''
+        else:
+            num_samples = config.initial_model_index
+            infix = f'.{num_samples}'
+
+        qv1_source_snapshot_path = config.initial_model_prefix / f'qv1-source{infix}.pth'
         if not qv1_source_snapshot_path.exists():
             raise RuntimeError(f'{qv1_source_snapshot_path}: Does not exist.')
         if not qv1_source_snapshot_path.is_file():
             raise RuntimeError(f'{qv1_source_snapshot_path}: Not a file.')
 
-        qv2_source_snapshot_path \
-            = config.initial_model_prefix / f'qv2-source.{config.initial_model_index}.pth'
+        qv2_source_snapshot_path = config.initial_model_prefix / f'qv2-source{infix}.pth'
         if not qv2_source_snapshot_path.exists():
             raise RuntimeError(f'{qv2_source_snapshot_path}: Does not exist.')
         if not qv2_source_snapshot_path.is_file():
             raise RuntimeError(f'{qv2_source_snapshot_path}: Not a file.')
 
-        qv1_target_snapshot_path \
-            = config.initial_model_prefix / f'qv1-target.{config.initial_model_index}.pth'
+        qv1_target_snapshot_path = config.initial_model_prefix / f'qv1-target{infix}.pth'
         if not qv1_target_snapshot_path.exists():
             raise RuntimeError(f'{qv1_target_snapshot_path}: Does not exist.')
         if not qv1_target_snapshot_path.is_file():
             raise RuntimeError(f'{qv1_target_snapshot_path}: Not a file.')
 
-        qv2_target_snapshot_path \
-            = config.initial_model_prefix / f'qv2-target.{config.initial_model_index}.pth'
+        qv2_target_snapshot_path = config.initial_model_prefix / f'qv2-target{infix}.pth'
         if not qv2_target_snapshot_path.exists():
             raise RuntimeError(f'{qv2_target_snapshot_path}: Does not exist.')
         if not qv2_target_snapshot_path.is_file():
             raise RuntimeError(f'{qv2_target_snapshot_path}: Not a file.')
 
-        qv1_optimizer_snapshot_path \
-            = config.initial_model_prefix / f'qv1-optimizer.{config.initial_model_index}.pth'
+        qv1_optimizer_snapshot_path = config.initial_model_prefix / f'qv1-optimizer{infix}.pth'
         if not qv1_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
             qv1_optimizer_snapshot_path = None
 
-        qv2_optimizer_snapshot_path \
-            = config.initial_model_prefix / f'qv2-optimizer.{config.initial_model_index}.pth'
+        qv2_optimizer_snapshot_path = config.initial_model_prefix / f'qv2-optimizer{infix}.pth'
         if not qv2_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
             qv2_optimizer_snapshot_path = None
 
