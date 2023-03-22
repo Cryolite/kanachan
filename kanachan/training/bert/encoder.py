@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from typing import Tuple
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint_sequential
@@ -50,9 +49,9 @@ class Encoder(nn.Module):
 
         self.checkpointing = checkpointing
 
-    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]):
-        sparse, numeric, progression, candidates = x
-
+    def forward(
+            self, sparse: torch.Tensor, numeric: torch.Tensor, progression: torch.Tensor,
+            candidates: torch.Tensor):
         sparse = self.sparse_embedding(sparse)
 
         numeric = torch.unsqueeze(numeric, -1)

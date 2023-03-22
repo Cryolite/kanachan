@@ -4,6 +4,7 @@ import re
 import datetime
 import math
 from pathlib import Path
+import pickle
 import os
 import logging
 import sys
@@ -73,8 +74,6 @@ def _training(
     if device != 'cpu' and not isinstance(qv1_optimizer, MTAdam):
         assert not isinstance(qv2_optimizer, MTAdam)
         grad_scaler = GradScaler()
-    else:
-        assert isinstance(qv2_optimizer, MTAdam)
 
     for annotation in data_loader:
         if num_consumed_samples < num_samples:
@@ -100,7 +99,7 @@ def _training(
         # Compute the Q target value.
         with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype):
             def get_q_target(qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
-                q_target, _ = qv_target_model(annotation[:4]) # pylint: disable=cell-var-from-loop
+                q_target, _ = qv_target_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
                 q_target: torch.Tensor
                 assert q_target.dim() == 2
                 assert q_target.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
@@ -128,7 +127,7 @@ def _training(
                 qv_source_model: QVModel,
                 qv_optimizer: Optimizer) -> Tuple[torch.Tensor, torch.Tensor, float, float]:
             with torch.autocast(device_type=device, dtype=amp_dtype):
-                q, v = qv_source_model(annotation[:4]) # pylint: disable=cell-var-from-loop
+                q, v = qv_source_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
             q: torch.Tensor
             v: torch.Tensor
             assert q.dim() == 2
@@ -144,7 +143,8 @@ def _training(
                 v_batch_mean /= world_size
 
             with torch.autocast(device_type=device, dtype=amp_dtype):
-                _, vv = qv_source_model(annotation[5:9]) # pylint: disable=cell-var-from-loop
+                _, vv = qv_source_model(*(annotation[5:9])) # pylint: disable=cell-var-from-loop
+            vv: torch.Tensor
             is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES) # pylint: disable=cell-var-from-loop
             vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
             assert vv.dim() == 1
@@ -187,33 +187,28 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if grad_scaler is not None:
-                grad_scaler.unscale_(qv1_optimizer)
-            qv1_gradient = [torch.flatten(p.grad) for p in qv1_source_model.parameters() if p.grad is not None]
-            qv1_gradient = torch.cat(qv1_gradient)
-            qv1_gradient_norm = torch.linalg.vector_norm(qv1_gradient).item()
-            nn.utils.clip_grad_norm_(
-                qv1_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-            if isinstance(qv1_optimizer, MTAdam):
-                qv1_optimizer.step((q1_loss, v1_loss), (1.0, 1.0), None)
-            else:
-                grad_scaler.step(qv1_optimizer)
-                grad_scaler.update()
-            qv1_optimizer.zero_grad()
+            def step(
+                    qv_source_model: QVModel, q_loss: torch.Tensor, v_loss: torch.Tensor,
+                    qv_optimizer: Optimizer) -> float:
+                if grad_scaler is not None:
+                    grad_scaler.unscale_(qv_optimizer)
+                qv_gradient = nn.utils.parameters_to_vector(qv_source_model.parameters())
+                qv_gradient_norm: float = torch.linalg.vector_norm(qv_gradient).item()
+                nn.utils.clip_grad_norm_(
+                    qv_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+                if isinstance(qv_optimizer, MTAdam):
+                    qv_optimizer.step((q_loss, v_loss), (1.0, 1.0), None)
+                else:
+                    if grad_scaler is None:
+                        qv_optimizer.step()
+                    else:
+                        grad_scaler.step(qv_optimizer)
+                        grad_scaler.update()
+                qv_optimizer.zero_grad()
+                return qv_gradient_norm
 
-            if grad_scaler is not None:
-                grad_scaler.unscale_(qv2_optimizer)
-            qv2_gradient = [torch.flatten(p.grad) for p in qv2_source_model.parameters() if p.grad is not None]
-            qv2_gradient = torch.cat(qv2_gradient)
-            qv2_gradient_norm = torch.linalg.vector_norm(qv2_gradient).item()
-            nn.utils.clip_grad_norm_(
-                qv2_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-            if isinstance(qv2_optimizer, MTAdam):
-                qv2_optimizer.step((q2_loss, v2_loss), (1.0, 1.0), None)
-            else:
-                grad_scaler.step(qv2_optimizer)
-                grad_scaler.update()
-            qv2_optimizer.zero_grad()
+            qv1_gradient_norm = step(qv1_source_model, q1_loss, v1_loss, qv1_optimizer)
+            qv2_gradient_norm = step(qv2_source_model, q2_loss, v2_loss, qv2_optimizer)
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 param1_source_iter = qv1_source_model.parameters()
@@ -281,9 +276,8 @@ def _main(config: DictConfig) -> None:
             raise RuntimeError('Multi-node not supported.')
         world_size = int(os.environ['LOCAL_WORLD_SIZE'])
         rank = int(os.environ['LOCAL_RANK'])
-        is_multiprocess = world_size >= 2
         is_main_process = rank == 0
-        torch.cuda.set_device(rank)
+        is_multiprocess = True
     else:
         world_size = None
         rank = None
@@ -318,6 +312,8 @@ def _main(config: DictConfig) -> None:
         config.device.type = 'cuda'
     else:
         config.device.type = 'cpu'
+    if config.device.type == 'cuda':
+        torch.cuda.set_device(rank)
 
     if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
         raise RuntimeError(f'{config.device.dtype}: An invalid dtype.')
@@ -328,6 +324,10 @@ def _main(config: DictConfig) -> None:
         'bfloat16': torch.bfloat16
     }[config.device.dtype]
 
+    if config.device.type == 'cpu':
+        if config.device.amp_dtype is not None:
+            raise RuntimeError('AMP is not supported on CPU.')
+        config.device.amp_dtype = 'bfloat16'
     if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
         raise RuntimeError(f'{config.device.amp_dtype}: An invalid AMP dtype.')
     amp_dtype = {
@@ -837,29 +837,8 @@ def _main(config: DictConfig) -> None:
         torch.save(qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer{infix}.pth')
 
         q_model = QModel(qv1_model=qv1_target_model, qv2_model=qv2_target_model)
-        q_model_state_dict = q_model.state_dict()
-        compiled_q_model = {
-            'model': {
-                'module': 'kanachan.training.iql.q_model',
-                'class': 'QModel',
-                'kwargs': {
-                    'position_encoder': config.encoder.position_encoder,
-                    'dimension': config.encoder.dimension,
-                    'encoder_num_heads': config.encoder.num_heads,
-                    'encoder_dim_feedforward': config.encoder.dim_feedforward,
-                    'encoder_activation_function': config.encoder.activation_function,
-                    'encoder_dropout': config.encoder.dropout,
-                    'encoder_num_layers': config.encoder.num_layers,
-                    'decoder_dim_feedforward': config.decoder.dim_feedforward,
-                    'decoder_activation_function': config.decoder.activation_function,
-                    'decoder_dropout': config.decoder.dropout,
-                    'decoder_num_layers': config.decoder.num_layers,
-                    'checkpointing': config.checkpointing
-                },
-                'state_dict': q_model_state_dict
-            }
-        }
-        torch.save(compiled_q_model, snapshots_path / f'q-model{infix}.kanachan')
+        with open(snapshots_path / f'q-model{infix}.kanachan', 'wb') as f:
+            pickle.dump(q_model, f)
 
     with SummaryWriter(log_dir=tensorboard_path) as summary_writer:
         _training(

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import math
+from collections import OrderedDict
 from typing import (Tuple,)
 import torch
 from torch import nn
@@ -15,53 +16,61 @@ class QVDecoder(nn.Module):
             num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
         super(QVDecoder, self).__init__()
 
-        self._value_decoder = ValueDecoder(
+        self.value_decoder = ValueDecoder(
             dimension=dimension, dim_feedforward=dim_feedforward,
             activation_function=activation_function, dropout=dropout, num_layers=num_layers,
             device=device, dtype=dtype)
 
-        # The final layer is position-wise feed-forward network.
-        self._semifinal_linear = nn.Linear(dimension, dim_feedforward, device=device, dtype=dtype)
-        if activation_function == 'relu':
-            self._semifinal_activation = nn.ReLU()
-        elif activation_function == 'gelu':
-            self._semifinal_activation = nn.GELU()
-        else:
-            raise ValueError(
-                f'{activation_function}: An invalid activation function.')
-        self._semifinal_dropout = nn.Dropout(p=dropout)
-        self._final_linear = nn.Linear(dim_feedforward, 1, device=device, dtype=dtype)
+        layers = OrderedDict()
+        for i in range(num_layers - 1):
+            layers[f'layer{i}'] = nn.Linear(
+                dimension if i == 0 else dim_feedforward, dim_feedforward,
+                device=device, dtype=dtype)
+            if activation_function == 'relu':
+                layers[f'activation{i}'] = nn.ReLU()
+            elif activation_function == 'gelu':
+                layers[f'activation{i}'] = nn.GELU()
+            else:
+                raise ValueError(activation_function)
+            layers[f'dropout{i}'] = nn.Dropout(p=dropout)
+        layers[f'layer{num_layers - 1}'] = nn.Linear(
+            dimension if num_layers == 1 else dim_feedforward, 1, device=device, dtype=dtype)
+        self.layers = nn.Sequential(layers)
 
-    def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        candidates, encode = x
-
-        value_decode = self._value_decoder(x)
-        value_expanded = torch.unsqueeze(value_decode, dim=1)
+    def forward(
+            self, candidates: torch.Tensor,
+            encode: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        assert candidates.dim() == 2
+        assert encode.dim() == 3
+        assert candidates.size(0) == encode.size(0)
+        
+        value: torch.Tensor = self.value_decoder(candidates, encode)
+        assert value.dim() == 1
+        assert value.size(0) == candidates.size(0)
+        value_expanded = torch.unsqueeze(value, dim=1)
         value_expanded = value_expanded.expand(-1, MAX_NUM_ACTION_CANDIDATES)
 
-        advantage_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
-        advantage_decode = self._semifinal_linear(advantage_encode)
-        advantage_decode = self._semifinal_activation(advantage_decode)
-        advantage_decode = self._semifinal_dropout(advantage_decode)
-        advantage_decode = self._final_linear(advantage_decode)
-        advantage_decode = torch.squeeze(advantage_decode, dim=2)
-        assert advantage_decode.dim() == 2
-        assert advantage_decode.size(0) == candidates.size(0)
-        assert advantage_decode.size(1) == MAX_NUM_ACTION_CANDIDATES
+        encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
+        advantage: torch.Tensor = self.layers(encode)
+        advantage = torch.squeeze(advantage, dim=2)
+        assert advantage.dim() == 2
+        assert advantage.size(0) == candidates.size(0)
+        assert advantage.size(1) == MAX_NUM_ACTION_CANDIDATES
 
-        q_decode = value_expanded + advantage_decode
-        q_decode = torch.where(
-            candidates < NUM_TYPES_OF_ACTIONS, q_decode, -math.inf)
+        q = value_expanded + advantage
+        q = torch.where(candidates < NUM_TYPES_OF_ACTIONS, q, torch.full_like(q, -math.inf))
 
-        return (q_decode, value_decode)
+        return q, value
 
 
 class QVModel(nn.Module):
     def __init__(self, encoder: Encoder, decoder: QVDecoder) -> None:
         super(QVModel, self).__init__()
-        self._encoder = encoder
-        self._decoder = decoder
+        self.encoder = encoder
+        self.decoder = decoder
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        encode = self._encoder(x)
-        return self._decoder((x[3], encode))
+    def forward(
+            self, sparse: torch.Tensor, numeric: torch.Tensor, progression: torch.Tensor,
+            candidates: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        encode = self.encoder(sparse, numeric, progression, candidates)
+        return self.decoder(candidates, encode)

@@ -8,8 +8,8 @@ from omegaconf import MISSING
 @dataclass
 class CpuConfig:
     type: Optional[str] = 'cpu'
-    dtype: str = 'float32'
-    amp_dtype: str = 'bfloat16'
+    dtype: str = 'float64'
+    amp_dtype: Optional[str] = None
 
 @dataclass
 class CudaConfig:
@@ -95,7 +95,7 @@ _defaults = [
     { 'device': 'cuda' },
     { 'encoder': 'bert_base' },
     { 'decoder': 'double' },
-    { 'optimizer': 'adam' },
+    { 'optimizer': 'lamb' },
     '_self_'
 ]
 
