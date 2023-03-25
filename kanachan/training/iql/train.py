@@ -439,7 +439,7 @@ def _main(config: DictConfig) -> None:
                 if match[1] is None:
                     config.initial_model_index = sys.maxsize
                     continue
-                if int(match[1]) > config.initial_model_index:
+                if config.initial_model_index is None or int(match[1]) > config.initial_model_index:
                     config.initial_model_index = int(match[1])
                     continue
         if config.initial_model_index is None:
