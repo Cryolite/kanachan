@@ -2,13 +2,13 @@
 
 import re
 from pathlib import Path
+import pickle
 from argparse import ArgumentParser, Namespace
 from typing import Tuple, List, Callable
 import sys
 import torch
 from torch import backends
-from kanachan.training.bert.model_loader import load_model
-from kanachan.training.bert.model_mode import ModelMode
+from torch import nn
 from kanachan.simulation import simulate
 
 
@@ -55,7 +55,7 @@ def _main():
     config = _parse_arguments()
 
     if config.device is not None:
-        match = re.search('^(?:cpu|cuda(\\d*))$', config.device)
+        match = re.search('^(?:cpu|cuda(?::\\d+)?)$', config.device)
         if match is None:
             raise RuntimeError(f'{config.device}: invalid device')
         device = config.device
@@ -75,8 +75,10 @@ def _main():
         raise RuntimeError(f'{config.baseline_model}: Does not exist.')
     if not config.baseline_model.is_file():
         raise RuntimeError(f'{config.baseline_model}: Not a file.')
-    baseline_model = load_model(config.baseline_model)
+    with open(config.baseline_model, 'rb') as f:
+        baseline_model: nn.Module = pickle.load(f)
     baseline_model.to(device=device, dtype=dtype)
+    baseline_model.eval()
 
     if config.baseline_grade < 0 or 15 < config.baseline_grade:
         raise RuntimeError(
@@ -86,8 +88,10 @@ def _main():
         raise RuntimeError(f'{config.proposed_model}: Does not exist.')
     if not config.proposed_model.is_file():
         raise RuntimeError(f'{config.proposed_model}: Not a file.')
-    proposed_model = load_model(config.proposed_model)
+    with open(config.proposed_model, 'rb') as f:
+        proposed_model: nn.Module = pickle.load(f)
     proposed_model.to(device=device, dtype=dtype)
+    proposed_model.eval()
 
     if config.proposed_grade < 0 or 15 < config.proposed_grade:
         raise RuntimeError(
@@ -108,7 +112,7 @@ def _main():
         raise RuntimeError(f'{config.n}: An invalid value for the `-n` option.')
 
     results = []
-    with ModelMode(baseline_model, 'prediction'), ModelMode(proposed_model, 'prediction'):
+    with torch.no_grad():
         for i in range(config.n):
             result = simulate(
                 device, dtype, mode, config.baseline_grade, baseline_model,

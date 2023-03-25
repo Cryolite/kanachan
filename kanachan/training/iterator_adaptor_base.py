@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from pathlib import Path
 import gzip
 import bz2
@@ -24,9 +22,9 @@ class IteratorAdaptorBase(object):
 
         if get_worker_info() is not None:
             try:
-                for i in range(get_worker_info().id):
+                for _ in range(get_worker_info().id):
                     next(self.__fp)
-            except StopIteration as e:
+            except StopIteration as _:
                 pass
 
     def __del__(self) -> None:
@@ -90,8 +88,8 @@ class IteratorAdaptorBase(object):
             line = next(self.__fp)
             try:
                 assert(get_worker_info().num_workers >= 1)
-                for i in range(get_worker_info().num_workers - 1):
+                for _ in range(get_worker_info().num_workers - 1):
                     next(self.__fp)
-            except StopIteration as e:
+            except StopIteration as _:
                 pass
             return self.__parse_line(line)

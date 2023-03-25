@@ -16,7 +16,7 @@ import torch
 from torch import backends
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim import Optimizer, RAdam
+from torch.optim import Optimizer, SGD, Adam, RAdam
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce, barrier
@@ -41,9 +41,9 @@ SnapshotWriter = Callable[
 def _training(
         *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
         is_main_process: bool, training_data: Path, num_workers: int, device: torch.device,
-        amp_dtype: torch.dtype, qv1_source_model: QVModel, qv2_source_model: QVModel,
-        qv1_target_model: QVModel, qv2_target_model: QVModel, reward_plugin: Path,
-        discount_factor: float, expectile: float, target_update_interval: int,
+        dtype: torch.dtype, amp_dtype: torch.dtype, qv1_source_model: QVModel,
+        qv2_source_model: QVModel, qv1_target_model: QVModel, qv2_target_model: QVModel,
+        reward_plugin: Path, discount_factor: float, expectile: float, target_update_interval: int,
         target_update_rate: float, batch_size: int, v_loss_scaling: float,
         gradient_accumulation_steps: int, max_gradient_norm: float, qv1_optimizer: Optimizer,
         qv2_optimizer: Optimizer, snapshot_interval: int, num_samples: int,
@@ -97,7 +97,7 @@ def _training(
         world_batch_size = batch_size
 
         # Compute the Q target value.
-        with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype):
+        with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
             def get_q_target(qv_target_model: QVModel) -> Tuple[torch.Tensor, float]:
                 q_target, _ = qv_target_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
                 q_target: torch.Tensor
@@ -126,7 +126,7 @@ def _training(
         def backward(
                 qv_source_model: QVModel,
                 qv_optimizer: Optimizer) -> Tuple[torch.Tensor, torch.Tensor, float, float]:
-            with torch.autocast(device_type=device, dtype=amp_dtype):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
                 q, v = qv_source_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
             q: torch.Tensor
             v: torch.Tensor
@@ -142,7 +142,7 @@ def _training(
                 all_reduce(v_batch_mean)
                 v_batch_mean /= world_size
 
-            with torch.autocast(device_type=device, dtype=amp_dtype):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
                 _, vv = qv_source_model(*(annotation[5:9])) # pylint: disable=cell-var-from-loop
             vv: torch.Tensor
             is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES) # pylint: disable=cell-var-from-loop
@@ -276,13 +276,13 @@ def _main(config: DictConfig) -> None:
             raise RuntimeError('Multi-node not supported.')
         world_size = int(os.environ['LOCAL_WORLD_SIZE'])
         rank = int(os.environ['LOCAL_RANK'])
-        is_main_process = rank == 0
         is_multiprocess = True
+        is_main_process = (rank == 0)
     else:
         world_size = None
         rank = None
-        is_main_process = True
         is_multiprocess = False
+        is_main_process = True
 
     if not config.training_data.exists():
         raise RuntimeError(f'{config.training_data}: Does not exist.')
@@ -368,10 +368,11 @@ def _main(config: DictConfig) -> None:
     if config.encoder.num_layers < 1:
         raise RuntimeError(f'{config.encoder.num_layers}: An invalid number of encoder layers.')
 
-    if config.encoder.load_from is not None and not config.encoder.load_from.exists():
-        raise RuntimeError(f'{config.encoder.load_from}: Does not exist.')
-    if config.encoder.load_from is not None and not config.encoder.load_from.is_file():
-        raise RuntimeError(f'{config.encoder.load_from}: Not a file')
+    if config.encoder.load_from is not None:
+        if not config.encoder.load_from.exists():
+            raise RuntimeError(f'{config.encoder.load_from}: Does not exist.')
+        if not config.encoder.load_from.is_file():
+            raise RuntimeError(f'{config.encoder.load_from}: Not a file.')
 
     if config.decoder.dim_feedforward is None:
         config.decoder.dim_feedforward = config.encoder.dim_feedforward
@@ -391,20 +392,21 @@ def _main(config: DictConfig) -> None:
     if config.decoder.num_layers < 1:
         raise RuntimeError(f'{config.decoder.num_layers}: An invalid number of decoder layers.')
 
-    if config.decoder.load_from is not None and not config.decoder.load_from.exists():
-        raise RuntimeError(f'{config.decoder.load_from}: Does not exist.')
-    if config.decoder.load_from is not None and not config.decoder.load_from.is_file():
-        raise RuntimeError(f'{config.decoder.load_from}: Not a file')
+    if config.decoder.load_from is not None:
+        if not config.decoder.load_from.exists():
+            raise RuntimeError(f'{config.decoder.load_from}: Does not exist.')
+        if not config.decoder.load_from.is_file():
+            raise RuntimeError(f'{config.decoder.load_from}: Not a file.')
 
     if config.initial_model is not None:
         if config.encoder.load_from is not None:
             raise RuntimeError('`initial_model` conflicts with `encoder.load_from`.')
         if config.decoder.load_from is not None:
             raise RuntimeError('`initial_model` conflicts with `decoder.load_from`.')
-    if config.initial_model is not None and not config.initial_model.exists():
-        raise RuntimeError(f'{config.initial_model}: Does not exist.')
-    if config.initial_model is not None and not config.initial_model.is_file():
-        raise RuntimeError(f'{config.initial_model}: Not a file.')
+        if not config.initial_model.exists():
+            raise RuntimeError(f'{config.initial_model}: Does not exist.')
+        if not config.initial_model.is_file():
+            raise RuntimeError(f'{config.initial_model}: Not a file.')
 
     if config.initial_model_prefix is not None:
         if config.encoder.load_from is not None:
@@ -413,15 +415,16 @@ def _main(config: DictConfig) -> None:
             raise RuntimeError('`initial_model_prefix` conflicts with `decoder.load_from`.')
         if config.initial_model is not None:
             raise RuntimeError('`initial_model_prefix` conflicts with `initial_model`.')
-    if config.initial_model_prefix is not None and not config.initial_model_prefix.exists():
-        raise RuntimeError(f'{config.initial_model_prefix}: Does not exist.')
-    if config.initial_model_prefix is not None and not config.initial_model_prefix.is_dir():
-        raise RuntimeError(f'{config.initial_model_prefix}: Not a directory')
+        if not config.initial_model_prefix.exists():
+            raise RuntimeError(f'{config.initial_model_prefix}: Does not exist.')
+        if not config.initial_model_prefix.is_dir():
+            raise RuntimeError(f'{config.initial_model_prefix}: Not a directory.')
 
-    if config.initial_model_index is not None and config.initial_model_prefix is None:
-        raise RuntimeError('`initial_model_index` must be combined with `initial_model_prefix`.')
-    if config.initial_model_index is not None and config.initial_model_index < 0:
-        raise RuntimeError(f'{config.initial_model_index}: An invalid initial model index.')
+    if config.initial_model_index is not None:
+        if config.initial_model_prefix is None:
+            raise RuntimeError('`initial_model_index` must be combined with `initial_model_prefix`.')
+        if config.initial_model_index < 0:
+            raise RuntimeError(f'{config.initial_model_index}: An invalid initial model index.')
 
     num_samples = 0
 
@@ -525,7 +528,7 @@ def _main(config: DictConfig) -> None:
 
     if config.optimizer.type in ('sgd',):
         if config.optimizer.epsilon is not None:
-            raise RuntimeError('`optimizer.epsilon` is useless for `{config.optimizer.type}`.')
+            raise RuntimeError(f'`optimizer.epsilon` is useless for `{config.optimizer.type}`.')
     else:
         if config.optimizer.epsilon is None:
             if config.optimizer.type in ('adam', 'radam', 'mtadam'):
@@ -559,6 +562,9 @@ def _main(config: DictConfig) -> None:
 
     snapshots_path = experiment_path / 'snapshots'
     snapshots_path.mkdir(parents=True, exist_ok=True)
+
+    if config.snapshot_interval < 0:
+        raise RuntimeError(f'{config.snapshot_interval}: An invalid value for `snapshot_interval`.')
 
     if is_main_process:
         if world_size is None:
@@ -613,7 +619,7 @@ def _main(config: DictConfig) -> None:
         if world_size is None:
             logging.info('Batch size: %d', config.batch_size)
         else:
-            logging.info('Local batch size: %d', config.batch_size / world_size)
+            logging.info('Local batch size: %d', config.batch_size // world_size)
             logging.info('World batch size: %d', config.batch_size)
         logging.info('# of steps for gradient accumulation: %d', config.gradient_accumulation_steps)
         logging.info(
@@ -698,11 +704,19 @@ def _main(config: DictConfig) -> None:
 
     if config.optimizer.type == 'sgd':
         def construct_optimizer(model: nn.Module) -> Optimizer:
+            if config.device.type == 'cpu':
+                return SGD(
+                    model.parameters(), lr=config.optimizer.learning_rate,
+                    momentum=config.optimizer.momentum)
             return FusedSGD(
                 model.parameters(), lr=config.optimizer.learning_rate,
                 momentum=config.optimizer.momentum)
     elif config.optimizer.type == 'adam':
         def construct_optimizer(model: nn.Module) -> Optimizer:
+            if config.device.type == 'cpu':
+                return Adam(
+                    model.parameters(), lr=config.optimizer.learning_rate,
+                    eps=config.optimizer.epsilon)
             return FusedAdam(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
     elif config.optimizer.type == 'radam':
@@ -723,6 +737,10 @@ def _main(config: DictConfig) -> None:
     qv2_optimizer = construct_optimizer(qv2_source_model)
 
     if config.encoder.load_from is not None:
+        assert config.initial_model is None
+        assert config.initial_model_prefix is None
+        assert config.initial_model_index is None
+
         encoder_state_dict = torch.load(config.encoder.load_from, map_location='cpu')
         encoder_new_state_dict = {}
         for key, value in encoder_state_dict.items():
@@ -739,6 +757,10 @@ def _main(config: DictConfig) -> None:
             qv2_target_encoder.cuda()
 
     if config.decoder.load_from is not None:
+        assert config.initial_model is None
+        assert config.initial_model_prefix is None
+        assert config.initial_model_index is None
+
         decoder_state_dict = torch.load(config.decoder.load_from, map_location='cpu')
         decoder_new_state_dict = {}
         for key, value in decoder_state_dict.items():
@@ -755,6 +777,11 @@ def _main(config: DictConfig) -> None:
             qv2_target_decoder.cuda()
 
     if config.initial_model is not None:
+        assert config.encoder.load_from is None
+        assert config.decoder.load_from is None
+        assert config.initial_model_prefix is None
+        assert config.initial_model_index is None
+
         model_state_dict = torch.load(config.initial_model, map_location='cpu')
         model_new_state_dict = {}
         for key, value in model_state_dict.items():
@@ -771,6 +798,10 @@ def _main(config: DictConfig) -> None:
             qv2_target_model.cuda()
 
     if config.initial_model_prefix is not None:
+        assert config.encoder.load_from is None
+        assert config.decoder.load_from is None
+        assert config.initial_model is None
+
         qv1_source_state_dict = torch.load(qv1_source_snapshot_path, map_location='cpu')
         qv1_source_new_state_dict = {}
         for key, value in qv1_source_state_dict.items():
@@ -844,11 +875,12 @@ def _main(config: DictConfig) -> None:
         _training(
             is_multiprocess=is_multiprocess, world_size=world_size, rank=rank,
             is_main_process=is_main_process, training_data=config.training_data,
-            num_workers=config.num_workers, device=config.device.type, amp_dtype=amp_dtype,
-            qv1_source_model=qv1_source_model, qv2_source_model=qv2_source_model,
-            qv1_target_model=qv1_target_model, qv2_target_model=qv2_target_model,
-            reward_plugin=config.reward_plugin, discount_factor=config.discount_factor,
-            expectile=config.expectile, target_update_interval=config.target_update_interval,
+            num_workers=config.num_workers, device=config.device.type, dtype=dtype,
+            amp_dtype=amp_dtype, qv1_source_model=qv1_source_model,
+            qv2_source_model=qv2_source_model, qv1_target_model=qv1_target_model,
+            qv2_target_model=qv2_target_model, reward_plugin=config.reward_plugin,
+            discount_factor=config.discount_factor, expectile=config.expectile,
+            target_update_interval=config.target_update_interval,
             target_update_rate=config.target_update_rate, batch_size=config.batch_size,
             v_loss_scaling=config.v_loss_scaling,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
