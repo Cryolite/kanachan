@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
-
 import math
 from collections import OrderedDict
-from typing import (Tuple,)
+from typing import Tuple
 import torch
 from torch import nn
-from kanachan.training.constants import NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES
+from kanachan.training.constants import (
+    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES, ENCODER_WIDTH
+)
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.value_model import ValueDecoder
 
@@ -14,6 +14,17 @@ class QVDecoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_feedforward: int, activation_function: str, dropout: float,
             num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
+        if dimension < 1:
+            raise ValueError(dimension)
+        if dim_feedforward < 1:
+            raise ValueError(dim_feedforward)
+        if activation_function not in ('relu', 'gelu'):
+            raise ValueError(activation_function)
+        if dropout < 0.0 or 1.0 <= dropout:
+            raise ValueError(dropout)
+        if num_layers < 1:
+            raise ValueError(num_layers)
+
         super(QVDecoder, self).__init__()
 
         self.value_decoder = ValueDecoder(
@@ -33,7 +44,8 @@ class QVDecoder(nn.Module):
             else:
                 raise ValueError(activation_function)
             layers[f'dropout{i}'] = nn.Dropout(p=dropout)
-        layers[f'layer{num_layers - 1}'] = nn.Linear(
+        suffix = '' if num_layers == 1 else str(num_layers - 1)
+        layers['layer' + suffix] = nn.Linear(
             dimension if num_layers == 1 else dim_feedforward, 1, device=device, dtype=dtype)
         self.layers = nn.Sequential(layers)
 
@@ -42,6 +54,7 @@ class QVDecoder(nn.Module):
             encode: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         assert candidates.dim() == 2
         assert encode.dim() == 3
+        assert encode.size(1) == ENCODER_WIDTH
         assert candidates.size(0) == encode.size(0)
         
         value: torch.Tensor = self.value_decoder(candidates, encode)
