@@ -112,18 +112,18 @@ std::uint_fast16_t ModelWrapper::operator()(python::object features) const
     progression = torch.attr("unsqueeze")(progression, 0);
 
     candidates = features[3];
+    // Append `<V>`.
+    candidates.attr("append")(python::getattr(constants, "NUM_TYPES_OF_ACTIONS"));
     while (python::len(candidates) < constants.attr("MAX_NUM_ACTION_CANDIDATES")) {
       // Padding.
-      candidates.attr("append")(
-        python::getattr(constants, "NUM_TYPES_OF_ACTIONS") + 1);
+      candidates.attr("append")(python::getattr(constants, "NUM_TYPES_OF_ACTIONS") + 1);
     }
     kwargs["device"] = device_;
     kwargs["dtype"] = torch.attr("int");
     candidates = tensor(*python::make_tuple(candidates), **kwargs);
     candidates = torch.attr("unsqueeze")(candidates, 0);
 
-    prediction = model_(
-      python::make_tuple(sparse, numeric, progression, candidates));
+    prediction = model_(sparse, numeric, progression, candidates);
     if (prediction.attr("dim")() != 2) {
       long const dim = python::extract<long>(prediction.attr("dim")())();
       KANACHAN_THROW<std::runtime_error>(_1)
