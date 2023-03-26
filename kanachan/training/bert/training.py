@@ -122,7 +122,8 @@ def _train(
             num_consumed_samples += batch_size
             continue
 
-        barrier()
+        if is_multiprocess:
+            barrier()
 
         if is_multiprocess:
             assert world_size is not None
@@ -470,6 +471,8 @@ def main(
     experiment_path = Path(HydraConfig.get().runtime.output_dir)
 
     tensorboard_path = experiment_path / 'tensorboard'
+    if is_multiprocess:
+        tensorboard_path /= str(rank).zfill(2)
     tensorboard_path.mkdir(parents=True, exist_ok=True)
 
     snapshots_path = experiment_path / 'snapshots'
