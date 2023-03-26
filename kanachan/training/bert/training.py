@@ -176,12 +176,12 @@ def _train(
                 logging.info(
                     'sample = %d, training loss = %E, gradient norm = %E',
                     num_samples, batch_loss, gradient_norm)
-                summary_writer.add_scalar('Training loss', batch_loss, num_samples)
-                summary_writer.add_scalar('Gradient norm', gradient_norm, num_samples)
+            summary_writer.add_scalar('Training loss', batch_loss, num_samples)
+            summary_writer.add_scalar('Gradient norm', gradient_norm, num_samples)
         else:
             if is_main_process:
                 logging.info('sample = %d, training loss = %E', num_samples, batch_loss)
-                summary_writer.add_scalar('Training loss', batch_loss, num_samples)
+            summary_writer.add_scalar('Training loss', batch_loss, num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
             snapshot_writer(encoder, decoder, optimizer, num_samples)
