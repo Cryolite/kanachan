@@ -133,7 +133,7 @@ RUN set -euxo pipefail; \
       -DSHANTEN_NUMBER_SOURCE_PATH=/workspace/shanten-number \
       -DCMAKE_BUILD_TYPE=Release \
       ..; \
-    VERBOSE=1 make -j make_trie simulation; \
+    make VERBOSE=1 -j make_trie simulation; \
     mkdir -p /home/ubuntu/.local/share/kanachan; \
     src/xiangting/make_trie /workspace/shanten-number /home/ubuntu/.local/share/kanachan; \
     popd; \
