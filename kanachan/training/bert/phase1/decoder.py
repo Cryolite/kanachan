@@ -52,7 +52,6 @@ class Decoder(nn.Module):
         weights = self.layers(encode)
         weights = torch.squeeze(weights, dim=2)
 
-        weights = torch.where(
-            candidates < NUM_TYPES_OF_ACTIONS, weights, torch.full_like(weights, -math.inf))
+        weights = torch.where(candidates < NUM_TYPES_OF_ACTIONS, weights, -math.inf)
 
         return weights
