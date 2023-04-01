@@ -2,9 +2,6 @@
     "configurations": [
         {
             "name": "Linux",
-            "includePath": [
-                "${workspaceFolder}/src/**"
-            ],
             "defines": [],
             "compilerPath": "/home/vscode/.local/bin/g++",
             "cStandard": "gnu17",
