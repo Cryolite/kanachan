@@ -1,10 +1,11 @@
 #if !defined(KANACHAN_SIMULATION_GAME_STATE_HPP_INCLUDE_GUARD)
 #define KANACHAN_SIMULATION_GAME_STATE_HPP_INCLUDE_GUARD
 
-#include "simulation/model_wrapper.hpp"
-#include <boost/python/object.hpp>
+#include "simulation/decision_maker.hpp"
+#include <stop_token>
 #include <array>
 #include <utility>
+#include <memory>
 #include <cstdint>
 
 
@@ -13,12 +14,12 @@ namespace Kanachan{
 class GameState
 {
 public:
-  using Seat = std::pair<std::uint_fast8_t, Kanachan::ModelWrapper>;
+  using Seat = std::pair<std::uint_fast8_t, std::shared_ptr<Kanachan::DecisionMaker>>;
 
 public:
   GameState(
-    std::uint_fast8_t room, bool dong_feng_zhan,
-    std::array<Seat, 4u> const &seats);
+    std::uint_fast8_t room, bool dong_feng_zhan, std::array<Seat, 4u> const &seats,
+    std::stop_token stop_token);
 
   GameState(GameState const &) = delete;
 
@@ -49,7 +50,9 @@ public:
 
 public:
   std::uint_fast16_t selectAction(
-    std::uint_fast8_t seat, boost::python::object features) const;
+    std::uint_fast8_t seat, std::vector<std::uint_fast16_t> &&sparse,
+    std::vector<std::uint_fast32_t> &&numeric, std::vector<std::uint_fast16_t> &&progression,
+    std::vector<std::uint_fast16_t> &&candidates) const;
 
 public:
   void onSuccessfulLizhi(std::uint_fast8_t seat);
@@ -76,6 +79,7 @@ private:
   std::uint_fast8_t ben_chang_ = 0u;
   std::uint_fast8_t lizhi_deposits_ = 0u;
   std::array<std::int_fast32_t, 4u> scores_{ 25000, 25000, 25000, 25000 };
+  std::stop_token stop_token_;
 }; // class GameState
 
 } // namespace Kanachan

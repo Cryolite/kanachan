@@ -17,14 +17,20 @@
 #include <cstdint>
 
 
-namespace Kanachan{
+namespace {
 
 using std::placeholders::_1;
 namespace python = boost::python;
 
+} // namespace `anonymous`
+
+namespace Kanachan{
+
 std::any zimo(Kanachan::RoundState &round_state, python::dict result)
 {
-  KANACHAN_ASSERT((!result.is_none()));
+  if (result.is_none()) {
+    KANACHAN_THROW<std::invalid_argument>("`result` must not be a `None`.");
+  }
 
   auto const [action, zimo_tile] = round_state.onZimo();
 
@@ -93,8 +99,7 @@ std::any zimo(Kanachan::RoundState &round_state, python::dict result)
     return next_step;
   }
 
-  KANACHAN_THROW<std::runtime_error>(_1)
-    << action << ": An invalid action on zimo.";
+  KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action on zimo.";
 }
 
 } // namespace Kanachan

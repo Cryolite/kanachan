@@ -1,16 +1,19 @@
+#define PY_SSIZE_T_CLEAN
 #include "simulation/round_state.hpp"
 
 #include "simulation/shoupai.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/game_state.hpp"
+#include "simulation/gil.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
 #include <boost/python/extract.hpp>
 #include <boost/python/dict.hpp>
 #include <boost/python/list.hpp>
 #include <boost/python/object.hpp>
-#include <random>
+#include <Python.h>
 #include <algorithm>
+#include <vector>
 #include <array>
 #include <functional>
 #include <utility>
@@ -20,16 +23,20 @@
 #include <cstddef>
 
 
-namespace Kanachan{
+namespace{
 
 using std::placeholders::_1;
 namespace python = boost::python;
 
+} // namespace `anonymous`
+
+namespace Kanachan{
+
 RoundState::RoundState(
-  std::mt19937 &urng, Kanachan::GameState &game_state,
+  std::vector<std::uint_least32_t> const &seed, Kanachan::GameState &game_state,
   Kanachan::Paishan const *p_test_paishan)
   : game_state_(game_state),
-    paishan_(p_test_paishan == nullptr ? Kanachan::Paishan(urng) : *p_test_paishan),
+    paishan_(p_test_paishan == nullptr ? Kanachan::Paishan(seed) : *p_test_paishan),
     shoupai_list_({
         Kanachan::Shoupai((4u - getJu()) % 4u, paishan_),
         Kanachan::Shoupai((5u - getJu()) % 4u, paishan_),
@@ -42,7 +49,7 @@ RoundState::RoundState(
   for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
     initial_scores_[i] = game_state_.getPlayerScore(i);
   }
-  progression_.append(0);
+  progression_.push_back(0u);
 }
 
 std::uint_fast8_t RoundState::getPlayerGrade(std::uint_fast8_t const seat) const
@@ -77,15 +84,13 @@ std::int_fast32_t RoundState::getPlayerScore(std::uint_fast8_t const seat) const
   return game_state_.getPlayerScore(seat);
 }
 
-std::uint_fast8_t
-RoundState::getPlayerRanking(std::uint_fast8_t const seat) const
+std::uint_fast8_t RoundState::getPlayerRanking(std::uint_fast8_t const seat) const
 {
   KANACHAN_ASSERT((seat < 4u));
   return game_state_.getPlayerRanking(seat);
 }
 
-std::uint_fast8_t
-RoundState::getDoraIndicator(std::uint_fast8_t const index) const
+std::uint_fast8_t RoundState::getDoraIndicator(std::uint_fast8_t const index) const
 {
   KANACHAN_ASSERT((index < 5u));
 
@@ -126,13 +131,8 @@ bool RoundState::isPlayerTingpai(std::uint_fast8_t const seat) const
 
 bool RoundState::checkPlayerLiujuManguan(std::uint_fast8_t const seat) const
 {
-  for (std::size_t i = 0u; i < python::len(progression_); ++i) {
-    python::object o = progression_[i];
-    python::extract<long> e(o);
-    if (!e.check()) {
-      KANACHAN_THROW<std::logic_error>("A type error in `progression_`.");
-    }
-    long const encode = e();
+  for (std::uint_fast16_t const encode : progression_) {
+    KANACHAN_ASSERT((encode <= 2164u));
 
     if (encode == 0) {
       continue;
@@ -188,10 +188,10 @@ bool RoundState::checkPlayerLiujuManguan(std::uint_fast8_t const seat) const
 
 bool RoundState::checkSifengLianda() const
 {
-  if (python::len(progression_) != 5u) {
+  if (progression_.size() != 5u) {
     return false;
   }
-  KANACHAN_ASSERT((python::extract<long>(progression_[0]) == 0));
+  KANACHAN_ASSERT((progression_[0] == 0u));
 
   std::array<std::uint_fast8_t, 4u> tiles = {
     std::numeric_limits<std::uint_fast8_t>::max(),
@@ -200,12 +200,8 @@ bool RoundState::checkSifengLianda() const
     std::numeric_limits<std::uint_fast8_t>::max()
   };
   for (std::uint_fast8_t i = 1u; i <= 4u; ++i) {
-    python::object o = progression_[i];
-    KANACHAN_ASSERT((!o.is_none()));
-    python::extract<long> e(o);
-    KANACHAN_ASSERT((e.check()));
-    KANACHAN_ASSERT((0 <= e() && e() <= 2164));
-    std::uint_fast16_t const encode = e();
+    std::uint_fast16_t const encode = progression_[i];
+    KANACHAN_ASSERT((encode <= 2164u));
     if (encode < 5u || 596u < encode) {
       return false;
     }
@@ -255,12 +251,10 @@ bool RoundState::checkSijiaLizhi() const
 
 std::pair<std::uint_fast8_t, std::uint_fast8_t> RoundState::getLastDapai_() const
 {
-  KANACHAN_ASSERT((python::len(progression_) >= 1u));
-  python::object o = progression_[-1];
-  python::extract<long> e(o);
-  KANACHAN_ASSERT((e.check()));
-  KANACHAN_ASSERT((e() > 0));
-  std::uint_fast16_t const encode = e();
+  if (progression_.size() == 0u) {
+    KANACHAN_THROW<std::logic_error>("There is no discarded tile.");
+  }
+  std::uint_fast16_t const encode = progression_.back();
 
   KANACHAN_ASSERT((encode >= 5u));
   if (/*5u <= encode && */encode <= 596u) {
@@ -268,7 +262,9 @@ std::pair<std::uint_fast8_t, std::uint_fast8_t> RoundState::getLastDapai_() cons
     std::uint_fast8_t const tile = (encode - 5u - seat * 148u) / 4u;
     return { seat, tile };
   }
-  KANACHAN_ASSERT((encode >= 1881u));
+  if (/*597u <= encode && */encode <= 1880u) {
+    KANACHAN_THROW<std::logic_error>(_1) << encode;
+  }
   if (/*1881u <= encode && */encode <= 2016u) {
     // 暗槓．槍槓の際には打牌とみなす．
     std::uint_fast8_t const seat = (encode - 1881u) / 34u;
@@ -291,7 +287,10 @@ std::pair<std::uint_fast8_t, std::uint_fast8_t> RoundState::getLastDapai_() cons
     return { seat, tile };
   }
   KANACHAN_THROW<std::logic_error>(_1) << encode;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
 }
+#pragma GCC diagnostic pop
 
 std::uint_fast8_t RoundState::drawLingshangPai_()
 {
@@ -317,83 +316,82 @@ std::uint_fast8_t RoundState::drawLingshangPai_()
   return tile;
 }
 
-python::list RoundState::constructFeatures_(
-  std::uint_fast8_t seat, std::uint_fast8_t const zimo_tile) const
+std::pair<std::vector<std::uint_fast16_t>, std::vector<std::uint_fast32_t>>
+RoundState::constructFeatures_(std::uint_fast8_t seat, std::uint_fast8_t const zimo_tile) const
 {
-  python::list sparse_features;
+  std::vector<std::uint_fast16_t> sparse_features;
 
-  long const room = game_state_.getRoom();
-  sparse_features.append(room);
+  std::uint_fast16_t const room = game_state_.getRoom();
+  sparse_features.push_back(room);
 
-  long const game_style = game_state_.isDongfengZhan() ? 5 : 6;
-  sparse_features.append(game_style);
+  std::uint_fast16_t const game_style = game_state_.isDongfengZhan() ? 5 : 6;
+  sparse_features.push_back(game_style);
 
-  sparse_features.append(7 + seat);
+  sparse_features.push_back(7 + seat);
 
-  long const chang = 11 + getChang();
-  sparse_features.append(chang);
+  std::uint_fast16_t const chang = 11 + getChang();
+  sparse_features.push_back(chang);
 
-  long const ju = 14 + getJu();
-  sparse_features.append(ju);
+  std::uint_fast16_t const ju = 14 + getJu();
+  sparse_features.push_back(ju);
 
-  long const dora_indicator = getDoraIndicator(0u);
+  std::uint_fast16_t const dora_indicator = getDoraIndicator(0u);
   KANACHAN_ASSERT((dora_indicator != std::numeric_limits<std::uint_fast8_t>::max()));
-  sparse_features.append(18 + dora_indicator);
+  sparse_features.push_back(18 + dora_indicator);
 
   for (std::uint_fast8_t i = 1u; i <= 4u; ++i) {
-    long const gang_dora_indicator = getDoraIndicator(i);
+    std::uint_fast16_t const gang_dora_indicator = getDoraIndicator(i);
     if (gang_dora_indicator == std::numeric_limits<std::uint_fast8_t>::max()) {
       break;
     }
-    sparse_features.append(18 + i * 37 + gang_dora_indicator);
+    sparse_features.push_back(18 + i * 37 + gang_dora_indicator);
   }
 
-  long const num_left_tiles = getNumLeftTiles();
+  std::uint_fast16_t const num_left_tiles = getNumLeftTiles();
   KANACHAN_ASSERT((0 <= num_left_tiles && num_left_tiles < 70));
-  sparse_features.append(203 + num_left_tiles);
+  sparse_features.push_back(203 + num_left_tiles);
 
   for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-    long const player_grade = getPlayerGrade((seat + i) % 4u);
-    sparse_features.append(273 + i * 20 + player_grade);
+    std::uint_fast16_t const player_grade = getPlayerGrade((seat + i) % 4u);
+    sparse_features.push_back(273 + i * 20 + player_grade);
 
-    long const player_ranking = getPlayerRanking((seat + i) % 4u);
-    sparse_features.append(289 + i * 20 + player_ranking);
+    std::uint_fast16_t const player_ranking = getPlayerRanking((seat + i) % 4u);
+    sparse_features.push_back(289 + i * 20 + player_ranking);
   }
 
   Kanachan::Shoupai const &shoupai = shoupai_list_[seat];
   shoupai.appendToFeatures(sparse_features);
 
   if (zimo_tile != std::numeric_limits<std::uint_fast8_t>::max()) {
-    sparse_features.append(489 + zimo_tile);
+    sparse_features.push_back(489 + zimo_tile);
   }
 
-  python::list numeric_features;
+  std::vector<std::uint_fast32_t> numeric_features;
 
-  long const ben_chang = getBenChang();
-  numeric_features.append(ben_chang);
+  std::uint_fast32_t const ben_chang = getBenChang();
+  numeric_features.push_back(ben_chang);
 
-  long const lizhi_deposits = getNumLizhiDeposits();
-  numeric_features.append(lizhi_deposits);
+  std::uint_fast32_t const lizhi_deposits = getNumLizhiDeposits();
+  numeric_features.push_back(lizhi_deposits);
 
   for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-    long const player_score = getPlayerScore((seat + i) % 4u);
-    numeric_features.append(player_score);
+    std::uint_fast32_t const player_score = getPlayerScore((seat + i) % 4u);
+    numeric_features.push_back(player_score);
   }
 
-  python::list features;
-  features.append(sparse_features);
-  features.append(numeric_features);
-  return features;
+  return std::make_pair(std::move(sparse_features), std::move(numeric_features));
 }
 
 std::uint_fast16_t RoundState::selectAction_(
-  std::uint_fast8_t const seat, python::list features) const
+  std::uint_fast8_t const seat, std::vector<std::uint_fast16_t> &&sparse,
+  std::vector<std::uint_fast32_t> &&numeric, std::vector<std::uint_fast16_t> &&progression,
+  std::vector<std::uint_fast16_t> &&candidates) const
 {
-  return game_state_.selectAction(seat, features);
+  return game_state_.selectAction(
+    seat, std::move(sparse), std::move(numeric), std::move(progression), std::move(candidates));
 }
 
-long RoundState::encodeToolConfig_(
-  std::uint_fast8_t const seat, bool const rong) const
+long RoundState::encodeToolConfig_(std::uint_fast8_t const seat, bool const rong) const
 {
   KANACHAN_ASSERT((seat < 4u));
 
@@ -439,62 +437,65 @@ long RoundState::encodeToolConfig_(
   return tool_config;
 }
 
-python::list
+std::vector<std::uint_fast8_t>
 RoundState::constructDoraIndicators_(std::uint_fast8_t const seat) const
 {
   KANACHAN_ASSERT((seat < 4u));
 
   bool const lizhi = lizhi_list_[seat];
-  python::list dora_indicators;
+  std::vector<std::uint_fast8_t> dora_indicators;
 
-  auto append = [dora_indicators](std::uint_fast8_t const tile) mutable -> void {
+  auto append = [&](std::uint_fast8_t const tile) -> void {
     KANACHAN_ASSERT((tile < 37u));
 
     if (tile == 0u) {
-      dora_indicators.append(16);
+      dora_indicators.push_back(16);
     }
     else if (1u <= tile && tile <= 9u) {
       for (std::uint_fast8_t i = (tile == 5u ? 1u : 0u); i < 4u; ++i) {
-        long const encode = (tile - 1u) * 4u + i;
-        long const count = dora_indicators.count(encode);
-        if (count >= 1) {
-          KANACHAN_ASSERT((count == 1));
+        std::uint_fast8_t const encode = (tile - 1u) * 4u + i;
+        std::size_t const count = std::count(
+          dora_indicators.cbegin(), dora_indicators.cend(), encode);
+        if (count >= 1u) {
+          KANACHAN_ASSERT((count == 1u));
           KANACHAN_ASSERT((i != 3u));
           continue;
         }
-        dora_indicators.append(encode);
+        dora_indicators.push_back(encode);
         break;
       }
     }
     else if (tile == 10u) {
-      dora_indicators.append(52);
+      dora_indicators.push_back(52);
     }
     else if (11u <= tile && tile <= 19u) {
       for (std::uint_fast8_t i = (tile == 15u ? 1u : 0u); i < 4u; ++i) {
-        long const encode = (tile - 2u) * 4u + i;
-        long const count = dora_indicators.count(encode);
-        if (count >= 1) {
-          KANACHAN_ASSERT((count == 1));
+        std::uint_fast8_t const encode = (tile - 2u) * 4u + i;
+        std::size_t const count = std::count(
+          dora_indicators.cbegin(), dora_indicators.cend(), encode);
+        if (count >= 1u) {
+          KANACHAN_ASSERT((count == 1u));
           KANACHAN_ASSERT((i != 3u));
           continue;
         }
-        dora_indicators.append(encode);
+        dora_indicators.push_back(encode);
         break;
       }
     }
     else if (tile == 20u) {
-      dora_indicators.append(88);
+      dora_indicators.push_back(88);
     }
     else if (21u <= tile && tile < 37u) {
       for (std::uint_fast8_t i = (tile == 25u ? 1u : 0u); i < 4u; ++i) {
-        long const encode = (tile - 3u) * 4u + i;
-        long const count = dora_indicators.count(encode);
+        std::uint_fast8_t const encode = (tile - 3u) * 4u + i;
+        std::size_t const count = std::count(
+          dora_indicators.cbegin(), dora_indicators.cend(), encode);
         if (count >= 1) {
           KANACHAN_ASSERT((count == 1));
           KANACHAN_ASSERT((i != 3u));
           continue;
         }
-        dora_indicators.append(encode);
+        dora_indicators.push_back(encode);
         break;
       }
     }
@@ -510,23 +511,15 @@ RoundState::constructDoraIndicators_(std::uint_fast8_t const seat) const
     }
   }
 
-  dora_indicators.attr("sort")();
+  std::sort(dora_indicators.begin(), dora_indicators.end());
   return dora_indicators;
 }
 
-std::pair<std::uint_fast8_t, std::uint_fast8_t>
-RoundState::checkDaSanyuanPao_() const
+std::pair<std::uint_fast8_t, std::uint_fast8_t> RoundState::checkDaSanyuanPao_() const
 {
   std::uint_fast8_t to = std::numeric_limits<std::uint_fast8_t>::max();
   std::uint_fast8_t count = 0u;
-  for (long i = 0; i < python::len(progression_); ++i) {
-    python::object o = progression_[i];
-    python::extract<long> e(o);
-    KANACHAN_ASSERT((e.check()));
-    KANACHAN_ASSERT((0 <= e()));
-    KANACHAN_ASSERT((e() <= 2164));
-    std::uint_fast16_t const encode = e();
-
+  for (std::uint_fast16_t const encode : progression_) {
     if (/*0u <= encode && */encode <= 956u) {
       continue;
     }
@@ -612,19 +605,11 @@ RoundState::checkDaSanyuanPao_() const
   };
 }
 
-std::pair<std::uint_fast8_t, std::uint_fast8_t>
-RoundState::checkDaSixiPao_() const
+std::pair<std::uint_fast8_t, std::uint_fast8_t> RoundState::checkDaSixiPao_() const
 {
   std::uint_fast8_t to = -1;
   std::uint_fast8_t count = 0u;
-  for (long i = 0; i < python::len(progression_); ++i) {
-    python::object o = progression_[i];
-    python::extract<long> e(o);
-    KANACHAN_ASSERT((e.check()));
-    KANACHAN_ASSERT((0 <= e()));
-    KANACHAN_ASSERT((e() <= 2164));
-    std::uint_fast16_t const encode = e();
-
+  for (std::uint_fast16_t const encode : progression_) {
     if (/*0u <= encode && */encode <= 956u) {
       continue;
     }
@@ -706,16 +691,14 @@ RoundState::checkDaSixiPao_() const
   };
 }
 
-std::pair<std::uint_fast8_t, std::uint_fast8_t>
-RoundState::calculateHand_(
-  std::uint_fast8_t const seat, std::uint_fast8_t const hupai,
-  long const config) const
+std::pair<std::uint_fast8_t, std::uint_fast8_t> RoundState::calculateHand_(
+  std::uint_fast8_t const seat, std::uint_fast8_t const hupai, long const config) const
 {
   KANACHAN_ASSERT((seat < 4u));
   KANACHAN_ASSERT((config >= 0));
 
   Kanachan::Shoupai const &shoupai = shoupai_list_[seat];
-  python::list dora_indicators = constructDoraIndicators_(seat);
+  std::vector<std::uint_fast8_t> dora_indicators = constructDoraIndicators_(seat);
   return shoupai.calculateHand(hupai, dora_indicators, config);
 }
 
@@ -780,23 +763,24 @@ std::pair<std::uint_fast16_t, std::uint_fast8_t> RoundState::onZimo()
 
   Kanachan::Shoupai &shoupai = shoupai_list_[seat_];
 
-  python::list features = constructFeatures_(seat_, zimo_tile);
-  features.append(progression_);
+  std::uint_fast16_t const action = [&]() {
+    auto [sparse, numeric] = constructFeatures_(seat_, zimo_tile);
 
-  bool const first_zimo = first_zimo_[seat_];
-  bool const haidi = (getNumLeftTiles() == 0u);
-  bool const lizhi_prohibited
-    = (getPlayerScore(seat_) < 1000 || getNumLeftTiles() < 4u);
-  bool const gang_prohibited = (lingshang_zimo_count_ == 4u || haidi);
-  long const tool_config = encodeToolConfig_(seat_, /*rong = */false);
-  python::list candidates = shoupai.getCandidatesOnZimo(
-    zimo_tile, first_zimo, lizhi_prohibited, gang_prohibited, tool_config);
-  features.append(candidates);
-  std::uint_fast16_t action = std::numeric_limits<std::uint_fast16_t>::max();
-  if (python::len(candidates) >= 1) {
-    KANACHAN_ASSERT((python::len(candidates) >= 2));
-    action = selectAction_(seat_, features);
-  }
+    bool const first_zimo = first_zimo_[seat_];
+    bool const haidi = (getNumLeftTiles() == 0u);
+    bool const lizhi_prohibited = (getPlayerScore(seat_) < 1000 || getNumLeftTiles() < 4u);
+    bool const gang_prohibited = (lingshang_zimo_count_ == 4u || haidi);
+    long const tool_config = encodeToolConfig_(seat_, /*rong = */false);
+    std::vector<std::uint_fast16_t> candidates = shoupai.getCandidatesOnZimo(
+      zimo_tile, first_zimo, lizhi_prohibited, gang_prohibited, tool_config);
+    if (candidates.size() >= 1) {
+      KANACHAN_ASSERT((candidates.size() >= 2));
+      return selectAction_(
+        seat_, std::move(sparse), std::move(numeric), std::vector(progression_),
+        std::move(candidates));
+    }
+    return std::numeric_limits<std::uint_fast16_t>::max();
+  }();
 
   std::uint_fast8_t tile = std::numeric_limits<std::uint_fast8_t>::max();
 
@@ -871,16 +855,14 @@ std::pair<std::uint_fast16_t, std::uint_fast8_t> RoundState::onZimo()
   }
 
   if (221u <= action && action != std::numeric_limits<std::uint_fast16_t>::max()) {
-    KANACHAN_THROW<std::runtime_error>(_1)
-      << action << ": An invalid action on zimo.";
+    KANACHAN_THROW<std::runtime_error>(_1) << action << ": An invalid action on zimo.";
   }
 
   return { action, tile };
 }
 
 std::pair<std::uint_fast8_t, std::uint_fast16_t>
-RoundState::onDapai(
-  std::uint_fast8_t const tile, bool const moqi, bool const lizhi)
+RoundState::onDapai(std::uint_fast8_t const tile, bool const moqi, bool const lizhi)
 {
   KANACHAN_ASSERT((zimo_index_ <= 122u - lingshang_zimo_count_));
   KANACHAN_ASSERT((lingshang_zimo_count_ <= 4u));
@@ -914,7 +896,7 @@ RoundState::onDapai(
   if (lizhi) {
     KANACHAN_ASSERT((lizhi_delayed_ >= 1u));
   }
-  progression_.append(5 + seat_ * 148 + tile * 4u + moqi_ * 2u + lizhi_);
+  progression_.push_back(5 + seat_ * 148 + tile * 4u + moqi_ * 2u + lizhi_);
 
   std::array<std::uint_fast16_t, 3u> actions = {
     std::numeric_limits<std::uint_fast16_t>::max(),
@@ -924,45 +906,37 @@ RoundState::onDapai(
   for (std::uint_fast8_t i = 0; i < 3u; ++i) {
     std::uint_fast8_t const calling_seat = (seat_ + i + 1) % 4u;
     std::uint_fast8_t const zimo_tile = -1;
-    python::list features = constructFeatures_(calling_seat, zimo_tile);
-    features.append(progression_);
+    auto [sparse, numeric] = constructFeatures_(calling_seat, zimo_tile);
     Kanachan::Shoupai const &shoupai = shoupai_list_[calling_seat];
     long const tool_config = encodeToolConfig_(calling_seat, /*rong = */true);
-    python::list candidates = shoupai.getCandidatesOnDapai(
+    std::vector<std::uint_fast16_t> candidates = shoupai.getCandidatesOnDapai(
       2u - i, tile, lingshang_zimo_count_ == 4u, tool_config);
-    KANACHAN_ASSERT((python::len(candidates) != 1));
+    KANACHAN_ASSERT((candidates.size() != 1));
     if (checkSigangSanle()) {
       // 4つ目の槓に対する打牌の場合，その打牌に対する他家の選択肢から
       // スキップと栄和以外を除外しなければならない．
-      for (long j = 0; j < python::len(candidates);) {
-        python::object o = candidates[j];
-        python::extract<long> e(o);
-        KANACHAN_ASSERT((e.check()));
-        KANACHAN_ASSERT((0 <= e() && e() <= 545));
-        std::uint_fast16_t const candidate = e();
-        if (candidate != 221u && candidate < 543u) {
-          candidates.attr("pop")(j);
-          continue;
+      std::vector<std::uint_fast16_t> new_candidates;
+      for (std::uint_fast16_t const candidate : candidates) {
+        if (candidate == 221u || (543u <= candidate && candidate <= 545u)) {
+          new_candidates.push_back(candidate);
         }
-        ++j;
       }
+      candidates.swap(new_candidates);
     }
-    if (python::len(candidates) == 1) {
-      python::object o = candidates[0];
-      python::extract<long> e(o);
-      KANACHAN_ASSERT((e.check()));
-      KANACHAN_ASSERT((e() == 221));
+    if (candidates.size() == 1u) {
+      KANACHAN_ASSERT((candidates[0u] == 221u));
       continue;
     }
-    if (python::len(candidates) == 0) {
+    if (candidates.size() == 0u) {
       continue;
     }
-    features.append(candidates);
     try {
-      std::uint_fast16_t const action = selectAction_(calling_seat, features);
+      std::uint_fast16_t const action = selectAction_(
+        calling_seat, std::move(sparse), std::move(numeric), std::vector(progression_),
+        std::move(candidates));
       actions[i] = action;
     }
-    catch (std::runtime_error const &e) {
+    catch (std::runtime_error const &) {
       if (checkSigangSanle()) {
         // TestModel を使用したテストを行っている場合で，四槓散了が成立する時，
         // 直前の `selectAction_` で次局の親の打牌の選択肢を読んでしまう．
@@ -1129,8 +1103,7 @@ RoundState::onDapai(
       continue;
     }
     KANACHAN_THROW<std::runtime_error>(_1)
-      << static_cast<unsigned>(i) << ": " << actions[i]
-      << ": An invalid action.";
+      << static_cast<unsigned>(i) << ": " << actions[i] << ": An invalid action.";
   }
   seat_ = (seat_ + 1u) % 4u;
   return { std::numeric_limits<std::uint_fast8_t>::max(), 221u };
@@ -1165,16 +1138,19 @@ std::uint_fast16_t RoundState::onChi(std::uint_fast8_t const encode)
   Kanachan::Shoupai &shoupai = shoupai_list_[seat_];
   shoupai.onChi(encode);
 
-  std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
-  python::list features = constructFeatures_(seat_, zimo_tile);
+  std::uint_fast16_t const action = [&]() {
+    std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
+    auto [sparse, numeric] = constructFeatures_(seat_, zimo_tile);
 
-  progression_.append(597 + seat_ * 90 + encode);
-  features.append(progression_);
+    progression_.push_back(597 + seat_ * 90 + encode);
 
-  python::list candidates = shoupai.getCandidatesOnChiPeng();
-  features.append(candidates);
+    std::vector<std::uint_fast16_t> candidates = shoupai.getCandidatesOnChiPeng();
 
-  std::uint_fast16_t const action = selectAction_(seat_, features);
+    return selectAction_(
+      seat_, std::move(sparse), std::move(numeric), std::vector(progression_),
+      std::move(candidates));
+  }();
+
   if (action >= 148u) {
     KANACHAN_THROW<std::runtime_error>(_1)
       << action << ": An invalid dapai action after chi.";
@@ -1218,16 +1194,19 @@ std::uint_fast16_t RoundState::onPeng(std::uint_fast8_t const encode)
   Kanachan::Shoupai &shoupai = shoupai_list_[seat_];
   shoupai.onPeng(relseat, encode);
 
-  std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
-  python::list features = constructFeatures_(seat_, zimo_tile);
+  std::uint_fast16_t const action = [&]() {
+    std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
+    auto [sparse, numeric] = constructFeatures_(seat_, zimo_tile);
 
-  progression_.append(957 + seat_ * 120 + relseat * 40 + encode);
-  features.append(progression_);
+    progression_.push_back(957 + seat_ * 120 + relseat * 40 + encode);
 
-  python::list candidates = shoupai.getCandidatesOnChiPeng();
-  features.append(candidates);
+    std::vector<std::uint_fast16_t> candidates = shoupai.getCandidatesOnChiPeng();
 
-  std::uint_fast16_t const action = selectAction_(seat_, features);
+    return selectAction_(
+      seat_, std::move(sparse), std::move(numeric), std::vector(progression_),
+      std::move(candidates));
+  }();
+
   if (action >= 148u) {
     KANACHAN_THROW<std::runtime_error>(_1)
       << action << ": An invalid dapai action after peng.";
@@ -1269,7 +1248,7 @@ void RoundState::onDaminggang()
   Kanachan::Shoupai &shoupai = shoupai_list_[seat_];
   shoupai.onDaminggang(relseat, dapai);
 
-  progression_.append(1437 + seat_ * 111 + relseat * 37 + dapai);
+  progression_.push_back(1437 + seat_ * 111 + relseat * 37 + dapai);
 
   shoupai.onPostGang(/*in_lizhi = */false);
 
@@ -1303,25 +1282,31 @@ std::uint_fast16_t RoundState::onAngang(
 
   shoupai_list_[seat_].onAngang(zimo_tile, encode);
 
-  progression_.append(1881 + seat_ * 34 + encode);
+  progression_.push_back(1881 + seat_ * 34 + encode);
 
   qianggang_delayed_ = true;
   bool qianggang = false;
   for (std::uint_fast8_t i = seat_ + 1u; i <= seat_ + 3u; ++i) {
     std::uint_fast8_t const relseat = (seat_ + 4u - i) % 4u - 1u;
 
-    python::list features = constructFeatures_(
-      i % 4u, /*zimo_tile = */std::numeric_limits<std::uint_fast8_t>::max());
-    features.append(progression_);
+    std::uint_fast16_t const action = [&]() {
+      std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
+      auto [sparse, numeric] = constructFeatures_(i % 4u, zimo_tile);
 
-    Kanachan::Shoupai const &shoupai = shoupai_list_[i % 4u];
-    python::list candidates = shoupai.getCandidatesOnAngang(relseat, encode);
-    if (python::len(candidates) == 0u) {
+      Kanachan::Shoupai const &shoupai = shoupai_list_[i % 4u];
+      std::vector<std::uint_fast16_t> candidates = shoupai.getCandidatesOnAngang(relseat, encode);
+      if (candidates.size() == 0u) {
+        return std::numeric_limits<std::uint_fast16_t>::max();
+      }
+
+      return selectAction_(
+        i % 4u, std::move(sparse), std::move(numeric), std::vector(progression_),
+        std::move(candidates));
+    }();
+    if (action == std::numeric_limits<std::uint_fast16_t>::max()) {
       continue;
     }
-    features.append(candidates);
 
-    std::uint_fast16_t const action = selectAction_(i % 4u, features);
     if (543u <= action && action <= 545u) {
       // Qiang Gang (槍槓)
       KANACHAN_ASSERT((action - 543u == relseat));
@@ -1334,8 +1319,7 @@ std::uint_fast16_t RoundState::onAngang(
       // Skip
       continue;
     }
-    KANACHAN_THROW<std::logic_error>(_1)
-      << action << ": An invalid action on an gang.";
+    KANACHAN_THROW<std::logic_error>(_1) << action << ": An invalid action on an gang.";
   }
 
   if (qianggang) {
@@ -1388,27 +1372,32 @@ std::uint_fast16_t RoundState::onJiagang(
 
   shoupai_list_[seat_].onJiagang(zimo_tile, encode);
 
-  progression_.append(2017 + seat_ * 37 + encode);
+  progression_.push_back(2017 + seat_ * 37 + encode);
 
   qianggang_delayed_ = true;
   bool qianggang = false;
   for (std::uint_fast8_t i = seat_ + 1u; i <= seat_ + 3u; ++i) {
     std::uint_fast8_t const relseat = (seat_ + 4u - i) % 4u - 1u;
 
-    python::list features = constructFeatures_(
-      i % 4u, /*zimo_tile = */std::numeric_limits<std::uint_fast8_t>::max());
-    features.append(progression_);
+    std::uint_fast16_t const action = [&]() {
+      std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
+      auto [sparse, numeric] = constructFeatures_(i % 4u, zimo_tile);
 
-    Kanachan::Shoupai const &shoupai = shoupai_list_[i % 4u];
-    long const tool_config = encodeToolConfig_(i % 4u, /*rong = */true);
-    python::list candidates
-      = shoupai.getCandidatesOnJiagang(relseat, encode, tool_config);
-    if (python::len(candidates) == 0u) {
+      Kanachan::Shoupai const &shoupai = shoupai_list_[i % 4u];
+      long const tool_config = encodeToolConfig_(i % 4u, /*rong = */true);
+      std::vector<std::uint_fast16_t> candidates
+        = shoupai.getCandidatesOnJiagang(relseat, encode, tool_config);
+      if (candidates.size() == 0u) {
+        return std::numeric_limits<std::uint_fast16_t>::max();
+      }
+
+      return selectAction_(
+        i % 4u, std::move(sparse), std::move(numeric), std::vector(progression_),
+        std::move(candidates));
+    }();
+    if (action == std::numeric_limits<std::uint_fast16_t>::max()) {
       continue;
     }
-    features.append(candidates);
-
-    std::uint_fast16_t const action = selectAction_(i % 4u, features);
 
     if (543u <= action && action <= 545u) {
       // Qiang Gang (槍槓)
@@ -1450,6 +1439,8 @@ std::uint_fast16_t RoundState::onJiagang(
 
 bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
 {
+  Kanachan::GIL::RecursiveLock gil_lock;
+
   KANACHAN_ASSERT((!result.is_none()));
   KANACHAN_ASSERT((lingshang_zimo_count_ <= 4u));
   KANACHAN_ASSERT((gang_dora_count_ <= 4u));
@@ -2311,7 +2302,10 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
             return seat == to;
           }
         }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
         KANACHAN_THROW<std::logic_error>("A logic error.");
+#pragma GCC diagnostic pop
       }();
       for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
         // 包を伴う和了に本場分の点数が付帯する場合，包の対象者が本場分の点数の
@@ -2356,7 +2350,10 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
             return seat == to;
           }
         }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
         KANACHAN_THROW<std::logic_error>("A logic error.");
+#pragma GCC diagnostic pop
       }();
       for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
         // 包を伴う和了に本場分の点数が付帯する場合，包の対象者が本場分の点数の
@@ -2565,6 +2562,8 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, python::dict result)
 
 bool RoundState::onHuangpaiPingju(python::dict result)
 {
+  Kanachan::GIL::RecursiveLock gil_lock;
+
   KANACHAN_ASSERT((!result.is_none()));
 
   KANACHAN_ASSERT((getNumLeftTiles() == 0u));
@@ -2665,7 +2664,10 @@ bool RoundState::onHuangpaiPingju(python::dict result)
       default:
         KANACHAN_THROW<std::logic_error>(_1) << count;
       }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
     }();
+#pragma GCC diagnostic pop
 
     for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
       if (isPlayerTingpai(i)) {
@@ -2843,6 +2845,8 @@ bool RoundState::onHuangpaiPingju(python::dict result)
 
 void RoundState::onLiuju(python::dict result)
 {
+  Kanachan::GIL::RecursiveLock gil_lock;
+
   KANACHAN_ASSERT((!result.is_none()));
 
   if (lizhi_delayed_ != 0u) {

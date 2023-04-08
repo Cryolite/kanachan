@@ -193,11 +193,11 @@ public:
       for (std::uint_fast8_t i = 0u; i < 34u; ++i) {
         if (first[i] < 0) {
           KANACHAN_THROW<std::invalid_argument>(_1)
-            << "(# of " << i << ") = " << static_cast<int>(first[i]);
+            << "(# of " << static_cast<int>(i) << ") = " << static_cast<int>(first[i]);
         }
         if (first[i] > 4u) {
           KANACHAN_THROW<std::invalid_argument>(_1)
-            << "(# of " << i << ") = " << static_cast<unsigned>(first[i]);
+            << "(# of " << static_cast<int>(i) << ") = " << static_cast<unsigned>(first[i]);
         }
         num_tiles += first[i];
       }

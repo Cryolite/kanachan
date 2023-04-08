@@ -5,8 +5,7 @@
 #include "simulation/paishan.hpp"
 #include "simulation/game_state.hpp"
 #include <boost/python/dict.hpp>
-#include <boost/python/list.hpp>
-#include <random>
+#include <vector>
 #include <array>
 #include <utility>
 #include <limits>
@@ -19,7 +18,7 @@ class RoundState
 {
 public:
   RoundState(
-    std::mt19937 &urng, Kanachan::GameState &game_state,
+    std::vector<std::uint_least32_t> const &seed, Kanachan::GameState &game_state,
     Kanachan::Paishan const *p_test_paishan);
 
   RoundState(RoundState const &) = delete;
@@ -68,15 +67,17 @@ private:
 
   std::uint_fast8_t drawLingshangPai_();
 
-  boost::python::list constructFeatures_(
-    std::uint_fast8_t seat, std::uint_fast8_t zimo_tile) const;
+  std::pair<std::vector<std::uint_fast16_t>, std::vector<std::uint_fast32_t>>
+  constructFeatures_(std::uint_fast8_t seat, std::uint_fast8_t zimo_tile) const;
 
   std::uint_fast16_t selectAction_(
-    std::uint_fast8_t seat, boost::python::list features) const;
+    std::uint_fast8_t seat, std::vector<std::uint_fast16_t> &&sparse,
+    std::vector<std::uint_fast32_t> &&numeric, std::vector<uint_fast16_t> &&progression,
+    std::vector<std::uint_fast16_t> &&candidates) const;
 
   long encodeToolConfig_(std::uint_fast8_t seat, bool rong) const;
 
-  boost::python::list constructDoraIndicators_(std::uint_fast8_t seat) const;
+  std::vector<std::uint_fast8_t> constructDoraIndicators_(std::uint_fast8_t seat) const;
 
   std::pair<std::uint_fast8_t, std::uint_fast8_t> checkDaSanyuanPao_() const;
 
@@ -134,7 +135,7 @@ private:
   bool lingshang_kaihua_delayed_ = false;
   bool qianggang_delayed_ = false;
   std::array<bool, 4u> rong_delayed_ = { false, false, false, false };
-  boost::python::list progression_;
+  std::vector<std::uint_fast16_t> progression_;
 }; // class RoundState
 
 } // namespace Kanachan

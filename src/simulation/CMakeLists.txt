@@ -2,7 +2,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
 
 add_library(simulation SHARED
   simulate.cpp
-  duplicated_games.cpp
+  simulator.cpp
   game.cpp
   round.cpp
   sijia_lizhi.cpp
@@ -23,7 +23,8 @@ add_library(simulation SHARED
   xiangting_calculator.cpp
   paishan.cpp
   game_state.cpp
-  model_wrapper.cpp
+  decision_maker.cpp
+  gil.cpp
   utility.cpp)
 target_link_libraries(simulation
   PRIVATE common

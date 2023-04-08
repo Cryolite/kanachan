@@ -2,4 +2,4 @@ FROM cryolite/kanachan
 
 WORKDIR /workspace/data
 
-ENTRYPOINT ["torchrun", "--nproc_per_node", "gpu", "--standalone", "-m", "kanachan.simulation.run"]
+ENTRYPOINT ["python3", "-m", "kanachan.simulation.run"]

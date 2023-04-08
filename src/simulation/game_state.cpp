@@ -1,26 +1,30 @@
 #include "simulation/game_state.hpp"
 
-#include "simulation/model_wrapper.hpp"
+#include "simulation/decision_maker.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
-#include <boost/python/object.hpp>
+#include <stop_token>
 #include <array>
 #include <functional>
 #include <stdexcept>
 #include <cstdint>
 
 
-namespace Kanachan{
+namespace {
 
 using std::placeholders::_1;
-namespace python = boost::python;
+
+} // namespace `anonymous
+
+namespace Kanachan{
 
 GameState::GameState(
-  std::uint_fast8_t const room, bool const dong_feng_zhan,
-  std::array<Seat, 4u> const &seats)
-  : room_(room),
-    dong_feng_zhan_(dong_feng_zhan),
-    seats_(seats)
+  std::uint_fast8_t const room, bool const dong_feng_zhan, std::array<Seat, 4u> const &seats,
+  std::stop_token stop_token)
+  : room_(room)
+  , dong_feng_zhan_(dong_feng_zhan)
+  , seats_(seats)
+  , stop_token_(stop_token)
 {
   KANACHAN_ASSERT((room_ < 5u));
   for (auto [grade, model] : seats_) {
@@ -46,8 +50,7 @@ std::uint_fast8_t GameState::getPlayerGrade(std::uint_fast8_t const seat) const
 
 std::uint_fast8_t GameState::getChang() const
 {
-  KANACHAN_ASSERT(
-    (dong_feng_zhan_ && chang_ < 2u || !dong_feng_zhan_ && chang_ < 3u));
+  KANACHAN_ASSERT((dong_feng_zhan_ && chang_ < 2u || !dong_feng_zhan_ && chang_ < 3u));
   return chang_;
 }
 
@@ -73,8 +76,7 @@ std::int_fast32_t GameState::getPlayerScore(std::uint_fast8_t const seat) const
   return scores_[seat];
 }
 
-std::uint_fast8_t
-GameState::getPlayerRanking(std::uint_fast8_t const seat) const
+std::uint_fast8_t GameState::getPlayerRanking(std::uint_fast8_t const seat) const
 {
   KANACHAN_ASSERT((seat < 4u));
   std::int_fast32_t const score = scores_[seat];
@@ -93,13 +95,15 @@ GameState::getPlayerRanking(std::uint_fast8_t const seat) const
 }
 
 std::uint_fast16_t GameState::selectAction(
-  std::uint_fast8_t const seat, python::object features) const
+  std::uint_fast8_t const seat, std::vector<std::uint_fast16_t> &&sparse,
+  std::vector<std::uint_fast32_t> &&numeric, std::vector<std::uint_fast16_t> &&progression,
+  std::vector<std::uint_fast16_t> &&candidates) const
 {
   KANACHAN_ASSERT((seat < 4u));
-  KANACHAN_ASSERT((!features.is_none()));
-  KANACHAN_ASSERT((python::len(features) == 4));
-  Kanachan::ModelWrapper const &model = seats_[seat].second;
-  return model(features);
+  Kanachan::DecisionMaker &decision_maker = *(seats_[seat].second);
+  return decision_maker(
+    std::move(sparse), std::move(numeric), std::move(progression), std::move(candidates),
+    stop_token_);
 }
 
 void GameState::onSuccessfulLizhi(std::uint_fast8_t const seat)
@@ -110,8 +114,7 @@ void GameState::onSuccessfulLizhi(std::uint_fast8_t const seat)
   ++lizhi_deposits_;
 }
 
-void GameState::addPlayerScore(
-  std::uint_fast8_t const seat, std::int_fast32_t const score)
+void GameState::addPlayerScore(std::uint_fast8_t const seat, std::int_fast32_t const score)
 {
   scores_[seat] += score;
 }

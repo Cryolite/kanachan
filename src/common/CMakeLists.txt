@@ -1,5 +1,6 @@
 add_library(common
   mahjongsoul.pb.cc
+  thread.cpp
   assert.cpp
   throw.cpp
   type_name.cpp)

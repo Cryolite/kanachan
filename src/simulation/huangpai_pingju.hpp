@@ -8,8 +8,7 @@
 
 namespace Kanachan{
 
-std::any huangpaiPingju(
-  Kanachan::RoundState &round_state, boost::python::dict result);
+std::any huangpaiPingju(Kanachan::RoundState &round_state, boost::python::dict result);
 
 } // namespace Kanachan
 

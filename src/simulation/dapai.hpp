@@ -10,8 +10,8 @@
 namespace Kanachan{
 
 std::any dapai(
-  Kanachan::RoundState &round_state, std::uint_fast8_t tile, bool moqi,
-  bool lizhi, boost::python::dict result);
+  Kanachan::RoundState &round_state, std::uint_fast8_t tile, bool moqi, bool lizhi,
+  boost::python::dict result);
 
 } // namespace Kanachan
 

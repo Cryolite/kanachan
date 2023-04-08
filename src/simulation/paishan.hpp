@@ -2,7 +2,7 @@
 #define KANACHAN_SIMULATION_PAISHAN_HPP_INCLUDE_GUARD
 
 #include <boost/python/list.hpp>
-#include <random>
+#include <vector>
 #include <array>
 #include <cstdint>
 
@@ -16,7 +16,7 @@ void swap(Paishan &lhs, Paishan &rhs) noexcept;
 class Paishan
 {
 public:
-  explicit Paishan(std::mt19937 &urng);
+  explicit Paishan(std::vector<std::uint_least32_t> const &seed);
 
   explicit Paishan(boost::python::list paishan);
 

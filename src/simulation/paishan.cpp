@@ -1,5 +1,6 @@
 #include "simulation/paishan.hpp"
 
+#include "simulation/gil.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
 #include <boost/python/extract.hpp>
@@ -7,23 +8,28 @@
 #include <boost/python/object.hpp>
 #include <random>
 #include <algorithm>
+#include <vector>
 #include <functional>
 #include <utility>
 #include <stdexcept>
 #include <cstddef>
 
 
-namespace Kanachan{
+namespace {
 
 using std::placeholders::_1;
 namespace python = boost::python;
+
+} // namespace `anonymous`
+
+namespace Kanachan{
 
 void swap(Paishan &lhs, Paishan &rhs) noexcept
 {
   lhs.swap(rhs);
 }
 
-Paishan::Paishan(std::mt19937 &urng)
+Paishan::Paishan(std::vector<std::uint_least32_t> const &seed)
   : tiles_({
        0u,  1u,  1u,  1u,  1u,  2u,  2u,  2u,  2u,  3u,  3u,  3u,  3u,  4u,  4u,  4u,  4u,
        5u,  5u,  5u,  6u,  6u,  6u,  6u,  7u,  7u,  7u,  7u,  8u,  8u,  8u,  8u,  9u,  9u,  9u,  9u,
@@ -35,6 +41,8 @@ Paishan::Paishan(std::mt19937 &urng)
       34u, 34u, 34u, 34u, 35u, 35u, 35u, 35u, 36u, 36u, 36u, 36u,
     })
 {
+  std::seed_seq sseq(seed.cbegin(), seed.cend());
+  std::mt19937 urng(sseq);
   std::shuffle(tiles_.begin(), tiles_.end(), urng);
 }
 
@@ -42,26 +50,25 @@ Paishan::Paishan(python::list paishan)
   : tiles_()
 {
   if (paishan.is_none()) {
-    KANACHAN_THROW<std::invalid_argument>(_1) << "`paishan` is `None`.";
+    KANACHAN_THROW<std::invalid_argument>(_1) << "`paishan` must not be a `None`.";
   }
 
-  std::size_t const length = python::len(paishan);
+  Kanachan::GIL::RecursiveLock gil_lock;
+
+  python::ssize_t const length = python::len(paishan);
   if (length != 136u) {
-    KANACHAN_THROW<std::invalid_argument>(_1)
-      << "paishan: An wrong length (" << length << ").";
+    KANACHAN_THROW<std::invalid_argument>(_1) << "paishan: An wrong length (" << length << ").";
   }
-  for (std::size_t i = 0; i < length; ++i) {
+  for (python::ssize_t i = 0; i < length; ++i) {
     long const tile = [&](){
-      python::object o = paishan[i];
-      python::extract<long> tile_(o);
-      if (!tile_.check()) {
+      python::extract<long> tile(paishan[i]);
+      if (!tile.check()) {
         KANACHAN_THROW<std::invalid_argument>(_1) << "paishan: A type error.";
       }
-      return tile_();
+      return tile();
     }();
     if (tile < 0 || 37 <= tile) {
-      KANACHAN_THROW<std::invalid_argument>(_1)
-        << "paishan: An wrong tile (" << tile << ").";
+      KANACHAN_THROW<std::invalid_argument>(_1) << "paishan: An wrong tile (" << tile << ").";
     }
     tiles_[i] = tile;
   }

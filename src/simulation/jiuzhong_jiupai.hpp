@@ -7,8 +7,7 @@
 
 namespace Kanachan{
 
-bool jiuzhongJiupai(
-  Kanachan::RoundState &round_state, boost::python::dict result);
+bool jiuzhongJiupai(Kanachan::RoundState &round_state, boost::python::dict result);
 
 } // namespace Kanachan
 

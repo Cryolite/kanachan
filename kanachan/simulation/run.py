@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 import re
+import datetime
 from pathlib import Path
-import pickle
 from argparse import ArgumentParser, Namespace
 from typing import Tuple, List, Callable
 import sys
@@ -16,8 +16,7 @@ def _parse_arguments() -> Namespace:
     parser = ArgumentParser(description='Run Mahjong Soul game simulation.')
     parser.add_argument('--device', help='device', metavar='DEV')
     parser.add_argument(
-        '--dtype', default='float16',
-        choices=('half', 'float16', 'float', 'float32',),
+        '--dtype', choices=('half', 'float16', 'float', 'float32', 'double', 'float64'),
         help='data type (defaults to `float16`)', metavar='DTYPE')
     parser.add_argument(
         '--baseline-model', type=Path, required=True,
@@ -47,6 +46,8 @@ def _parse_arguments() -> Namespace:
         '-n', default=1, type=int,
         help='# of sets to simulate (defaults to `1`)',
         metavar='N')
+    parser.add_argument('--batch-size', default=1, type=int, metavar='N_BATCH')
+    parser.add_argument('--concurrency', type=int, metavar='N_THREADS')
 
     return parser.parse_args()
 
@@ -64,10 +65,17 @@ def _main():
     else:
         device = 'cpu'
 
+    if config.dtype is None:
+        if device == 'cpu':
+            config.dtype = 'float32'
+        else:
+            config.dtype = 'float16'
     if config.dtype in ('half', 'float16'):
         dtype = torch.half
-    elif config.dtype == ('float', 'float32'):
+    elif config.dtype in ('float', 'float32'):
         dtype = torch.float
+    elif config.dtype in ('double', 'float64'):
+        dtype = torch.double
     else:
         raise ValueError(f'{config.dtype}: An invalid data type.')
 
@@ -75,8 +83,7 @@ def _main():
         raise RuntimeError(f'{config.baseline_model}: Does not exist.')
     if not config.baseline_model.is_file():
         raise RuntimeError(f'{config.baseline_model}: Not a file.')
-    with open(config.baseline_model, 'rb') as f:
-        baseline_model: nn.Module = pickle.load(f)
+    baseline_model: nn.Module = torch.load(config.baseline_model, map_location='cpu')
     baseline_model.to(device=device, dtype=dtype)
     baseline_model.eval()
 
@@ -88,8 +95,7 @@ def _main():
         raise RuntimeError(f'{config.proposed_model}: Does not exist.')
     if not config.proposed_model.is_file():
         raise RuntimeError(f'{config.proposed_model}: Not a file.')
-    with open(config.proposed_model, 'rb') as f:
-        proposed_model: nn.Module = pickle.load(f)
+    proposed_model: nn.Module = torch.load(config.proposed_model, map_location='cpu')
     proposed_model.to(device=device, dtype=dtype)
     proposed_model.eval()
 
@@ -111,13 +117,30 @@ def _main():
     if config.n < 1:
         raise RuntimeError(f'{config.n}: An invalid value for the `-n` option.')
 
-    results = []
+    if config.batch_size < 1:
+        raise RuntimeError(f'{config.batch_size}: An invalid value for the `--batch-size` option.')
+
+    if config.concurrency is None:
+        config.concurrency = config.batch_size * 2
+    if config.concurrency < 1:
+        raise RuntimeError(
+            f'{config.concurrency}: An invalid value for the `--concurrency` option.')
+
     with torch.no_grad():
-        for i in range(config.n):
-            result = simulate(
-                device, dtype, mode, config.baseline_grade, baseline_model,
-                config.proposed_grade, proposed_model)
-            results.extend(result)
+        start_time = datetime.datetime.now()
+        results = simulate(
+            device, dtype, config.baseline_grade, baseline_model,
+            config.proposed_grade, proposed_model, mode, config.n,
+            config.batch_size, config.concurrency)
+
+    elapsed_time = datetime.datetime.now() - start_time
+    if config.non_duplicated:
+        print(f'Elapsed time: {elapsed_time} ({elapsed_time / config.n}/game)')
+    elif config.mode == '2vs2':
+        print(f'Elapsed time: {elapsed_time} ({elapsed_time / (config.n * 6.0)}/game)')
+    else:
+        assert config.mode == '1vs3'
+        print(f'Elapsed time: {elapsed_time} ({elapsed_time / (config.n * 4.0)}/game)')
 
     num_games = len(results)
 

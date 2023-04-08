@@ -1,7 +1,9 @@
+#define PY_SSIZE_T_CLEAN
 #include "simulation/shoupai.hpp"
 
 #include "simulation/xiangting_calculator.hpp"
 #include "simulation/paishan.hpp"
+#include "simulation/gil.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
 #include <boost/python/import.hpp>
@@ -10,6 +12,7 @@
 #include <boost/python/tuple.hpp>
 #include <boost/python/str.hpp>
 #include <boost/python/object.hpp>
+#include <Python.h>
 #include <numeric>
 #include <algorithm>
 #include <vector>
@@ -24,6 +27,9 @@
 namespace Kanachan{
 
 namespace{
+
+using std::placeholders::_1;
+namespace python = boost::python;
 
 constexpr std::array<std::uint_fast8_t, 37u> offsets_to_136_{
     0u,   1u,   5u,   9u,  13u,  17u,  20u,  24u,  28u,  32u,
@@ -208,18 +214,14 @@ constexpr std::array<std::array<std::uint_fast8_t, 3u>, 37u> daminggang_encode_ 
   std::array<std::uint_fast8_t, 3u>{ 36u, 36u, 36u }
 };
 
-} // namespace *unnamed*
-
-using std::placeholders::_1;
-namespace python = boost::python;
+} // namespace `anonymous`
 
 void swap(Shoupai &lhs, Shoupai &rhs) noexcept
 {
   lhs.swap(rhs);
 }
 
-Shoupai::Shoupai(
-  std::uint_fast8_t const index, Kanachan::Paishan const &paishan)
+Shoupai::Shoupai(std::uint_fast8_t const index, Kanachan::Paishan const &paishan)
   : external_tool_()
 {
   KANACHAN_ASSERT((index < 4u));
@@ -235,13 +237,21 @@ Shoupai::Shoupai(
   KANACHAN_ASSERT((tile < 37u));
   ++shoupai_[tile];
 
-  python::object o = python::import("kanachan.simulation");
-  o = o.attr("Tool");
-  external_tool_ = o();
+  {
+    Kanachan::GIL::RecursiveLock gil_lock;
+    python::object m = python::import("kanachan.simulation");
+    external_tool_ = m.attr("Tool")();
+  }
 
   if (isTingpai()) {
     updateHupaiList_();
   }
+}
+
+Shoupai::~Shoupai()
+{
+  Kanachan::GIL::RecursiveLock gil_lock;
+  external_tool_ = python::object();
 }
 
 void Shoupai::swap(Shoupai &rhs) noexcept
@@ -265,8 +275,7 @@ Shoupai &Shoupai::operator=(Shoupai &&rhs) noexcept
 
 bool Shoupai::isMenqian() const
 {
-  for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-    std::uint_fast16_t const fulu = fulu_list_[i];
+  for (std::uint_fast16_t const fulu : fulu_list_) {
     if (fulu == std::numeric_limits<std::uint_fast16_t>::max()) {
       return true;
     }
@@ -302,8 +311,7 @@ bool Shoupai::isTingpai() const
 
   std::vector<std::uint_fast8_t> shoupai34 = getShoupai34_();
   std::uint_fast8_t const num_fulu = getNumFulu_();
-  std::uint_fast8_t const xiangting
-    = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
+  std::uint_fast8_t const xiangting = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
   tingpai_cache_ = (xiangting == 1u);
   xiangting_lower_bound_ = xiangting;
   return tingpai_cache_;
@@ -312,12 +320,12 @@ bool Shoupai::isTingpai() const
 std::uint_fast8_t Shoupai::getNumGangzi() const
 {
   std::uint_fast8_t n = 0u;
-  for (std::uint_fast16_t f : fulu_list_) {
-    if (f == std::numeric_limits<std::uint_fast16_t>::max()) {
+  for (std::uint_fast16_t const fulu : fulu_list_) {
+    if (fulu == std::numeric_limits<std::uint_fast16_t>::max()) {
       break;
     }
-    if (f >= 210u) {
-      KANACHAN_ASSERT((f < 392u));
+    if (fulu >= 210u) {
+      KANACHAN_ASSERT((fulu < 392u));
       ++n;
     }
   }
@@ -357,9 +365,12 @@ std::uint_fast8_t Shoupai::getNumFulu_() const
   return n;
 }
 
-python::list Shoupai::getShoupai136_(
-  python::list fulu_list, std::uint_fast8_t const hupai) const
+python::list Shoupai::getShoupai136_(python::list fulu_list, std::uint_fast8_t const hupai) const
 {
+  if (PyGILState_Check() != 1) {
+    KANACHAN_THROW<std::logic_error>("The Python GIL must be held.");
+  }
+
   python::list shoupai136;
 
   auto convert = [](std::uint_fast8_t const tile) -> std::uint_fast8_t {
@@ -485,6 +496,10 @@ python::list Shoupai::getShoupai136_(
 
 python::list Shoupai::getFuluList_() const
 {
+  if (PyGILState_Check() != 1) {
+    KANACHAN_THROW<std::logic_error>("The Python GIL must be held.");
+  }
+
   auto convert = [](std::uint_fast8_t const tile) -> std::uint_fast8_t {
     return tile;
   };
@@ -723,7 +738,7 @@ void Shoupai::updateHupaiList_()
   std::vector<std::uint_fast8_t> shoupai34 = getShoupai34_();
   std::uint_fast8_t const num_fulu = getNumFulu_();
   for (std::uint_fast8_t i = 0u; i < 37u; ++i) {
-    std::uint_fast8_t const hupai34 = [i]() -> std::uint_fast8_t{
+    std::uint_fast8_t const hupai34 = [i]() -> std::uint_fast8_t {
       if (i == 0u) {
         return 4u;
       }
@@ -755,8 +770,7 @@ void Shoupai::updateHupaiList_()
     }
     else {
       ++shoupai34[hupai34];
-      std::uint_fast8_t const xiangting
-        = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
+      std::uint_fast8_t const xiangting = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
       if (xiangting == 0u) {
         hupai_list_.push_back(i);
       }
@@ -767,30 +781,27 @@ void Shoupai::updateHupaiList_()
   KANACHAN_ASSERT((hupai_list_.size() >= 1u));
 }
 
-void Shoupai::appendToFeatures(python::list sparse_features) const
+void Shoupai::appendToFeatures(std::vector<std::uint_fast16_t> &sparse_features) const
 {
-  KANACHAN_ASSERT((!sparse_features.is_none()));
-
   for (std::uint_fast8_t i = 0u; i < 37u; ++i) {
     std::uint_fast8_t const num_tiles = shoupai_[i];
     for (std::uint_fast8_t j = 0u; j < num_tiles; ++j) {
-      long const feature = 353 + offsets_to_136_[i] + j;
-      sparse_features.append(feature);
+      std::uint_fast16_t const feature = 353u + offsets_to_136_[i] + j;
+      sparse_features.push_back(feature);
     }
   }
 }
 
-python::list Shoupai::getCandidatesOnZimo(
+std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnZimo(
   std::uint_fast8_t const zimo_tile, bool const first_zimo,
   bool const lizhi_prohibited, bool const gang_prohibited,
   long const tool_config) const
 {
-  KANACHAN_ASSERT(
-    (kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
+  KANACHAN_ASSERT((kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
   KANACHAN_ASSERT((zimo_tile < 37u));
   KANACHAN_ASSERT((tool_config >= 0));
 
-  python::list candidates;
+  std::vector<std::uint_fast16_t> candidates;
 
   std::vector<std::uint_fast8_t> shoupai34 = getShoupai34_();
   std::uint_fast8_t const zimo_tile_34 = [zimo_tile]() -> std::uint_fast8_t {
@@ -814,7 +825,7 @@ python::list Shoupai::getCandidatesOnZimo(
     }
     KANACHAN_THROW<std::logic_error>("A logic error.");
   }();
-  shoupai34[zimo_tile_34] += 1;
+  shoupai34[zimo_tile_34] += 1u;
 
   // Check for Da Pai (打牌)
   if ((tool_config & (1 << 1)) != 0 || (tool_config & (1 << 7)) != 0) {
@@ -834,26 +845,24 @@ python::list Shoupai::getCandidatesOnZimo(
         continue;
       }
       --shoupai34[i];
-      std::uint_fast8_t const xiangting
-        = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
+      std::uint_fast8_t const xiangting = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
       ++shoupai34[i];
-      bool const lizhi = menqian && (xiangting == 1) && !lizhi_prohibited;
+      bool const lizhi = menqian && (xiangting == 1u) && !lizhi_prohibited;
 
-      auto append = [this, lizhi, candidates](
-        std::uint_fast8_t const tile, bool const moqi) mutable -> void
+      auto append = [&](std::uint_fast8_t const tile, bool const moqi) mutable -> void
       {
         KANACHAN_ASSERT((tile < 37u));
 
         if (moqi) {
-          candidates.append(tile * 4 + 1 * 2 + 0);
+          candidates.push_back(tile * 4u + 1u * 2u + 0u);
           if (lizhi) {
-            candidates.append(tile * 4 + 1 * 2 + 1);
+            candidates.push_back(tile * 4u + 1u * 2u + 1u);
           }
         }
         else {
-          candidates.append(tile * 4 + 0 * 2 + 0);
+          candidates.push_back(tile * 4u + 0u * 2u + 0u);
           if (lizhi) {
-            candidates.append(tile * 4 + 0 * 2 + 1);
+            candidates.push_back(tile * 4u + 0u * 2u + 1u);
           }
         }
       };
@@ -996,10 +1005,10 @@ python::list Shoupai::getCandidatesOnZimo(
   if (!gang_prohibited && ((tool_config & (1 << 1)) != 0 || (tool_config & (1 << 7)) != 0)) {
     // 立直中の暗槓．送り槓を禁止するよう注意する．
     KANACHAN_ASSERT((hupai_list_.size() >= 1u));
-    while (shoupai34[zimo_tile_34] == 4) {
+    while (shoupai34[zimo_tile_34] == 4u) {
       std::vector<std::uint_fast8_t> new_shoupai34 = getShoupai34_();
       std::uint_fast8_t const num_fulu = getNumFulu_();
-      new_shoupai34[zimo_tile_34] -= 3;
+      new_shoupai34[zimo_tile_34] -= 3u;
       std::uint_fast8_t const xiangting
         = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 1u);
       if (xiangting >= 2u) {
@@ -1054,18 +1063,18 @@ python::list Shoupai::getCandidatesOnZimo(
         break;
       }
 
-      long const encode = 148 + zimo_tile_34;
-      candidates.append(encode);
+      std::uint_fast16_t const encode = 148u + zimo_tile_34;
+      candidates.push_back(encode);
       break;
     }
   }
   else if (!gang_prohibited) {
     // Check for An Gang (暗槓) without Li Zhi (立直)
     for (std::uint_fast8_t i = 0u; i < 34u; ++i) {
-      KANACHAN_ASSERT((shoupai34[i] <= 4));
-      if (shoupai34[i] == 4) {
-        long const encode = 148 + i;
-        candidates.append(encode);
+      KANACHAN_ASSERT((shoupai34[i] <= 4u));
+      if (shoupai34[i] == 4u) {
+        std::uint_fast16_t const encode = 148u + i;
+        candidates.push_back(encode);
       }
     }
 
@@ -1122,20 +1131,31 @@ python::list Shoupai::getCandidatesOnZimo(
         continue;
       }
       std::uint_fast8_t const relseat = (fulu - 90u) / 40u;
-      std::uint_fast8_t const peng = (fulu - 90 - relseat * 40u);
+      std::uint_fast8_t const peng = (fulu - 90u - relseat * 40u);
       std::uint_fast8_t const tile_to_meld = jiagang_decoder[peng];
       if (shoupai_[tile_to_meld] == 1u || zimo_tile == tile_to_meld) {
-        candidates.append(182 + tile_to_meld);
+        candidates.push_back(182u + tile_to_meld);
       }
     }
   }
 
   // Check for Zi Mo Hu (自摸和)
   if (std::find(hupai_list_.cbegin(), hupai_list_.cend(), zimo_tile) != hupai_list_.cend()) {
+    Kanachan::GIL::RecursiveLock gil_lock;
+
     python::list fulu_list = getFuluList_();
     python::list shoupai136 = getShoupai136_(fulu_list, zimo_tile);
+    python::list candidates_tmp;
+    for (std::uint_fast16_t const candidate : candidates) {
+      candidates_tmp.append(candidate);
+    }
     external_tool_.attr("append_zimohu_candidate")(
-      shoupai136, fulu_list, zimo_tile, tool_config, candidates);
+      shoupai136, fulu_list, zimo_tile, tool_config, candidates_tmp);
+    candidates.clear();
+    for (python::ssize_t i = 0u; i < python::len(candidates_tmp); ++i) {
+      std::uint_fast16_t const candidate = python::extract<long>(candidates_tmp[i])();
+      candidates.push_back(candidate);
+    }
     zhenting_ = true;
   }
 
@@ -1166,23 +1186,23 @@ python::list Shoupai::getCandidatesOnZimo(
       }
     }
     if (num_kinds >= 9u) {
-      candidates.append(220);
+      candidates.push_back(220u);
     }
   }
 
   if ((tool_config & (1 << 1)) != 0 || (tool_config & (1 << 7)) != 0) {
     // 立直中．
-    if (python::len(candidates) >= 1) {
+    if (candidates.size() >= 1u) {
       // 立直中に選択肢がある場合は自摸切りの選択肢を加える．
-      candidates.append(zimo_tile * 4u + 1u * 2u + 0u);
+      candidates.push_back(zimo_tile * 4u + 1u * 2u + 0u);
     }
   }
 
-  candidates.attr("sort")();
+  std::sort(candidates.begin(), candidates.end());
   return candidates;
 }
 
-python::list Shoupai::getCandidatesOnDapai(
+std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnDapai(
   std::uint_fast8_t const relseat, std::uint_fast8_t const dapai,
   bool const gang_prohibited, long const tool_config) const
 {
@@ -1192,7 +1212,7 @@ python::list Shoupai::getCandidatesOnDapai(
   KANACHAN_ASSERT((dapai < 37u));
   KANACHAN_ASSERT((tool_config >= 0));
 
-  python::list candidates;
+  std::vector<std::uint_fast16_t> candidates;
 
   if ((tool_config & (1 << 1)) == 0 && (tool_config & (1 << 6)) == 0 && (tool_config & (1 << 7)) == 0) {
     // 立直中でない場合かつ河底牌以外の場合 (立直中または河底牌は鳴けない)
@@ -1243,7 +1263,7 @@ python::list Shoupai::getCandidatesOnDapai(
           }
         }
         if (shoupai_[t0] >= 1u && shoupai_[t1] >= 1u) {
-          candidates.append(222 + i);
+          candidates.push_back(222u + i);
         }
       }
     }
@@ -1255,10 +1275,10 @@ python::list Shoupai::getCandidatesOnDapai(
         continue;
       }
       if (t0 == t1 && shoupai_[t0] >= 2u) {
-        candidates.append(312 + relseat * 40 + i);
+        candidates.push_back(312u + relseat * 40u + i);
       }
       if (t0 != t1 && shoupai_[t0] >= 1u && shoupai_[t1] >= 1u) {
-        candidates.append(312 + relseat * 40 + i);
+        candidates.push_back(312u + relseat * 40u + i);
       }
     }
 
@@ -1266,25 +1286,25 @@ python::list Shoupai::getCandidatesOnDapai(
       // Check for Da Ming Gang (大明槓)
       for (std::uint_fast8_t i = 0u; i <= 20u; i += 10u) {
         if (dapai == i + 0u && shoupai_[i + 5u] == 3u) {
-          candidates.append(432 + relseat * 37 + i);
+          candidates.push_back(432u + relseat * 37u + i);
         }
         for (std::uint_fast8_t j = i + 1u; j <= i + 4u; ++j) {
           if (dapai == j && shoupai_[j] == 3u) {
-            candidates.append(432 + relseat * 37 + j);
+            candidates.push_back(432u + relseat * 37u + j);
           }
         }
         if (dapai == i + 5u && shoupai_[i + 0u] == 1u && shoupai_[i + 5u] == 2u) {
-          candidates.append(432 + relseat * 37 + i + 5);
+          candidates.push_back(432u + relseat * 37u + i + 5u);
         }
         for (std::uint_fast8_t j = i + 6u; j <= i + 9u; ++j) {
           if (dapai == j && shoupai_[j] == 3u) {
-            candidates.append(432 + relseat * 37 + j);
+            candidates.push_back(432u + relseat * 37u + j);
           }
         }
       }
       for (std::uint_fast8_t i = 30u; i < 37u; ++i) {
         if (dapai == i && shoupai_[i] == 3u) {
-          candidates.append(432 + relseat * 37 + i);
+          candidates.push_back(432u + relseat * 37u + i);
         }
       }
     }
@@ -1292,23 +1312,34 @@ python::list Shoupai::getCandidatesOnDapai(
 
   // Check for Rong (栄和)
   if (!zhenting_ && std::find(hupai_list_.cbegin(), hupai_list_.cend(), dapai) != hupai_list_.cend()){
+    Kanachan::GIL::RecursiveLock gil_lock;
+
     python::list fulu_list = getFuluList_();
     python::list shoupai136 = getShoupai136_(fulu_list, dapai);
+    python::list candidates_tmp;
+    for (std::uint_fast16_t const candidate : candidates) {
+      candidates_tmp.append(candidate);
+    }
     external_tool_.attr("append_rong_candidate")(
-      relseat, shoupai136, fulu_list, dapai, tool_config, candidates);
+      relseat, shoupai136, fulu_list, dapai, tool_config, candidates_tmp);
+    candidates.clear();
+    for (python::ssize_t i = 0u; i < python::len(candidates_tmp); ++i) {
+      std::uint_fast16_t const candidate = python::extract<long>(candidates_tmp[i])();
+      candidates.push_back(candidate);
+    }
     zhenting_ = true;
   }
 
-  if (python::len(candidates) >= 1u) {
+  if (candidates.size() >= 1u) {
     // Skip
-    candidates.append(221);
+    candidates.push_back(221u);
   }
 
-  candidates.attr("sort")();
+  std::sort(candidates.begin(), candidates.end());
   return candidates;
 }
 
-python::list Shoupai::getCandidatesOnChiPeng() const
+std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnChiPeng() const
 {
   std::array<std::uint_fast8_t, 3u> kuikae = {
     std::numeric_limits<std::uint_fast8_t>::max(),
@@ -1373,21 +1404,21 @@ python::list Shoupai::getCandidatesOnChiPeng() const
     }
   }
 
-  python::list candidates;
+  std::vector<std::uint_fast16_t> candidates;
   for (std::uint_fast8_t i = 0u; i < shoupai_.size(); ++i) {
     if (std::find(kuikae.cbegin(), kuikae.cend(), i) != kuikae.cend()) {
       continue;
     }
     if (shoupai_[i] >= 1u) {
       std::uint_fast16_t const encode = i * 4u + 0 * 2u + 0u;
-      candidates.append(encode);
+      candidates.push_back(encode);
     }
   }
 
   return candidates;
 }
 
-python::list Shoupai::getCandidatesOnAngang(
+std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnAngang(
   std::uint_fast8_t const relseat, std::uint_fast8_t const encode) const
 {
   KANACHAN_ASSERT(
@@ -1396,11 +1427,11 @@ python::list Shoupai::getCandidatesOnAngang(
   KANACHAN_ASSERT((encode < 34u));
 
   if (!isMenqian()) {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
 
   if (zhenting_) {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
 
   std::uint_fast8_t n = 0u;
@@ -1413,7 +1444,7 @@ python::list Shoupai::getCandidatesOnAngang(
     }
   }
   else {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   if (shoupai_[9u] >= 1u || encode == 8u) {
     // 9m
@@ -1423,7 +1454,7 @@ python::list Shoupai::getCandidatesOnAngang(
     }
   }
   else {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   if (shoupai_[11u] >= 1u || encode == 9u) {
     // 1p
@@ -1433,7 +1464,7 @@ python::list Shoupai::getCandidatesOnAngang(
     }
   }
   else {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   if (shoupai_[19u] >= 1u || encode == 17u) {
     // 9p
@@ -1443,7 +1474,7 @@ python::list Shoupai::getCandidatesOnAngang(
     }
   }
   else {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   if (shoupai_[21u] >= 1u || encode == 18u) {
     // 1s
@@ -1453,7 +1484,7 @@ python::list Shoupai::getCandidatesOnAngang(
     }
   }
   else {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   if (shoupai_[29u] >= 1u || encode == 26u) {
     // 9s
@@ -1463,7 +1494,7 @@ python::list Shoupai::getCandidatesOnAngang(
     }
   }
   else {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   for (std::uint_fast8_t i = 27u; i < 34u; ++i) {
     if (shoupai_[i + 3u] >= 1u || encode == i) {
@@ -1473,70 +1504,81 @@ python::list Shoupai::getCandidatesOnAngang(
       }
     }
     else {
-      return python::list();
+      return std::vector<std::uint_fast16_t>();
     }
   }
 
   if (n < 13u || !head) {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
   KANACHAN_ASSERT((n == 14u && head));
 
-  python::list candidate;
-  candidate.append(221);
-  candidate.append(543 + relseat);
+  std::vector<std::uint_fast16_t> candidate;
+  candidate.push_back(221u);
+  candidate.push_back(543u + relseat);
   // 槍槓を見逃した場合のフリテン
   zhenting_ = true;
   return candidate;
 }
 
-python::list Shoupai::getCandidatesOnJiagang(
+std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnJiagang(
   std::uint_fast8_t const relseat, std::uint_fast8_t const encode,
   long const tool_config) const
 {
-  KANACHAN_ASSERT(
-    (kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
+  KANACHAN_ASSERT((kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
   KANACHAN_ASSERT((relseat < 3u));
   KANACHAN_ASSERT((encode < 37u));
 
   if (zhenting_) {
-    return python::list();
+    return std::vector<std::uint_fast16_t>();
   }
 
-  python::list candidates;
+  std::vector<std::uint_fast16_t> candidates;
 
   // Check for Qiang Gang (槍槓)
   {
+    Kanachan::GIL::RecursiveLock gil_lock;
+
     python::list fulu_list = getFuluList_();
     python::list shoupai136 = getShoupai136_(fulu_list, encode);
+    python::list candidates_tmp;
     external_tool_.attr("append_rong_candidate")(
-      relseat, shoupai136, fulu_list, encode, tool_config, candidates);
+      relseat, shoupai136, fulu_list, encode, tool_config, candidates_tmp);
+    for (python::ssize_t i = 0u; i < python::len(candidates_tmp); ++i) {
+      std::uint_fast16_t const candidate = python::extract<long>(candidates_tmp[i])();
+      candidates.push_back(candidate);
+    }
   }
 
-  if (python::len(candidates) >= 1u) {
+  if (candidates.size() >= 1u) {
     // Skip
-    candidates.append(221);
+    candidates.push_back(221u);
     // 槍槓を見逃した場合のフリテン
     zhenting_ = true;
   }
 
-  candidates.attr("sort")();
+  std::sort(candidates.begin(), candidates.end());
   return candidates;
 }
 
 std::pair<std::uint_fast8_t, std::uint_fast8_t> Shoupai::calculateHand(
-  std::uint_fast8_t const hupai, python::list dora_indicators,
+  std::uint_fast8_t const hupai, std::vector<std::uint_fast8_t> const &dora_indicators,
   long const tool_config) const
 {
-  KANACHAN_ASSERT(
-    (kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
+  KANACHAN_ASSERT((kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
   KANACHAN_ASSERT((hupai < 37u));
   KANACHAN_ASSERT((tool_config >= 0));
 
+  Kanachan::GIL::RecursiveLock gil_lock;
+
   python::list fulu_list = getFuluList_();
   python::list shoupai136 = getShoupai136_(fulu_list, hupai);
+  python::list dora_indicators_tmp;
+  for (std::uint_fast8_t const dora_indicator : dora_indicators) {
+    dora_indicators_tmp.append(dora_indicator);
+  }
   python::object o = external_tool_.attr("calculate_hand")(
-    shoupai136, fulu_list, hupai, dora_indicators, tool_config);
+    shoupai136, fulu_list, hupai, dora_indicators_tmp, tool_config);
   python::extract<python::tuple> e(o);
   if (!e.check()) {
     KANACHAN_THROW<std::runtime_error>("A type error.");

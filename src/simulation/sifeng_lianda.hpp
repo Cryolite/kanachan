@@ -7,8 +7,7 @@
 
 namespace Kanachan{
 
-bool sifengLianda(
-  Kanachan::RoundState &round_state, boost::python::dict result);
+bool sifengLianda(Kanachan::RoundState &round_state, boost::python::dict result);
 
 } // namespace Kanachan
 

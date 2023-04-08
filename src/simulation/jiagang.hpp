@@ -10,8 +10,8 @@
 namespace Kanachan{
 
 std::any jiagang(
-  Kanachan::RoundState &round_state, std::uint_fast8_t tile,
-  std::uint_fast8_t encode, boost::python::dict result);
+  Kanachan::RoundState &round_state, std::uint_fast8_t tile, std::uint_fast8_t encode,
+  boost::python::dict result);
 
 } // namespace Kanachan
 

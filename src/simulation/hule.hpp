@@ -9,8 +9,7 @@
 namespace Kanachan{
 
 bool hule(
-  Kanachan::RoundState &round_state, std::uint_fast8_t zimo_tile,
-  boost::python::dict result);
+  Kanachan::RoundState &round_state, std::uint_fast8_t zimo_tile, boost::python::dict result);
 
 } // namespace Kanachan
 
