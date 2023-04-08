@@ -29,7 +29,7 @@ After the installation of the prerequisite items, build the `cryolite/kanachan.s
 ### Usage
 
 ```
-$ docker run --gpus all -v /path/to/host-data:/workspace/data -it --rm cryolite/kanachan python3 -m kanachan.simulation.run OPTIONS...
+$ docker run --gpus all -v /path/to/host-data:/workspace/data -it --rm cryolite/kanachan.simulation OPTIONS...
 ```
 
 If you want to run this program on a specific GPU, use the `--gpus device=n` option, where `n` is the GPU number displayed by the [`nvidia-smi`](https://developer.nvidia.com/nvidia-system-management-interface) command, or `--device` option (see below).
