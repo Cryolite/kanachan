@@ -71,7 +71,7 @@ class QVDecoder(nn.Module):
         assert advantage.size(1) == MAX_NUM_ACTION_CANDIDATES
 
         q = value_expanded + advantage
-        q = torch.where(candidates < NUM_TYPES_OF_ACTIONS, q, torch.full_like(q, -math.inf))
+        q = torch.where(candidates < NUM_TYPES_OF_ACTIONS, q, -math.inf)
 
         return q, value
 
