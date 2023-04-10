@@ -26,9 +26,7 @@ public:
 
     DecisionMaker &operator=(DecisionMaker const &) = delete;
 
-    std::size_t getBatchSize() const;
-
-    void shrinkBatchSize(std::size_t new_batch_size);
+    void shrinkBatchSizeToFitNumThreads(std::size_t num_threads);
 
     std::uint_fast16_t operator()(
         std::vector<std::uint_fast16_t> &&sparse, std::vector<std::uint_fast32_t> &&numeric,

@@ -242,20 +242,12 @@ try {
         std::vector<std::uint_least32_t> seed;
         Seats_ seats;
         {
-            std::scoped_lock lock(mtx_);
+            std::unique_lock lock(mtx_);
             if (seeds_.empty()) {
-                --num_alive_threads_;
-                if (num_alive_threads_ == 0u) {
-                    return;
-                }
-                if (num_alive_threads_ < p_baseline_decision_maker_->getBatchSize() * 2u - 1u) {
-                    std::size_t const log2_new_batch_size = std::log2(num_alive_threads_ + 1u) - 1u;
-                    p_baseline_decision_maker_->shrinkBatchSize(1u << log2_new_batch_size);
-                }
-                if (num_alive_threads_ < p_proposed_decision_maker_->getBatchSize() * 2u - 1u) {
-                    std::size_t const log2_new_batch_size = std::log2(num_alive_threads_ + 1u) - 1u;
-                    p_proposed_decision_maker_->shrinkBatchSize(1u << log2_new_batch_size);
-                }
+                std::size_t const num_alive_threads = --num_alive_threads_;
+                lock.unlock();
+                p_baseline_decision_maker_->shrinkBatchSizeToFitNumThreads(num_alive_threads);
+                p_proposed_decision_maker_->shrinkBatchSizeToFitNumThreads(num_alive_threads);
                 return;
             }
 

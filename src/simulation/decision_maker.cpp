@@ -48,9 +48,7 @@ public:
 
     Impl_ &operator=(Impl_ const &) = delete;
 
-    std::size_t getBatchSize() const;
-
-    void shrinkBatchSize(std::size_t new_batch_size);
+    void shrinkBatchSizeToFitNumThreads(std::size_t new_threads);
 
 private:
     python::object decide_(
@@ -122,25 +120,13 @@ DecisionMaker::DecisionMaker(
     p_impl_ = std::make_shared<Impl_>(device, dtype, model, batch_size);
 }
 
-std::size_t DecisionMaker::getBatchSize() const
+void DecisionMaker::shrinkBatchSizeToFitNumThreads(std::size_t const num_threads)
 {
     if (PyGILState_Check() != 0) {
         KANACHAN_THROW<std::runtime_error>("The Python GIL must not be held.");
     }
     KANACHAN_ASSERT((!!p_impl_));
-    return p_impl_->getBatchSize();
-}
-
-void DecisionMaker::shrinkBatchSize(std::size_t new_batch_size)
-{
-    if (PyGILState_Check() != 0) {
-        KANACHAN_THROW<std::runtime_error>("The Python GIL must not be held.");
-    }
-    KANACHAN_ASSERT((!!p_impl_));
-    if (new_batch_size == 0u) {
-        KANACHAN_THROW<std::invalid_argument>("`new_batch_size` must be a positive integer.");
-    }
-    p_impl_->shrinkBatchSize(new_batch_size);
+    p_impl_->shrinkBatchSizeToFitNumThreads(num_threads);
 }
 
 std::uint_fast16_t DecisionMaker::operator()(
@@ -193,7 +179,7 @@ try : torch_(python::import("torch"))
     , numeric_batch_(batch_size_)
     , progression_batch_(batch_size_)
     , candidates_batch_(batch_size_)
-    , decision_batch_(batch_size_)
+    , decision_batch_()
     , batch_index_(0u)
     , result_count_(0u)
     , mtx_()
@@ -230,49 +216,30 @@ catch (python::error_already_set const &) {
     Kanachan::translatePythonException();
 }
 
-std::size_t DecisionMaker::Impl_::getBatchSize() const
+void DecisionMaker::Impl_::shrinkBatchSizeToFitNumThreads(std::size_t const num_threads)
 {
     KANACHAN_ASSERT((PyGILState_Check() == 0));
-
-    std::scoped_lock lock(mtx_);
-    return batch_size_;
-}
-
-void DecisionMaker::Impl_::shrinkBatchSize(std::size_t new_batch_size)
-{
-    KANACHAN_ASSERT((PyGILState_Check() == 0));
-    KANACHAN_ASSERT((new_batch_size > 0u));
 
     std::unique_lock lock(mtx_);
 
-    for (;;) {
-        ready_to_enqueue_.wait(
-            lock, [this]() { return batch_index_ < batch_size_ && result_count_ == 0u; });
-
-        if (new_batch_size > batch_size_) {
-            KANACHAN_THROW<std::invalid_argument>(_1) << new_batch_size << " > " << batch_size_;
+    if (num_threads == 0u) {
+        if (batch_index_ > 0u) {
+            KANACHAN_THROW<std::runtime_error>(_1) << batch_index_;
         }
-
-        if (batch_index_ <= new_batch_size) {
-            batch_size_ = new_batch_size;
-            sparse_batch_.resize(batch_size_);
-            numeric_batch_.resize(batch_size_);
-            progression_batch_.resize(batch_size_);
-            candidates_batch_.resize(batch_size_);
-            decision_batch_.resize(batch_size_);
-            if (batch_index_ == batch_size_) {
-                ready_to_run_.notify_all();
-            }
-            return;
+        if (result_count_ > 0u) {
+            KANACHAN_THROW<std::runtime_error>(_1) << result_count_;
         }
+        return;
+    }
 
-        KANACHAN_ASSERT((new_batch_size < batch_index_ && batch_index_ < batch_size_));
-        batch_size_ = batch_index_;
-        sparse_batch_.resize(batch_size_);
-        numeric_batch_.resize(batch_size_);
-        progression_batch_.resize(batch_size_);
-        candidates_batch_.resize(batch_size_);
-        decision_batch_.resize(batch_size_);
+    if (num_threads >= batch_size_ * 2u - 1u) {
+        return;
+    }
+
+    std::size_t const log2_new_batch_size = std::log2(num_threads + 1u) - 1.0;
+    std::size_t const new_batch_size = 1 << log2_new_batch_size;
+    batch_size_ = new_batch_size;
+    if (batch_index_ >= batch_size_ && result_count_ == 0u) {
         ready_to_run_.notify_all();
     }
 }
@@ -281,7 +248,7 @@ python::object DecisionMaker::Impl_::decide_(
     python::object sparse_batch, python::object numeric_batch, python::object progression_batch,
     python::object candidates_batch)
 try {
-    KANACHAN_ASSERT((batch_index_ == batch_size_));
+    KANACHAN_ASSERT((batch_index_ >= 1u));
     KANACHAN_ASSERT((result_count_ == 0u));
 
     python::object weight_batch = model_(
@@ -290,7 +257,7 @@ try {
         long const dim = python::extract<long>(weight_batch.attr("dim")())();
         KANACHAN_THROW<std::runtime_error>(_1) << dim << ": An invalid dimension.";
     }
-    if (weight_batch.attr("size")(0) != batch_size_) {
+    if (weight_batch.attr("size")(0) != python::len(sparse_batch)) {
         long const size = python::extract<long>(weight_batch.attr("size")(0))();
         KANACHAN_THROW<std::runtime_error>(_1) << size << " != " << batch_size_;
     }
@@ -317,7 +284,8 @@ try {
         }
     }
 
-    python::object arange = torch_.attr("arange")(batch_size_);
+    python::ssize_t const original_batch_size = python::len(index_batch);
+    python::object arange = torch_.attr("arange")(original_batch_size);
     return candidates_batch.attr("__getitem__")(python::make_tuple(arange, index_batch));
 }
 catch (python::error_already_set const &) {
@@ -335,7 +303,7 @@ try {
             std::unique_lock lock(mtx_);
             ready_to_run_.wait(
                 lock, stop_token,
-                [this]() { return batch_index_ == batch_size_ && result_count_ == 0u; });
+                [this]() { return batch_index_ >= batch_size_ && result_count_ == 0u; });
             if (stop_token.stop_requested() && batch_index_ == 0u) {
                 return;
             }
@@ -372,7 +340,11 @@ try {
                 for (std::vector<std::uint_fast32_t> const &numeric : numeric_batch) {
                     python::list numeric_;
                     for (long const v : numeric) {
-                        numeric_.append(v);
+                        numeric_.append(static_cast<double>(v));
+                    }
+                    while (python::len(numeric_) < num_numeric_features_) {
+                        // Padding.
+                        numeric_.append(0.0);
                     }
                     for (long i = 2; i < num_numeric_features_; ++i) {
                         // Scaling.
@@ -420,7 +392,7 @@ try {
             python::object decision_batch_tmp = decide_(
                 sparse_batch_tmp, numeric_batch_tmp, progression_batch_tmp, candidates_batch_tmp);
 
-            for (std::size_t i = 0u; i < batch_size_; ++i) {
+            for (std::size_t i = 0u; i < batch_index_; ++i) {
                 long const decision = [&]() {
                     python::object decision = decision_batch_tmp[i].attr("item")();
                     python::extract<long> decision_(decision);
@@ -481,7 +453,16 @@ try {
     std::uint_fast16_t const decision = decision_batch_[my_index];
     --result_count_;
     if (result_count_ == 0u) {
-        ready_to_enqueue_.notify_all();
+        sparse_batch_.resize(batch_size_);
+        numeric_batch_.resize(batch_size_);
+        progression_batch_.resize(batch_size_);
+        candidates_batch_.resize(batch_size_);
+        if (batch_index_ < batch_size_) {
+            ready_to_enqueue_.notify_all();
+        }
+        else {
+            ready_to_run_.notify_all();
+        }
     }
 
     return decision;
