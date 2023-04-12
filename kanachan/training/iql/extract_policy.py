@@ -22,7 +22,7 @@ from apex.parallel import DistributedDataParallel, convert_syncbn_model
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from kanachan.training.common import initialize_logging, Dataset
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.bert.model_loader import load_model
+from kanachan.model_loader import load_model
 from kanachan.training.iql.policy_model import PolicyDecoder, PolicyModel
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 

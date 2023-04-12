@@ -2,7 +2,6 @@ import re
 import datetime
 import math
 from pathlib import Path
-import pickle
 import os
 import logging
 from typing import Optional, Tuple, Type, Callable
@@ -22,6 +21,7 @@ from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from kanachan.training.common import Dataset
 from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
 from kanachan.training.bert.encoder import Encoder
+from kanachan.model_loader import dump_model
 
 
 LossFunction = Callable[[torch.Tensor, float], torch.Tensor]
@@ -573,7 +573,7 @@ def main(
         device=config.device.type, dtype=dtype)
     decoder = decoder_type(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
-        activation_function=config.encoder.activation_function, dropout=config.decoder.dropout,
+        activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
         num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
     model = model_type(encoder, decoder)
     model.to(device=config.device.type, dtype=dtype)
@@ -687,9 +687,43 @@ def main(
         torch.save(decoder.state_dict(), snapshots_path / f'decoder{infix}.pth')
         torch.save(optimizer.state_dict(), snapshots_path / f'optimizer{infix}.pth')
 
-        model = model_type(encoder, decoder)
-        with open(snapshots_path / f'model{infix}.kanachan', 'wb') as f:
-            pickle.dump(model, f)
+        state = {
+            '__kanachan__': '11fc2bfe-c4c7-402e-b11e-7cb3ff6f9945',
+            'module': model_type.__module__,
+            'class': model_type.__qualname__,
+            'args': [
+                dump_model(
+                    [],
+                    {
+                        'position_encoder': config.encoder.position_encoder,
+                        'dimension': config.encoder.dimension,
+                        'num_heads': config.encoder.num_heads,
+                        'dim_feedforward': config.encoder.dim_feedforward,
+                        'activation_function': config.encoder.activation_function,
+                        'dropout': config.encoder.dropout,
+                        'num_layers': config.encoder.num_layers,
+                        'checkpointing': config.checkpointing,
+                        'device': config.device.type,
+                        'dtype': dtype
+                    },
+                    encoder
+                ),
+                dump_model(
+                    [],
+                    {
+                        'dimension': config.encoder.dimension,
+                        'dim_feedforward': config.decoder.dim_feedforward,
+                        'activation_function': config.decoder.activation_function,
+                        'dropout': config.decoder.dropout,
+                        'num_layers': config.decoder.num_layers,
+                        'device': config.device.type,
+                        'dtype': dtype
+                    },
+                    decoder
+                )
+            ]
+        }
+        torch.save(state, snapshots_path / f'model{infix}.kanachan')
 
     with SummaryWriter(log_dir=tensorboard_path) as summary_writer:
         _train(

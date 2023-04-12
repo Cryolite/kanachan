@@ -8,7 +8,7 @@ from typing import Tuple, List, Callable
 import sys
 import torch
 from torch import backends
-from torch import nn
+from kanachan.model_loader import load_model
 from kanachan.simulation import simulate
 
 
@@ -83,7 +83,7 @@ def _main():
         raise RuntimeError(f'{config.baseline_model}: Does not exist.')
     if not config.baseline_model.is_file():
         raise RuntimeError(f'{config.baseline_model}: Not a file.')
-    baseline_model: nn.Module = torch.load(config.baseline_model, map_location='cpu')
+    baseline_model = load_model(config.baseline_model, map_location='cpu')
     baseline_model.to(device=device, dtype=dtype)
     baseline_model.eval()
 
@@ -95,7 +95,7 @@ def _main():
         raise RuntimeError(f'{config.proposed_model}: Does not exist.')
     if not config.proposed_model.is_file():
         raise RuntimeError(f'{config.proposed_model}: Not a file.')
-    proposed_model: nn.Module = torch.load(config.proposed_model, map_location='cpu')
+    proposed_model = load_model(config.proposed_model, map_location='cpu')
     proposed_model.to(device=device, dtype=dtype)
     proposed_model.eval()
 

@@ -29,6 +29,7 @@ from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.qv_model import QVDecoder, QVModel
 from kanachan.training.iql.q_model import QModel
+from kanachan.model_loader import dump_object, dump_model
 
 
 Annotation = Tuple[
@@ -913,7 +914,83 @@ def _main(config: DictConfig) -> None:
         torch.save(qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer{infix}.pth')
 
         q_model = QModel(qv1_model=qv1_target_model, qv2_model=qv2_target_model)
-        torch.save(q_model, snapshots_path / f'q-model{infix}.kanachan')
+        state = dump_object(
+            q_model,
+            [
+                dump_object(
+                    q_model.qv1_model,
+                    [
+                        dump_model(
+                            q_model.qv1_model.encoder,
+                            [],
+                            {
+                                'position_encoder': config.encoder.position_encoder,
+                                'dimension': config.encoder.dimension,
+                                'num_heads': config.encoder.num_heads,
+                                'dim_feedforward': config.encoder.dim_feedforward,
+                                'num_layers': config.encoder.num_layers,
+                                'activation_function': config.encoder.activation_function,
+                                'dropout': config.encoder.dropout,
+                                'checkpointing': config.checkpointing,
+                                'device': config.device.type,
+                                'dtype': dtype
+                            }
+                        ),
+                        dump_model(
+                            q_model.qv1_model.decoder,
+                            [],
+                            {
+                                'dimension': config.encoder.dimension,
+                                'dim_feedforward': config.decoder.dim_feedforward,
+                                'activation_function': config.decoder.activation_function,
+                                'dropout': config.decoder.dropout,
+                                'num_layers': config.decoder.num_layers,
+                                'device': config.device.type,
+                                'dtype': dtype
+                            }
+                        )
+                    ],
+                    {}
+                ),
+                dump_object(
+                    q_model.qv2_model,
+                    [
+                        dump_model(
+                            q_model.qv2_model.encoder,
+                            [],
+                            {
+                                'position_encoder': config.encoder.position_encoder,
+                                'dimension': config.encoder.dimension,
+                                'num_heads': config.encoder.num_heads,
+                                'dim_feedforward': config.encoder.dim_feedforward,
+                                'num_layers': config.encoder.num_layers,
+                                'activation_function': config.encoder.activation_function,
+                                'dropout': config.encoder.dropout,
+                                'checkpointing': config.checkpointing,
+                                'device': config.device.type,
+                                'dtype': dtype
+                            }
+                        ),
+                        dump_model(
+                            q_model.qv2_model.decoder,
+                            [],
+                            {
+                                'dimension': config.encoder.dimension,
+                                'dim_feedforward': config.decoder.dim_feedforward,
+                                'activation_function': config.decoder.activation_function,
+                                'dropout': config.decoder.dropout,
+                                'num_layers': config.decoder.num_layers,
+                                'device': config.device.type,
+                                'dtype': dtype
+                            }
+                        )
+                    ],
+                    {}
+                )
+            ],
+            {}
+        )
+        torch.save(state, snapshots_path / f'q-model{infix}.kanachan')
 
     with SummaryWriter(log_dir=tensorboard_path) as summary_writer:
         _training(
