@@ -29,7 +29,7 @@ def dump_model(model: nn.Module, args: Iterable[Any], kwargs: Dict[str, Any]) ->
     return state
 
 
-def _load_model(state: Any) -> Any:
+def _load_model(state: Any, map_location: torch.device) -> Any:
     if not isinstance(state, dict):
         return state
     if '__kanachan__' not in state:
@@ -52,12 +52,14 @@ def _load_model(state: Any) -> Any:
     args = []
     if 'args' in state:
         for arg in state['args']:
-            args.append(_load_model(arg))
+            args.append(_load_model(arg, map_location))
 
     kwargs = {}
     if 'kwargs' in state:
         for name, value in state['kwargs'].items():
-            kwargs[name] = _load_model(value)
+            kwargs[name] = _load_model(value, map_location)
+    if map_location is not None and 'device' in kwargs:
+        kwargs['device'] = map_location
 
     model: nn.Module = _class(*args, **kwargs)
 
@@ -67,7 +69,7 @@ def _load_model(state: Any) -> Any:
     return model
 
 
-def load_model(model_path: Union[str, Path], map_location=None) -> nn.Module:
+def load_model(model_path: Union[str, Path], map_location: torch.device=None) -> nn.Module:
     if isinstance(model_path, str):
         model_path = Path(model_path)
     if not model_path.exists():
@@ -83,4 +85,4 @@ def load_model(model_path: Union[str, Path], map_location=None) -> nn.Module:
     if state['__kanachan__'] != '11fc2bfe-c4c7-402e-b11e-7cb3ff6f9945':
         raise RuntimeError(f'{model_path}: Not a Kanachan\'s model file.')
 
-    return _load_model(state)
+    return _load_model(state, map_location)
