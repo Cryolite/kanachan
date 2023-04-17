@@ -24,11 +24,11 @@ from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from mtadam import MTAdam
 from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import Dataset
-import kanachan.training.iql.config # pylint: disable=unused-import
-from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
+import kanachan.training.ilql.config # pylint: disable=unused-import
+from kanachan.training.ilql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.iql.qv_model import QVDecoder, QVModel
-from kanachan.training.iql.q_model import QModel
+from kanachan.training.ilql.qv_model import QVDecoder, QVModel
+from kanachan.training.ilql.q_model import QModel
 from kanachan.model_loader import dump_object, dump_model
 
 

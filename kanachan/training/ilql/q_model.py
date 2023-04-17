@@ -3,7 +3,7 @@
 import torch
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
-from kanachan.training.iql.qv_model import QVModel
+from kanachan.training.ilql.qv_model import QVModel
 
 
 class QModel(nn.Module):

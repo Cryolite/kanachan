@@ -16,7 +16,7 @@ from kanachan.training.constants import (
     NUM_TYPES_OF_PROGRESSION_FEATURES, MAX_LENGTH_OF_PROGRESSION_FEATURES,
     NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES)
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.iql.policy_model import (PolicyDecoder, PolicyModel,)
+from kanachan.training.ilql.policy_model import (PolicyDecoder, PolicyModel,)
 
 
 _NUM2TILE = (

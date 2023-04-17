@@ -11,7 +11,7 @@ from kanachan.training.constants import (
     MAX_LENGTH_OF_PROGRESSION_FEATURES, NUM_TYPES_OF_ACTIONS,
     MAX_NUM_ACTION_CANDIDATES
 )
-from kanachan.training.iql.reward_function import RewardFunction
+from kanachan.training.ilql.reward_function import RewardFunction
 
 
 class IteratorAdaptor(object):
