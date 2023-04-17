@@ -119,7 +119,8 @@ def _backward(
 
 def _step(
         *, qv_source_model: QVModel, q_loss: torch.Tensor, v_loss: torch.Tensor,
-        qv_optimizer: Optimizer, max_gradient_norm: float, grad_scaler: GradScaler) -> float:
+        qv_optimizer: Optimizer, max_gradient_norm: float,
+        grad_scaler: Optional[GradScaler]) -> float:
     if grad_scaler is not None:
         grad_scaler.unscale_(qv_optimizer)
     qv_gradient = nn.utils.parameters_to_vector(qv_source_model.parameters())

@@ -80,7 +80,7 @@ class MTAdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
-    initialize: bool = False
+    initialize: bool = True
 
 @dataclass
 class LambOptimizerConfig:
