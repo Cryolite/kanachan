@@ -82,12 +82,10 @@ def _training(
             continue
 
         if is_multiprocess:
-            barrier()
-
-        if is_multiprocess:
             assert world_size is not None
             assert rank is not None
             assert batch_size % world_size == 0
+            barrier()
             first = (batch_size // world_size) * rank
             last = (batch_size // world_size) * (rank + 1)
             annotation = tuple(x[first:last] for x in annotation)
@@ -98,7 +96,7 @@ def _training(
         local_batch_size = annotation[0].size(0)
         world_batch_size = batch_size
 
-        # Compute the Q target value to get the loss of the V model.
+        # Get the Q target value to compute the loss of the V model.
         with torch.no_grad():
             def _compute_q_target(q_target_model: nn.Module) -> Tuple[torch.Tensor, float]:
                 with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
@@ -116,7 +114,7 @@ def _training(
                     all_reduce(q_batch_mean)
                     q_batch_mean /= world_size
             
-                return q, q_batch_mean
+                return q, q_batch_mean.item()
 
             q1, q1_mean = _compute_q_target(q1_target_model)
             q2, q2_mean = _compute_q_target(q2_target_model)
@@ -210,47 +208,25 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if grad_scaler is not None:
-                grad_scaler.unscale_(value_optimizer)
-            v_gradient = nn.utils.parameters_to_vector(value_model.parameters())
-            _v_gradient_norm = torch.linalg.vector_norm(v_gradient)
-            v_gradient_norm = _v_gradient_norm.item()
-            nn.utils.clip_grad_norm_(
-                value_model.parameters(), v_max_gradient_norm, error_if_nonfinite=False)
-            if grad_scaler is None:
-                value_optimizer.step()
-            else:
-                grad_scaler.step(value_optimizer)
-                grad_scaler.update()
-            value_optimizer.zero_grad()
+            def _step(model: nn.Module, max_gradient_norm: float, optimizer: Optimizer) -> float:
+                if grad_scaler is not None:
+                    grad_scaler.unscale_(optimizer)
+                gradient = nn.utils.parameters_to_vector(model.parameters())
+                _gradient_norm: torch.Tensor = torch.linalg.vector_norm(gradient)
+                gradient_norm: float = _gradient_norm.item()
+                nn.utils.clip_grad_norm_(
+                    model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+                if grad_scaler is None:
+                    optimizer.step()
+                else:
+                    grad_scaler.step(optimizer)
+                    grad_scaler.update()
+                optimizer.zero_grad()
+                return gradient_norm
 
-            if grad_scaler is not None:
-                grad_scaler.unscale_(q1_optimizer)
-            q1_gradient = nn.utils.parameters_to_vector(q1_source_model.parameters())
-            _q1_gradient_norm = torch.linalg.vector_norm(q1_gradient)
-            q1_gradient_norm = _q1_gradient_norm.item()
-            nn.utils.clip_grad_norm_(
-                q1_source_model.parameters(), q_max_gradient_norm, error_if_nonfinite=False)
-            if grad_scaler is None:
-                q1_optimizer.step()
-            else:
-                grad_scaler.step(q1_optimizer)
-                grad_scaler.update()
-            q1_optimizer.zero_grad()
-
-            if grad_scaler is not None:
-                grad_scaler.unscale_(q2_optimizer)
-            q2_gradient = nn.utils.parameters_to_vector(q2_source_model.parameters())
-            _q2_gradient_norm = torch.linalg.vector_norm(q2_gradient)
-            q2_gradient_norm = _q2_gradient_norm.item()
-            nn.utils.clip_grad_norm_(
-                q2_source_model.parameters(), q_max_gradient_norm, error_if_nonfinite=False)
-            if grad_scaler is None:
-                q2_optimizer.step()
-            else:
-                grad_scaler.step(q2_optimizer)
-                grad_scaler.update()
-            q2_optimizer.zero_grad()
+            v_gradient_norm = _step(value_model, v_max_gradient_norm, value_optimizer)
+            q1_gradient_norm = _step(q1_source_model, q_max_gradient_norm, q1_optimizer)
+            q2_gradient_norm = _step(q2_source_model, q_max_gradient_norm, q2_optimizer)
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():
@@ -259,38 +235,42 @@ def _training(
                     q1_target_params *= (1.0 - target_update_rate)
                     q1_target_params += target_update_rate * q1_source_params
                     nn.utils.vector_to_parameters(q1_target_params, q1_target_model.parameters())
+                    del q1_source_params
+                    del q1_target_params
 
                     q2_source_params = nn.utils.parameters_to_vector(q2_source_model.parameters())
                     q2_target_params = nn.utils.parameters_to_vector(q2_target_model.parameters())
                     q2_target_params *= (1.0 - target_update_rate)
                     q2_target_params += target_update_rate * q2_source_params
                     nn.utils.vector_to_parameters(q2_target_params, q2_target_model.parameters())
+                    del q2_source_params
+                    del q2_target_params
 
-            logging.info(
-                'sample = %d, value loss = %E, Q1 loss = %E, Q2 loss = %E,'
-                ' value gradient norm = %E, Q1 gradient norm = %E, Q2 gradient norm = %E',
-                num_samples, value_loss_to_display, q1_loss_to_display, q2_loss_to_display,
-                v_gradient_norm, q1_gradient_norm, q2_gradient_norm)
             if is_main_process:
-                summary_writer.add_scalar('Value Loss', value_loss_to_display, num_samples)
-                summary_writer.add_scalar('Value Gradient Norm', v_gradient_norm, num_samples)
-                summary_writer.add_scalar('Value', value_mean.item(), num_samples)
-                summary_writer.add_scalars(
-                    'Q Loss', { 'Q1': q1_loss_to_display, 'Q2': q2_loss_to_display }, num_samples)
+                logging.info(
+                    'sample = %d, value loss = %E, Q1 loss = %E, Q2 loss = %E,'
+                    ' value gradient norm = %E, Q1 gradient norm = %E, Q2 gradient norm = %E',
+                    num_samples, value_loss_to_display, q1_loss_to_display, q2_loss_to_display,
+                    v_gradient_norm, q1_gradient_norm, q2_gradient_norm)
+                summary_writer.add_scalars('Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
                 summary_writer.add_scalars(
                     'Q Gradient Norm', { 'Q1': q1_gradient_norm, 'Q2': q2_gradient_norm },
                     num_samples)
-                summary_writer.add_scalars('Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
-        else:
-            logging.info(
-                'sample = %d, value loss = %E, Q1 loss = %E, Q2 loss = %E',
-                num_samples, value_loss_to_display, q1_loss_to_display, q2_loss_to_display)
-            if is_main_process:
-                summary_writer.add_scalar('Value Loss', value_loss_to_display, num_samples)
-                summary_writer.add_scalar('Value', value_mean.item(), num_samples)
                 summary_writer.add_scalars(
                     'Q Loss', { 'Q1': q1_loss_to_display, 'Q2': q2_loss_to_display }, num_samples)
+                summary_writer.add_scalar('Value', value_mean.item(), num_samples)
+                summary_writer.add_scalar('Value Gradient Norm', v_gradient_norm, num_samples)
+                summary_writer.add_scalar('Value Loss', value_loss_to_display, num_samples)
+        else:
+            if is_main_process:
+                logging.info(
+                    'sample = %d, value loss = %E, Q1 loss = %E, Q2 loss = %E',
+                    num_samples, value_loss_to_display, q1_loss_to_display, q2_loss_to_display)
                 summary_writer.add_scalars('Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
+                summary_writer.add_scalars(
+                    'Q Loss', { 'Q1': q1_loss_to_display, 'Q2': q2_loss_to_display }, num_samples)
+                summary_writer.add_scalar('Value', value_mean.item(), num_samples)
+                summary_writer.add_scalar('Value Loss', value_loss_to_display, num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
             snapshot_writer(
