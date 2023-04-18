@@ -113,7 +113,7 @@ def _training(
                     assert world_size is not None
                     all_reduce(q_batch_mean)
                     q_batch_mean /= world_size
-            
+
                 return q, q_batch_mean.item()
 
             q1, q1_mean = _compute_q_target(q1_target_model)
