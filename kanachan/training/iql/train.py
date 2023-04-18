@@ -7,7 +7,7 @@ from pathlib import Path
 import os
 import logging
 import sys
-from typing import Tuple, Optional, Callable
+from typing import Optional, Tuple, Callable
 from omegaconf import DictConfig
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -15,133 +15,25 @@ import torch
 from torch import backends
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim import Optimizer, SGD, Adam, RAdam
+from torch.optim import (Optimizer, SGD, Adam, RAdam)
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
-from torch.distributed import init_process_group, all_reduce, barrier
+from torch.distributed import (init_process_group, barrier, all_reduce)
 from torch.utils.tensorboard.writer import SummaryWriter
-from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from mtadam import MTAdam
-from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
+from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB)
+import kanachan.training.iql.config # pylint: disable=unused-import
+from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import Dataset
-import kanachan.training.ilql.config # pylint: disable=unused-import
-from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.ilql.qv_model import QVDecoder, QVModel
-from kanachan.training.ilql.q_model import QModel
-from kanachan.model_loader import dump_object, dump_model
-
-
-Annotation = Tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-
-
-def _get_q_target(
-        *, is_multiprocess: bool, world_size: Optional[int], annotation: Annotation,
-        qv_target_model: QVModel, local_batch_size: int) -> Tuple[torch.Tensor, float]:
-    q_target, _ = qv_target_model(*(annotation[:4]))
-    q_target: torch.Tensor
-    assert q_target.dim() == 2
-    assert q_target.size(0) == local_batch_size
-    assert q_target.size(1) == MAX_NUM_ACTION_CANDIDATES
-    q_target = q_target[torch.arange(local_batch_size), annotation[4]]
-    assert q_target.dim() == 1
-    assert q_target.size(0) == local_batch_size
-
-    q_batch_mean = q_target.detach().clone().mean()
-    if is_multiprocess:
-        assert world_size is not None
-        all_reduce(q_batch_mean)
-        q_batch_mean /= world_size
-
-    return q_target, q_batch_mean.item()
-
-
-BackwardResult = Tuple[torch.Tensor, torch.Tensor, float, float]
-
-
-def _backward(
-        *, is_multiprocess: bool, world_size: Optional[int], annotation: Annotation,
-        device: torch.device, dtype: torch.dtype, amp_dtype: torch.dtype, qv_source_model: QVModel,
-        qv_optimizer: Optimizer, reward: float, discount_factor: float, expectile: float,
-        v_loss_scaling: float, gradient_accumulation_steps: int, grad_scaler: GradScaler,
-        q_target: float, local_batch_size: int) -> BackwardResult:
-    with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
-        q, v = qv_source_model(*(annotation[:4]))
-    q: torch.Tensor
-    v: torch.Tensor
-    assert q.dim() == 2
-    assert q.size(0) == local_batch_size
-    assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
-    assert v.dim() == 1
-    assert v.size(0) == local_batch_size
-    q = q[torch.arange(local_batch_size), annotation[4]]
-
-    v_batch_mean = v.detach().clone().mean()
-    if is_multiprocess:
-        all_reduce(v_batch_mean)
-        v_batch_mean /= world_size
-
-    with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
-        _, vv = qv_source_model(*(annotation[5:9]))
-    vv: torch.Tensor
-    is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES)
-    vv = torch.where(is_terminal_state, torch.zeros_like(vv), vv)
-    assert vv.dim() == 1
-    assert vv.size(0) == local_batch_size
-
-    q_loss = torch.square(reward + discount_factor * vv - q)
-    q_loss = torch.mean(q_loss)
-    v_loss = q_target - v
-    v_loss = torch.where(
-        v_loss < 0.0, (1.0 - expectile) * torch.square(v_loss),
-        expectile * torch.square(v_loss))
-    v_loss = torch.mean(v_loss)
-    qv_loss = q_loss + v_loss_scaling * v_loss
-
-    qv_batch_loss = qv_loss.detach().clone().mean()
-    if is_multiprocess:
-        all_reduce(qv_batch_loss)
-        qv_batch_loss /= world_size
-
-    if math.isnan(qv_loss.item()):
-        raise RuntimeError('QV loss becomes NaN.')
-
-    qv_loss /= gradient_accumulation_steps
-    if not isinstance(qv_optimizer, MTAdam):
-        if grad_scaler is None:
-            qv_loss.backward()
-        else:
-            grad_scaler.scale(qv_loss).backward()
-
-    return q_loss, v_loss, v_batch_mean.item(), qv_batch_loss.item()
-
-
-def _step(
-        *, qv_source_model: QVModel, q_loss: torch.Tensor, v_loss: torch.Tensor,
-        qv_optimizer: Optimizer, max_gradient_norm: float,
-        grad_scaler: Optional[GradScaler]) -> float:
-    if grad_scaler is not None:
-        grad_scaler.unscale_(qv_optimizer)
-    qv_gradient = nn.utils.parameters_to_vector(qv_source_model.parameters())
-    qv_gradient_norm: float = torch.linalg.vector_norm(qv_gradient).item()
-    nn.utils.clip_grad_norm_(
-        qv_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-    if isinstance(qv_optimizer, MTAdam):
-        qv_optimizer.step((q_loss, v_loss), (1.0, 1.0), None)
-    else:
-        if grad_scaler is None:
-            qv_optimizer.step()
-        else:
-            grad_scaler.step(qv_optimizer)
-            grad_scaler.update()
-    qv_optimizer.zero_grad()
-    return qv_gradient_norm
+from kanachan.training.iql.value_model import (ValueDecoder, ValueModel)
+from kanachan.training.iql.q_model import (QDecoder, QModel)
+from kanachan.training.iql.qq_model import QQModel
+from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
+from kanachan.model_loader import dump_model, dump_object
 
 
 SnapshotWriter = Callable[
-    [QModel, QModel, QModel, QModel, Optimizer, Optimizer, Optional[int]],
+    [nn.Module, nn.Module, nn.Module, QModel, QModel, Optimizer, Optimizer, Optimizer, Optional[int]],
     None
 ]
 
@@ -149,13 +41,14 @@ SnapshotWriter = Callable[
 def _training(
         *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
         is_main_process: bool, training_data: Path, num_workers: int, device: torch.device,
-        dtype: torch.dtype, amp_dtype: torch.dtype, qv1_source_model: QVModel,
-        qv2_source_model: QVModel, qv1_target_model: QVModel, qv2_target_model: QVModel,
-        reward_plugin: Path, discount_factor: float, expectile: float, target_update_interval: int,
-        target_update_rate: float, batch_size: int, v_loss_scaling: float,
-        gradient_accumulation_steps: int, max_gradient_norm: float, qv1_optimizer: Optimizer,
-        qv2_optimizer: Optimizer, snapshot_interval: int, num_samples: int,
-        summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
+        dtype: torch.dtype, amp_dtype: torch.dtype, value_model: nn.Module,
+        q1_source_model: nn.Module, q2_source_model: nn.Module, q1_target_model: nn.Module,
+        q2_target_model: nn.Module, reward_plugin: Path, discount_factor: float, expectile: float,
+        batch_size: int, gradient_accumulation_steps: int, v_max_gradient_norm: float,
+        q_max_gradient_norm: float, value_optimizer: Optimizer, q1_optimizer: Optimizer,
+        q2_optimizer: Optimizer, target_update_interval: int, target_update_rate: float,
+        snapshot_interval: int, num_samples: int, summary_writer: SummaryWriter,
+        snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
     # Load the reward plugin.
@@ -179,10 +72,10 @@ def _training(
     batch_count = 0
 
     grad_scaler = None
-    if device != 'cpu' and not isinstance(qv1_optimizer, MTAdam):
-        assert not isinstance(qv2_optimizer, MTAdam)
+    if device != 'cpu':
         grad_scaler = GradScaler()
 
+    batch_count = 0
     for annotation in data_loader:
         if num_consumed_samples < num_samples:
             num_consumed_samples += batch_size
@@ -205,99 +98,204 @@ def _training(
         local_batch_size = annotation[0].size(0)
         world_batch_size = batch_size
 
-        # Compute the Q target value.
-        with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
-            q1_target, q1_batch_mean = _get_q_target(
-                is_multiprocess=is_multiprocess, world_size=world_size,
-                annotation=annotation, qv_target_model=qv1_target_model,
-                local_batch_size=local_batch_size)
-            q2_target, q2_batch_mean = _get_q_target(
-                is_multiprocess=is_multiprocess, world_size=world_size,
-                annotation=annotation, qv_target_model=qv2_target_model,
-                local_batch_size=local_batch_size)
+        # Compute the Q target value to get the loss of the V model.
+        with torch.no_grad():
+            def _compute_q_target(q_target_model: nn.Module) -> Tuple[torch.Tensor, float]:
+                with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+                    q: torch.Tensor = q_target_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
+                assert q.dim() == 2
+                assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
+                assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
+                q = q[torch.arange(local_batch_size), annotation[4]] # pylint: disable=cell-var-from-loop
+                assert q.dim() == 1
+                assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
 
-            q_target = torch.minimum(q1_target, q2_target)
-            q_target = q_target.detach()
+                q_batch_mean = q.detach().clone().mean()
+                if is_multiprocess:
+                    assert world_size is not None
+                    all_reduce(q_batch_mean)
+                    q_batch_mean /= world_size
+            
+                return q, q_batch_mean
 
+            q1, q1_mean = _compute_q_target(q1_target_model)
+            q2, q2_mean = _compute_q_target(q2_target_model)
+
+            q = torch.minimum(q1, q2)
+            q = q.detach()
+            assert(q.dim() == 1)
+            assert(q.size(0) == local_batch_size)
+
+        # Backprop for the V model.
+        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+            value: torch.Tensor = value_model(*(annotation[:4]))
+        assert(value.dim() == 1)
+        assert(value.size(0) == local_batch_size)
+
+        value_mean = value.detach().clone().mean()
+        if is_multiprocess:
+            assert world_size is not None
+            all_reduce(value_mean)
+            value_mean /= world_size
+
+        value_loss = q - value
+        value_loss = torch.where(
+            value_loss < 0.0, (1.0 - expectile) * (value_loss ** 2.0),
+            expectile * (value_loss ** 2.0))
+        value_loss = torch.mean(value_loss)
+        if math.isnan(value_loss.item()):
+            raise RuntimeError('Value loss becomes NaN.')
+
+        _value_loss = value_loss.detach().clone()
+        if is_multiprocess:
+            assert world_size is not None
+            all_reduce(_value_loss)
+            _value_loss /= world_size
+        value_loss_to_display = _value_loss.item()
+
+        value_loss /= gradient_accumulation_steps
+        if grad_scaler is None:
+            value_loss.backward()
+        else:
+            grad_scaler.scale(value_loss).backward()
+
+        # Get the reward to compute the loss of the Q source models.
         reward = annotation[9]
 
-        # Backprop for the QV1 source model.
-        q1_loss, v1_loss, v1_batch_mean, qv1_batch_loss = _backward(
-            is_multiprocess=is_multiprocess, world_size=world_size, annotation=annotation,
-            device=device, dtype=dtype, amp_dtype=amp_dtype, qv_source_model=qv1_source_model,
-            qv_optimizer=qv1_optimizer, reward=reward, discount_factor=discount_factor,
-            expectile=expectile, v_loss_scaling=v_loss_scaling,
-            gradient_accumulation_steps=gradient_accumulation_steps, grad_scaler=grad_scaler,
-            q_target=q_target, local_batch_size=local_batch_size)
+        # Get V to compute the loss of the Q source models.
+        with torch.no_grad():
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+                value = value_model(*(annotation[5:9]))
+            assert(value.dim() == 1)
+            assert(value.size(0) == local_batch_size)
+            value *= discount_factor
+            value = value.detach()
 
-        # Backprop for the QV2 source model.
-        q2_loss, v2_loss, v2_batch_mean, qv2_batch_loss = _backward(
-            is_multiprocess=is_multiprocess, world_size=world_size, annotation=annotation,
-            device=device, dtype=dtype, amp_dtype=amp_dtype, qv_source_model=qv2_source_model,
-            qv_optimizer=qv2_optimizer, reward=reward, discount_factor=discount_factor,
-            expectile=expectile, v_loss_scaling=v_loss_scaling,
-            gradient_accumulation_steps=gradient_accumulation_steps, grad_scaler=grad_scaler,
-            q_target=q_target, local_batch_size=local_batch_size)
+        def _backprop(q_source_model: nn.Module) -> float:
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+                q: torch.Tensor = q_source_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
+            assert q.dim() == 2
+            assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
+            assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
+            q = q[torch.arange(local_batch_size), annotation[4]] # pylint: disable=cell-var-from-loop
+
+            q_loss = reward + value - q # pylint: disable=cell-var-from-loop
+            q_loss = q_loss ** 2.0
+            q_loss = torch.mean(q_loss)
+            if math.isnan(q_loss.item()):
+                raise RuntimeError('Q loss becomes NaN.')
+
+            _q_loss = q_loss.detach().clone()
+            if is_multiprocess:
+                all_reduce(_q_loss)
+                _q_loss /= world_size
+            q_loss_to_display = _q_loss.item()
+
+            q_loss /= gradient_accumulation_steps
+            if grad_scaler is None:
+                q_loss.backward()
+            else:
+                grad_scaler.scale(q_loss).backward()
+
+            return q_loss_to_display
+
+        # Backprop for the Q1 source model.
+        q1_loss_to_display = _backprop(q1_source_model)
+
+        # Backprop for the Q2 source model.
+        q2_loss_to_display = _backprop(q2_source_model)
 
         num_samples += world_batch_size
         num_consumed_samples += world_batch_size
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            qv1_gradient_norm = _step(
-                qv_source_model=qv1_source_model, q_loss=q1_loss, v_loss=v1_loss,
-                qv_optimizer=qv1_optimizer, max_gradient_norm=max_gradient_norm,
-                grad_scaler=grad_scaler)
-            qv2_gradient_norm = _step(
-                qv_source_model=qv2_source_model, q_loss=q2_loss, v_loss=v2_loss,
-                qv_optimizer=qv2_optimizer, max_gradient_norm=max_gradient_norm,
-                grad_scaler=grad_scaler)
+            if grad_scaler is not None:
+                grad_scaler.unscale_(value_optimizer)
+            v_gradient = nn.utils.parameters_to_vector(value_model.parameters())
+            _v_gradient_norm = torch.linalg.vector_norm(v_gradient)
+            v_gradient_norm = _v_gradient_norm.item()
+            nn.utils.clip_grad_norm_(
+                value_model.parameters(), v_max_gradient_norm, error_if_nonfinite=False)
+            if grad_scaler is None:
+                value_optimizer.step()
+            else:
+                grad_scaler.step(value_optimizer)
+                grad_scaler.update()
+            value_optimizer.zero_grad()
+
+            if grad_scaler is not None:
+                grad_scaler.unscale_(q1_optimizer)
+            q1_gradient = nn.utils.parameters_to_vector(q1_source_model.parameters())
+            _q1_gradient_norm = torch.linalg.vector_norm(q1_gradient)
+            q1_gradient_norm = _q1_gradient_norm.item()
+            nn.utils.clip_grad_norm_(
+                q1_source_model.parameters(), q_max_gradient_norm, error_if_nonfinite=False)
+            if grad_scaler is None:
+                q1_optimizer.step()
+            else:
+                grad_scaler.step(q1_optimizer)
+                grad_scaler.update()
+            q1_optimizer.zero_grad()
+
+            if grad_scaler is not None:
+                grad_scaler.unscale_(q2_optimizer)
+            q2_gradient = nn.utils.parameters_to_vector(q2_source_model.parameters())
+            _q2_gradient_norm = torch.linalg.vector_norm(q2_gradient)
+            q2_gradient_norm = _q2_gradient_norm.item()
+            nn.utils.clip_grad_norm_(
+                q2_source_model.parameters(), q_max_gradient_norm, error_if_nonfinite=False)
+            if grad_scaler is None:
+                q2_optimizer.step()
+            else:
+                grad_scaler.step(q2_optimizer)
+                grad_scaler.update()
+            q2_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():
-                    param1_source = nn.utils.parameters_to_vector(qv1_source_model.parameters())
-                    param1_target = nn.utils.parameters_to_vector(qv1_target_model.parameters())
-                    param1_target *= (1.0 - target_update_rate)
-                    param1_target += target_update_rate * param1_source
-                    nn.utils.vector_to_parameters(param1_target, qv1_target_model.parameters())
+                    q1_source_params = nn.utils.parameters_to_vector(q1_source_model.parameters())
+                    q1_target_params = nn.utils.parameters_to_vector(q1_target_model.parameters())
+                    q1_target_params *= (1.0 - target_update_rate)
+                    q1_target_params += target_update_rate * q1_source_params
+                    nn.utils.vector_to_parameters(q1_target_params, q1_target_model.parameters())
 
-                    param2_source = nn.utils.parameters_to_vector(qv2_source_model.parameters())
-                    param2_target = nn.utils.parameters_to_vector(qv2_target_model.parameters())
-                    param2_target *= (1.0 - target_update_rate)
-                    param2_target += target_update_rate * param2_source
-                    nn.utils.vector_to_parameters(param2_target, qv2_target_model.parameters())
+                    q2_source_params = nn.utils.parameters_to_vector(q2_source_model.parameters())
+                    q2_target_params = nn.utils.parameters_to_vector(q2_target_model.parameters())
+                    q2_target_params *= (1.0 - target_update_rate)
+                    q2_target_params += target_update_rate * q2_source_params
+                    nn.utils.vector_to_parameters(q2_target_params, q2_target_model.parameters())
 
+            logging.info(
+                'sample = %d, value loss = %E, Q1 loss = %E, Q2 loss = %E,'
+                ' value gradient norm = %E, Q1 gradient norm = %E, Q2 gradient norm = %E',
+                num_samples, value_loss_to_display, q1_loss_to_display, q2_loss_to_display,
+                v_gradient_norm, q1_gradient_norm, q2_gradient_norm)
             if is_main_process:
-                logging.info(
-                    'sample = %s, QV1 loss = %s, QV2 loss = %s, '
-                    'QV1 gradient norm = %s, QV2 gradient norm = %s',
-                    num_samples, qv1_batch_loss, qv2_batch_loss, qv1_gradient_norm,
-                    qv2_gradient_norm)
+                summary_writer.add_scalar('Value Loss', value_loss_to_display, num_samples)
+                summary_writer.add_scalar('Value Gradient Norm', v_gradient_norm, num_samples)
+                summary_writer.add_scalar('Value', value_mean.item(), num_samples)
                 summary_writer.add_scalars(
-                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean }, num_samples)
+                    'Q Loss', { 'Q1': q1_loss_to_display, 'Q2': q2_loss_to_display }, num_samples)
                 summary_writer.add_scalars(
-                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean }, num_samples)
-                summary_writer.add_scalars(
-                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss }, num_samples)
-                summary_writer.add_scalars(
-                    'QV Gradient Norm',
-                    { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm }, num_samples)
+                    'Q Gradient Norm', { 'Q1': q1_gradient_norm, 'Q2': q2_gradient_norm },
+                    num_samples)
+                summary_writer.add_scalars('Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
         else:
+            logging.info(
+                'sample = %d, value loss = %E, Q1 loss = %E, Q2 loss = %E',
+                num_samples, value_loss_to_display, q1_loss_to_display, q2_loss_to_display)
             if is_main_process:
-                logging.info(
-                    'sample = %s, QV1 loss = %s, QV2 loss = %s',
-                    num_samples, qv1_batch_loss, qv2_batch_loss)
+                summary_writer.add_scalar('Value Loss', value_loss_to_display, num_samples)
+                summary_writer.add_scalar('Value', value_mean.item(), num_samples)
                 summary_writer.add_scalars(
-                    'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean }, num_samples)
-                summary_writer.add_scalars(
-                    'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean }, num_samples)
-                summary_writer.add_scalars(
-                    'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss }, num_samples)
+                    'Q Loss', { 'Q1': q1_loss_to_display, 'Q2': q2_loss_to_display }, num_samples)
+                summary_writer.add_scalars('Q', { 'Q1': q1_mean, 'Q2': q2_mean }, num_samples)
 
         if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
             snapshot_writer(
-                qv1_source_model, qv2_source_model, qv1_target_model, qv2_target_model,
-                qv1_optimizer, qv2_optimizer, num_samples)
+                value_model, q1_source_model, q2_source_model, q1_target_model, q2_target_model,
+                value_optimizer, q1_optimizer, q2_optimizer, num_samples)
             last_snapshot = num_samples
 
     if is_multiprocess:
@@ -308,9 +306,8 @@ def _training(
     if is_main_process:
         logging.info('A training has finished (elapsed time = %s).', elapsed_time)
         snapshot_writer(
-            qv1_source_model, qv2_source_model,
-            qv1_target_model, qv2_target_model,
-            qv1_optimizer, qv2_optimizer)
+            value_model, q1_source_model, q2_source_model, q1_target_model, q2_target_model,
+            value_optimizer, q1_optimizer, q2_optimizer)
 
 
 @hydra.main(version_base=None, config_name='config')
@@ -480,7 +477,8 @@ def _main(config: DictConfig) -> None:
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
                 match = re.search(
-                    '^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer)(?:\\.(\\d+))?\\.pth$', child)
+                    '^(?:value|q[12]-source|q[12]-target|value-optimizer|q[12]-optimizer)(?:\\.(\\d+))?\\.pth$',
+                    child)
                 if match is None:
                     continue
                 if match[1] is None:
@@ -499,37 +497,47 @@ def _main(config: DictConfig) -> None:
             num_samples = config.initial_model_index
             infix = f'.{num_samples}'
 
-        qv1_source_snapshot_path = config.initial_model_prefix / f'qv1-source{infix}.pth'
-        if not qv1_source_snapshot_path.exists():
-            raise RuntimeError(f'{qv1_source_snapshot_path}: Does not exist.')
-        if not qv1_source_snapshot_path.is_file():
-            raise RuntimeError(f'{qv1_source_snapshot_path}: Not a file.')
+        value_snapshot_path: Path = config.initial_model_prefix / f'value{infix}.pth'
+        if not value_snapshot_path.exists():
+            raise RuntimeError(f'{value_snapshot_path}: Does not exist.')
+        if not value_snapshot_path.is_file():
+            raise RuntimeError(f'{value_snapshot_path}: Not a file.')
 
-        qv2_source_snapshot_path = config.initial_model_prefix / f'qv2-source{infix}.pth'
-        if not qv2_source_snapshot_path.exists():
-            raise RuntimeError(f'{qv2_source_snapshot_path}: Does not exist.')
-        if not qv2_source_snapshot_path.is_file():
-            raise RuntimeError(f'{qv2_source_snapshot_path}: Not a file.')
+        q1_source_snapshot_path: Path = config.initial_model_prefix / f'q1-source{infix}.pth'
+        if not q1_source_snapshot_path.exists():
+            raise RuntimeError(f'{q1_source_snapshot_path}: Does not exist.')
+        if not q1_source_snapshot_path.is_file():
+            raise RuntimeError(f'{q1_source_snapshot_path}: Not a file.')
 
-        qv1_target_snapshot_path = config.initial_model_prefix / f'qv1-target{infix}.pth'
-        if not qv1_target_snapshot_path.exists():
-            raise RuntimeError(f'{qv1_target_snapshot_path}: Does not exist.')
-        if not qv1_target_snapshot_path.is_file():
-            raise RuntimeError(f'{qv1_target_snapshot_path}: Not a file.')
+        q2_source_snapshot_path: Path = config.initial_model_prefix / f'q2-source{infix}.pth'
+        if not q2_source_snapshot_path.exists():
+            raise RuntimeError(f'{q2_source_snapshot_path}: Does not exist.')
+        if not q2_source_snapshot_path.is_file():
+            raise RuntimeError(f'{q2_source_snapshot_path}: Not a file.')
 
-        qv2_target_snapshot_path = config.initial_model_prefix / f'qv2-target{infix}.pth'
-        if not qv2_target_snapshot_path.exists():
-            raise RuntimeError(f'{qv2_target_snapshot_path}: Does not exist.')
-        if not qv2_target_snapshot_path.is_file():
-            raise RuntimeError(f'{qv2_target_snapshot_path}: Not a file.')
+        q1_target_snapshot_path: Path = config.initial_model_prefix / f'q1-target{infix}.pth'
+        if not q1_target_snapshot_path.exists():
+            raise RuntimeError(f'{q1_target_snapshot_path}: Does not exist.')
+        if not q1_target_snapshot_path.is_file():
+            raise RuntimeError(f'{q1_target_snapshot_path}: Not a file.')
 
-        qv1_optimizer_snapshot_path = config.initial_model_prefix / f'qv1-optimizer{infix}.pth'
-        if not qv1_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
-            qv1_optimizer_snapshot_path = None
+        q2_target_snapshot_path: Path = config.initial_model_prefix / f'q2-target{infix}.pth'
+        if not q2_target_snapshot_path.exists():
+            raise RuntimeError(f'{q2_target_snapshot_path}: Does not exist.')
+        if not q2_target_snapshot_path.is_file():
+            raise RuntimeError(f'{q2_target_snapshot_path}: Not a file.')
 
-        qv2_optimizer_snapshot_path = config.initial_model_prefix / f'qv2-optimizer{infix}.pth'
-        if not qv2_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
-            qv2_optimizer_snapshot_path = None
+        value_optimizer_snapshot_path: Optional[Path] = config.initial_model_prefix / f'value-optimizer{infix}.pth'
+        if not value_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
+            value_optimizer_snapshot_path = None
+
+        q1_optimizer_snapshot_path: Optional[Path] = config.initial_model_prefix / f'q1-optimizer{infix}.pth'
+        if not q1_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
+            q1_optimizer_snapshot_path = None
+
+        q2_optimizer_snapshot_path: Optional[Path] = config.initial_model_prefix / f'q2-optimizer{infix}.pth'
+        if not q2_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
+            q2_optimizer_snapshot_path = None
 
     if not config.reward_plugin.exists():
         raise RuntimeError(f'{config.reward_plugin}: Does not exist.')
@@ -541,9 +549,6 @@ def _main(config: DictConfig) -> None:
 
     if config.expectile <= 0.0 or 1.0 <= config.expectile:
         raise RuntimeError(f'{config.expectile}: An invalid value for `expectile`.')
-
-    if config.v_loss_scaling < 0.0 or 1.0 < config.v_loss_scaling:
-        raise RuntimeError(f'{config.v_loss_scaling}: An invalid value for `v_loss_scaling`.')
 
     if config.batch_size < 1:
         raise RuntimeError(f'{config.batch_size}: An invalid value for `batch_size`.')
@@ -557,8 +562,13 @@ def _main(config: DictConfig) -> None:
     if config.gradient_accumulation_steps >= 2 and config.optimizer.type == 'mtadam':
         raise RuntimeError('`mtadam` does not support for gradient accumulation.')
 
-    if config.max_gradient_norm <= 0.0:
-        raise RuntimeError(f'{config.max_gradient_norm}: An invalid value for `max_gradient_norm`.')
+    if config.q_max_gradient_norm <= 0.0:
+        raise RuntimeError(
+            f'{config.q_max_gradient_norm}: An invalid value for `q_max_gradient_norm`.')
+
+    if config.v_max_gradient_norm <= 0.0:
+        raise RuntimeError(
+            f'{config.v_max_gradient_norm}: An invalid value for `v_max_gradient_norm`.')
 
     if config.optimizer.type in ('sgd',):
         if config.optimizer.momentum is None:
@@ -655,7 +665,6 @@ def _main(config: DictConfig) -> None:
         logging.info('Reward plugin: %s', config.reward_plugin)
         logging.info('Discount factor: %f', config.discount_factor)
         logging.info('Expectile: %f', config.expectile)
-        logging.info('V loss scaling: %E', config.v_loss_scaling)
         logging.info('Checkpointing: %s', config.checkpointing)
         if world_size is None:
             logging.info('Batch size: %d', config.batch_size)
@@ -665,7 +674,8 @@ def _main(config: DictConfig) -> None:
         logging.info('# of steps for gradient accumulation: %d', config.gradient_accumulation_steps)
         logging.info(
             'Virtual batch size: %d', config.batch_size * config.gradient_accumulation_steps)
-        logging.info('Norm threshold for gradient clipping: %E', config.max_gradient_norm)
+        logging.info('Norm threshold for gradient clipping on Q: %E', config.q_max_gradient_norm)
+        logging.info('Norm threshold for gradient clipping on V: %E', config.v_max_gradient_norm)
         logging.info('Optimizer: %s', config.optimizer.type)
         if config.optimizer in ('sgd',):
             logging.info('Momentum factor: %f', config.optimizer.momentum)
@@ -675,73 +685,90 @@ def _main(config: DictConfig) -> None:
         logging.info('Target update interval: %d', config.target_update_interval)
         logging.info('Target update rate: %f', config.target_update_rate)
         if config.initial_model_prefix is not None:
-            logging.info('Initial QV1 source network snapshot: %s', qv1_source_snapshot_path)
-            logging.info('Initial QV2 source network snapshot: %s', qv2_source_snapshot_path)
-            logging.info('Initial QV1 target network snapshot: %s', qv1_target_snapshot_path)
-            logging.info('Initial QV2 target network snapshot: %s', qv2_target_snapshot_path)
-            if qv1_optimizer_snapshot_path is not None:
-                logging.info('Initial QV1 optimizer snapshot: %s', qv1_optimizer_snapshot_path)
-            if qv2_optimizer_snapshot_path is not None:
-                logging.info('Initial QV2 optimizer snapshot: %s', qv2_optimizer_snapshot_path)
+            logging.info('Initial value network snapshot: %s', value_snapshot_path)
+            logging.info('Initial Q1 source network snapshot: %s', q1_source_snapshot_path)
+            logging.info('Initial Q2 source network snapshot: %s', q2_source_snapshot_path)
+            logging.info('Initial Q1 target network snapshot: %s', q1_target_snapshot_path)
+            logging.info('Initial Q2 target network snapshot: %s', q2_target_snapshot_path)
+            if value_optimizer_snapshot_path is not None:
+                logging.info('Initial value optimizer snapshot: %s', value_optimizer_snapshot_path)
+            if q1_optimizer_snapshot_path is not None:
+                logging.info('Initial Q1 optimizer snapshot: %s', q1_optimizer_snapshot_path)
+            if q2_optimizer_snapshot_path is not None:
+                logging.info('Initial Q2 optimizer snapshot: %s', q2_optimizer_snapshot_path)
         logging.info('Experiment output: %s', experiment_path)
         if config.snapshot_interval == 0:
             logging.info('Snapshot interval: N/A')
         else:
             logging.info('Snapshot interval: %d', config.snapshot_interval)
 
-    qv1_source_encoder = Encoder(
+    value_encoder = Encoder(
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
+        num_layers=config.encoder.num_layers,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device.type, dtype=dtype)
-    qv1_source_decoder = QVDecoder(
+        checkpointing=config.checkpointing, device=config.device.type, dtype=dtype)
+    value_decoder = ValueDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
         num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
-    qv1_source_model = QVModel(qv1_source_encoder, qv1_source_decoder)
-    qv1_source_model.to(device=config.device.type, dtype=dtype)
+    value_model = ValueModel(value_encoder, value_decoder)
+    value_model.to(device=config.device.type, dtype=dtype)
 
-    qv2_source_encoder = Encoder(
+    q1_source_encoder = Encoder(
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
+        num_layers=config.encoder.num_layers,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device.type, dtype=dtype)
-    qv2_source_decoder = QVDecoder(
+        checkpointing=config.checkpointing, device=config.device.type, dtype=dtype)
+    q1_source_decoder = QDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
         num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
-    qv2_source_model = QVModel(qv2_source_encoder, qv2_source_decoder)
-    qv2_source_model.to(device=config.device.type, dtype=dtype)
+    q1_source_model = QModel(q1_source_encoder, q1_source_decoder)
+    q1_source_model.to(device=config.device.type, dtype=dtype)
 
-    qv1_target_encoder = Encoder(
+    q2_source_encoder = Encoder(
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
+        num_layers=config.encoder.num_layers,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device.type, dtype=dtype)
-    qv1_target_decoder = QVDecoder(
+        checkpointing=config.checkpointing, device=config.device.type, dtype=dtype)
+    q2_source_decoder = QDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
         num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
-    qv1_target_model = QVModel(qv1_target_encoder, qv1_target_decoder)
-    qv1_target_model.requires_grad_(False)
-    qv1_target_model.to(device=config.device.type, dtype=dtype)
+    q2_source_model = QModel(q2_source_encoder, q2_source_decoder)
+    q2_source_model.to(device=config.device.type, dtype=dtype)
 
-    qv2_target_encoder = Encoder(
+    q1_target_encoder = Encoder(
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
+        num_layers=config.encoder.num_layers,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device.type, dtype=dtype)
-    qv2_target_decoder = QVDecoder(
+        checkpointing=config.checkpointing, device=config.device.type, dtype=dtype)
+    q1_target_decoder = QDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
         num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
-    qv2_target_model = QVModel(qv2_target_encoder, qv2_target_decoder)
-    qv2_target_model.requires_grad_(False)
-    qv2_target_model.to(device=config.device.type, dtype=dtype)
+    q1_target_model = QModel(q1_target_encoder, q1_target_decoder)
+    q1_target_model.requires_grad_(False)
+    q1_target_model.to(device=config.device.type, dtype=dtype)
+
+    q2_target_encoder = Encoder(
+        position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
+        num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
+        num_layers=config.encoder.num_layers,
+        activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
+        checkpointing=config.checkpointing, device=config.device.type, dtype=dtype)
+    q2_target_decoder = QDecoder(
+        dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
+        activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
+        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
+    q2_target_model = QModel(q2_target_encoder, q2_target_decoder)
+    q2_target_model.requires_grad_(False)
+    q2_target_model.to(device=config.device.type, dtype=dtype)
+
 
     if config.optimizer.type == 'sgd':
         def construct_optimizer(model: nn.Module) -> Optimizer:
@@ -764,18 +791,15 @@ def _main(config: DictConfig) -> None:
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return RAdam(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
-    elif config.optimizer.type == 'mtadam':
-        def construct_optimizer(model: nn.Module) -> Optimizer:
-            return MTAdam(
-                model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
     elif config.optimizer.type == 'lamb':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             return FusedLAMB(
                 model.parameters(), lr=config.optimizer.learning_rate, eps=config.optimizer.epsilon)
     else:
         raise NotImplementedError(config.optimizer.type)
-    qv1_optimizer = construct_optimizer(qv1_source_model)
-    qv2_optimizer = construct_optimizer(qv2_source_model)
+    value_optimizer = construct_optimizer(value_model)
+    q1_optimizer = construct_optimizer(q1_source_model)
+    q2_optimizer = construct_optimizer(q2_source_model)
 
     if config.encoder.load_from is not None:
         assert config.initial_model is None
@@ -783,19 +807,17 @@ def _main(config: DictConfig) -> None:
         assert config.initial_model_index is None
 
         encoder_state_dict = torch.load(config.encoder.load_from, map_location='cpu')
-        encoder_new_state_dict = {}
-        for key, value in encoder_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            encoder_new_state_dict[new_key] = value
-        qv1_source_encoder.load_state_dict(encoder_new_state_dict)
-        qv2_source_encoder.load_state_dict(encoder_new_state_dict)
-        qv1_target_encoder.load_state_dict(encoder_new_state_dict)
-        qv2_target_encoder.load_state_dict(encoder_new_state_dict)
+        value_encoder.load_state_dict(encoder_state_dict)
+        q1_source_encoder.load_state_dict(encoder_state_dict)
+        q2_source_encoder.load_state_dict(encoder_state_dict)
+        q1_target_encoder.load_state_dict(encoder_state_dict)
+        q2_target_encoder.load_state_dict(encoder_state_dict)
         if config.device.type != 'cpu':
-            qv1_source_encoder.cuda()
-            qv2_source_encoder.cuda()
-            qv1_target_encoder.cuda()
-            qv2_target_encoder.cuda()
+            value_encoder.cuda()
+            q1_source_encoder.cuda()
+            q2_source_encoder.cuda()
+            q1_target_encoder.cuda()
+            q2_target_encoder.cuda()
 
     if config.decoder.load_from is not None:
         assert config.initial_model is None
@@ -803,19 +825,17 @@ def _main(config: DictConfig) -> None:
         assert config.initial_model_index is None
 
         decoder_state_dict = torch.load(config.decoder.load_from, map_location='cpu')
-        decoder_new_state_dict = {}
-        for key, value in decoder_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            decoder_new_state_dict[new_key] = value
-        qv1_source_decoder.load_state_dict(decoder_new_state_dict)
-        qv2_source_decoder.load_state_dict(decoder_new_state_dict)
-        qv1_target_decoder.load_state_dict(decoder_new_state_dict)
-        qv2_target_decoder.load_state_dict(decoder_new_state_dict)
+        value_decoder.load_state_dict(decoder_state_dict)
+        q1_source_decoder.load_state_dict(decoder_state_dict)
+        q2_source_decoder.load_state_dict(decoder_state_dict)
+        q1_target_decoder.load_state_dict(decoder_state_dict)
+        q2_target_decoder.load_state_dict(decoder_state_dict)
         if config.device.type != 'cpu':
-            qv1_source_decoder.cuda()
-            qv2_source_decoder.cuda()
-            qv1_target_decoder.cuda()
-            qv2_target_decoder.cuda()
+            value_decoder.cuda()
+            q1_source_decoder.cuda()
+            q2_source_decoder.cuda()
+            q1_target_decoder.cuda()
+            q2_target_decoder.cuda()
 
     if config.initial_model is not None:
         assert config.encoder.load_from is None
@@ -824,104 +844,101 @@ def _main(config: DictConfig) -> None:
         assert config.initial_model_index is None
 
         model_state_dict = torch.load(config.initial_model, map_location='cpu')
-        model_new_state_dict = {}
-        for key, value in model_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            model_new_state_dict[new_key] = value
-        qv1_source_model.load_state_dict(model_new_state_dict)
-        qv2_source_model.load_state_dict(model_new_state_dict)
-        qv1_target_model.load_state_dict(model_new_state_dict)
-        qv2_target_model.load_state_dict(model_new_state_dict)
+        value_model.load_state_dict(model_state_dict)
+        q1_source_model.load_state_dict(model_state_dict)
+        q2_source_model.load_state_dict(model_state_dict)
+        q1_target_model.load_state_dict(model_state_dict)
+        q2_target_model.load_state_dict(model_state_dict)
         if config.device.type != 'cpu':
-            qv1_source_model.cuda()
-            qv2_source_model.cuda()
-            qv1_target_model.cuda()
-            qv2_target_model.cuda()
+            value_model.cuda()
+            q1_source_model.cuda()
+            q2_source_model.cuda()
+            q1_target_model.cuda()
+            q2_target_model.cuda()
 
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
         assert config.decoder.load_from is None
         assert config.initial_model is None
 
-        qv1_source_state_dict = torch.load(qv1_source_snapshot_path, map_location='cpu')
-        qv1_source_new_state_dict = {}
-        for key, value in qv1_source_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            qv1_source_new_state_dict[new_key] = value
-        qv1_source_model.load_state_dict(qv1_source_new_state_dict)
+        value_state_dict = torch.load(value_snapshot_path, map_location='cpu')
+        value_model.load_state_dict(value_state_dict)
         if config.device.type != 'cpu':
-            qv1_source_model.cuda()
+            value_model.cuda()
 
-        qv2_source_state_dict = torch.load(qv2_source_snapshot_path, map_location='cpu')
-        qv2_source_new_state_dict = {}
-        for key, value in qv2_source_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            qv2_source_new_state_dict[new_key] = value
-        qv2_source_model.load_state_dict(qv2_source_new_state_dict)
+        q1_source_state_dict = torch.load(q1_source_snapshot_path, map_location='cpu')
+        q1_source_model.load_state_dict(q1_source_state_dict)
         if config.device.type != 'cpu':
-            qv2_source_model.cuda()
+            q1_source_model.cuda()
 
-        qv1_target_state_dict = torch.load(qv1_target_snapshot_path, map_location='cpu')
-        qv1_target_new_state_dict = {}
-        for key, value in qv1_target_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            qv1_target_new_state_dict[new_key] = value
-        qv1_target_model.load_state_dict(qv1_target_new_state_dict)
+        q2_source_state_dict = torch.load(q2_source_snapshot_path, map_location='cpu')
+        q2_source_model.load_state_dict(q2_source_state_dict)
         if config.device.type != 'cpu':
-            qv1_target_model.cuda()
+            q2_source_model.cuda()
 
-        qv2_target_state_dict = torch.load(qv2_target_snapshot_path, map_location='cpu')
-        qv2_target_new_state_dict = {}
-        for key, value in qv2_target_state_dict.items():
-            new_key = re.sub('^module\\.', '', key)
-            qv2_target_new_state_dict[new_key] = value
-        qv2_target_model.load_state_dict(qv2_target_new_state_dict)
+        q1_target_state_dict = torch.load(q1_target_snapshot_path, map_location='cpu')
+        q1_target_model.load_state_dict(q1_target_state_dict)
         if config.device.type != 'cpu':
-            qv2_target_model.cuda()
+            q1_target_model.cuda()
 
-        if qv1_optimizer_snapshot_path is not None:
-            qv1_optimizer.load_state_dict(
-                torch.load(qv1_optimizer_snapshot_path, map_location='cpu'))
+        q2_target_state_dict = torch.load(q2_target_snapshot_path, map_location='cpu')
+        q2_target_model.load_state_dict(q2_target_state_dict)
+        if config.device.type != 'cpu':
+            q2_target_model.cuda()
 
-        if qv2_optimizer_snapshot_path is not None:
-            qv2_optimizer.load_state_dict(
-                torch.load(qv2_optimizer_snapshot_path, map_location='cpu'))
+        if value_optimizer_snapshot_path is not None:
+            value_optimizer.load_state_dict(
+                torch.load(value_optimizer_snapshot_path, map_location='cpu'))
+
+        if q1_optimizer_snapshot_path is not None:
+            q1_optimizer.load_state_dict(
+                torch.load(q1_optimizer_snapshot_path, map_location='cpu'))
+
+        if q2_optimizer_snapshot_path is not None:
+            q2_optimizer.load_state_dict(
+                torch.load(q2_optimizer_snapshot_path, map_location='cpu'))
 
     if is_multiprocess:
         init_process_group(backend='nccl')
-        qv1_source_model = DistributedDataParallel(qv1_source_model)
-        qv1_source_model = nn.SyncBatchNorm.convert_sync_batchnorm(qv1_source_model)
-        qv2_source_model = DistributedDataParallel(qv2_source_model)
-        qv2_source_model = nn.SyncBatchNorm.convert_sync_batchnorm(qv2_source_model)
+        value_model = DistributedDataParallel(value_model)
+        value_model = nn.SyncBatchNorm.convert_sync_batchnorm(value_model)
+        q1_source_model = DistributedDataParallel(q1_source_model)
+        q1_source_model = nn.SyncBatchNorm.convert_sync_batchnorm(q1_source_model)
+        q2_source_model = DistributedDataParallel(q2_source_model)
+        q2_source_model = nn.SyncBatchNorm.convert_sync_batchnorm(q2_source_model)
 
     def snapshot_writer(
-            qv1_source_model: nn.Module, qv2_source_model: nn.Module,
-            qv1_target_model: QVModel, qv2_target_model: QVModel,
-            qv1_optimizer: Optimizer, qv2_optimizer: Optimizer,
+            *, value_model: nn.Module, q1_source_model: nn.Module, q2_source_model: nn.Module,
+            q1_target_model: QModel, q2_target_model: QModel, value_optimizer: Optimizer,
+            q1_optimizer: Optimizer, q2_optimizer: Optimizer,
             num_samples: Optional[int]=None) -> None:
-        if isinstance(qv1_source_model, DistributedDataParallel):
-            qv1_source_model = qv1_source_model.module
-        if isinstance(qv2_source_model, DistributedDataParallel):
-            qv2_source_model = qv2_source_model.module
+        if isinstance(value_model, DistributedDataParallel):
+            value_model = value_model.module
+        if isinstance(q1_source_model, DistributedDataParallel):
+            q1_source_model = q1_source_model.module
+        if isinstance(q2_source_model, DistributedDataParallel):
+            q2_source_model = q2_source_model.module
 
         infix = '' if num_samples is None else f'.{num_samples}'
 
-        torch.save(qv1_source_model.state_dict(), snapshots_path / f'qv1-source{infix}.pth')
-        torch.save(qv2_source_model.state_dict(), snapshots_path / f'qv2-source{infix}.pth')
-        torch.save(qv1_target_model.state_dict(), snapshots_path / f'qv1-target{infix}.pth')
-        torch.save(qv2_target_model.state_dict(), snapshots_path / f'qv2-target{infix}.pth')
-        torch.save(qv1_optimizer.state_dict(), snapshots_path / f'qv1-optimizer{infix}.pth')
-        torch.save(qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer{infix}.pth')
+        torch.save(value_model.state_dict(), snapshots_path / f'value{infix}.pth')
+        torch.save(q1_source_model.state_dict(), snapshots_path / f'q1-source{infix}.pth')
+        torch.save(q2_source_model.state_dict(), snapshots_path / f'q2-source{infix}.pth')
+        torch.save(q1_target_model.state_dict(), snapshots_path / f'q1-target{infix}.pth')
+        torch.save(q2_target_model.state_dict(), snapshots_path / f'q2-target{infix}.pth')
+        torch.save(value_optimizer.state_dict(), snapshots_path / f'value-optimizer{infix}.pth')
+        torch.save(q1_optimizer.state_dict(), snapshots_path / f'q1-optimizer{infix}.pth')
+        torch.save(q2_optimizer.state_dict(), snapshots_path / f'q2-optimizer{infix}.pth')
 
-        q_model = QModel(qv1_model=qv1_target_model, qv2_model=qv2_target_model)
+        q_model = QQModel(q1_model=q1_target_model, q2_model=q2_target_model)
         state = dump_object(
             q_model,
             [
                 dump_object(
-                    q_model.qv1_model,
+                    q_model.q1_model,
                     [
                         dump_model(
-                            q_model.qv1_model.encoder,
+                            q_model.q1_model.encoder,
                             [],
                             {
                                 'position_encoder': config.encoder.position_encoder,
@@ -937,7 +954,7 @@ def _main(config: DictConfig) -> None:
                             }
                         ),
                         dump_model(
-                            q_model.qv1_model.decoder,
+                            q_model.q1_model.decoder,
                             [],
                             {
                                 'dimension': config.encoder.dimension,
@@ -953,10 +970,10 @@ def _main(config: DictConfig) -> None:
                     {}
                 ),
                 dump_object(
-                    q_model.qv2_model,
+                    q_model.q2_model,
                     [
                         dump_model(
-                            q_model.qv2_model.encoder,
+                            q_model.q2_model.encoder,
                             [],
                             {
                                 'position_encoder': config.encoder.position_encoder,
@@ -972,7 +989,7 @@ def _main(config: DictConfig) -> None:
                             }
                         ),
                         dump_model(
-                            q_model.qv2_model.decoder,
+                            q_model.q2_model.decoder,
                             [],
                             {
                                 'dimension': config.encoder.dimension,
@@ -997,18 +1014,19 @@ def _main(config: DictConfig) -> None:
             is_multiprocess=is_multiprocess, world_size=world_size, rank=rank,
             is_main_process=is_main_process, training_data=config.training_data,
             num_workers=config.num_workers, device=config.device.type, dtype=dtype,
-            amp_dtype=amp_dtype, qv1_source_model=qv1_source_model,
-            qv2_source_model=qv2_source_model, qv1_target_model=qv1_target_model,
-            qv2_target_model=qv2_target_model, reward_plugin=config.reward_plugin,
+            amp_dtype=amp_dtype, value_model=value_model, q1_source_model=q1_source_model,
+            q2_source_model=q2_source_model, q1_target_model=q1_target_model,
+            q2_target_model=q2_target_model, reward_plugin=config.reward_plugin,
             discount_factor=config.discount_factor, expectile=config.expectile,
-            target_update_interval=config.target_update_interval,
-            target_update_rate=config.target_update_rate, batch_size=config.batch_size,
-            v_loss_scaling=config.v_loss_scaling,
+            batch_size=config.batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
-            max_gradient_norm=config.max_gradient_norm, qv1_optimizer=qv1_optimizer,
-            qv2_optimizer=qv2_optimizer, snapshot_interval=config.snapshot_interval,
-            num_samples=num_samples, summary_writer=summary_writer,
-            snapshot_writer=snapshot_writer) # pylint: disable=missing-kwoa
+            v_max_gradient_norm=config.v_max_gradient_norm,
+            q_max_gradient_norm=config.q_max_gradient_norm, value_optimizer=value_optimizer,
+            q1_optimizer=q1_optimizer, q2_optimizer=q2_optimizer,
+            target_update_interval=config.target_update_interval,
+            target_update_rate=config.target_update_rate,
+            snapshot_interval=config.snapshot_interval, num_samples=num_samples,
+            summary_writer=summary_writer, snapshot_writer=snapshot_writer)
 
 
 if __name__ == '__main__':

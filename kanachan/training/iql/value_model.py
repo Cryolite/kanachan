@@ -47,6 +47,9 @@ class ValueDecoder(nn.Module):
         assert value.dim() == 1
         assert value.size(0) == candidates.size(0)
 
+        # Set `V` of the terminal state to `0.0`.
+        value = torch.where(candidates[:, 0] != NUM_TYPES_OF_ACTIONS, value, 0.0)
+
         return value
 
 

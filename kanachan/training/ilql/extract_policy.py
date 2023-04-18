@@ -24,7 +24,7 @@ from kanachan.training.common import initialize_logging, Dataset
 from kanachan.training.bert.encoder import Encoder
 from kanachan.model_loader import load_model
 from kanachan.training.ilql.policy_model import PolicyDecoder, PolicyModel
-from kanachan.training.ilql.iterator_adaptor import IteratorAdaptor
+from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 
 
 def _take_snapshot(

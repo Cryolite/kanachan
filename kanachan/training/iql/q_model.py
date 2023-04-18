@@ -1,6 +1,5 @@
 import math
 from collections import OrderedDict
-from typing import Tuple
 import torch
 from torch import nn
 from kanachan.training.constants import (
@@ -10,7 +9,7 @@ from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.value_model import ValueDecoder
 
 
-class QVDecoder(nn.Module):
+class QDecoder(nn.Module):
     def __init__(
             self, *, dimension: int, dim_feedforward: int, activation_function: str, dropout: float,
             num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
@@ -25,7 +24,7 @@ class QVDecoder(nn.Module):
         if num_layers < 1:
             raise ValueError(num_layers)
 
-        super(QVDecoder, self).__init__()
+        super(QDecoder, self).__init__()
 
         self.value_decoder = ValueDecoder(
             dimension=dimension, dim_feedforward=dim_feedforward,
@@ -50,8 +49,7 @@ class QVDecoder(nn.Module):
         self.layers = nn.Sequential(layers)
 
     def forward(
-            self, candidates: torch.Tensor,
-            encode: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+            self, candidates: torch.Tensor, encode: torch.Tensor) -> torch.Tensor:
         assert candidates.dim() == 2
         assert encode.dim() == 3
         assert encode.size(1) == ENCODER_WIDTH
@@ -60,8 +58,8 @@ class QVDecoder(nn.Module):
         value: torch.Tensor = self.value_decoder(candidates, encode)
         assert value.dim() == 1
         assert value.size(0) == candidates.size(0)
-        value_expanded = torch.unsqueeze(value, dim=1)
-        value_expanded = value_expanded.expand(-1, MAX_NUM_ACTION_CANDIDATES)
+        value = torch.unsqueeze(value, dim=1)
+        value = value.expand(-1, MAX_NUM_ACTION_CANDIDATES)
 
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         advantage: torch.Tensor = self.layers(encode)
@@ -70,20 +68,20 @@ class QVDecoder(nn.Module):
         assert advantage.size(0) == candidates.size(0)
         assert advantage.size(1) == MAX_NUM_ACTION_CANDIDATES
 
-        q = value_expanded + advantage
+        q = value + advantage
         q = torch.where(candidates < NUM_TYPES_OF_ACTIONS, q, -math.inf)
 
-        return q, value
+        return q
 
 
-class QVModel(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: QVDecoder) -> None:
-        super(QVModel, self).__init__()
+class QModel(nn.Module):
+    def __init__(self, encoder: Encoder, decoder: QDecoder) -> None:
+        super(QModel, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
 
     def forward(
             self, sparse: torch.Tensor, numeric: torch.Tensor, progression: torch.Tensor,
-            candidates: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+            candidates: torch.Tensor) -> torch.Tensor:
         encode = self.encoder(sparse, numeric, progression, candidates)
         return self.decoder(candidates, encode)
