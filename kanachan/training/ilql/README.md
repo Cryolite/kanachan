@@ -87,7 +87,7 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 `initial_model=INITIAL_MODEL`: Specify the path to the initial model snapshot. The path must be one that can be interpreted within the Docker guest. Mutually exclusive to the `encoder.load_from`, `decoder.load_from`, and `initial_model_prefix` options.
 
-`initial_model_prefix=PATH`: Specify the prefix to the initial model. The path must be one that can be interpreted within the Docker guest. Mutually exclusive to the `encoder.load_from`, `decoder.load_from`, and `initial_model` options.
+`initial_model_prefix=PATH`: Specify the prefix to the initial model snapshot. The path must be one that can be interpreted within the Docker guest. Mutually exclusive to the `encoder.load_from`, `decoder.load_from`, and `initial_model` options.
 
 `initial_model_index=N`: Speficy the index of the initial model snapshot. The argument must be a non-negative integer. Must be used with `initial_model_prefix` option.
 
@@ -109,13 +109,13 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 `optimizer={sgd|adam|radam|mtadam|lamb}`: Specify the optimizer preset. Default to `lamb`. See the table below for the detailed meaning of the options:
 
-| `optimizer` | `optimizer.type` | `optimizer.momentum` | `optimizer.epsilon` | `optimizer.learning_rate` | `optimizer.initialize` |
-|-------------|------------------|----------------------|---------------------|---------------------------|------------------------|
-| `sgd`       | `sgd`            | `0.0`                | (N/A)               | (EXPLICITLY REQUIRED)     | `false`                |
-| `adam`      | `adam`           | (N/A)                | `1.0e-8`            | `0.001`                   | `false`                |
-| `radam`     | `radam`          | (N/A)                | `1.0e-8`            | `0.001`                   | `false`                |
-| `mtadam`    | `mtadam`         | (N/A)                | `1.0e-8`            | `0.001`                   | `false`                |
-| `lamb`      | `lamb`           | (N/A)                | `1.0e-6`            | `0.001`                   | `true`                 |
+| `optimizer` | `optimizer.type`                             | `optimizer.momentum` | `optimizer.epsilon` | `optimizer.learning_rate` | `optimizer.initialize` |
+|-------------|----------------------------------------------|----------------------|---------------------|---------------------------|------------------------|
+| `sgd`       | `sgd`                                        | `0.0`                | (N/A)               | (EXPLICITLY REQUIRED)     | `false`                |
+| `adam`      | [`adam`](https://arxiv.org/abs/1412.6980)    | (N/A)                | `1.0e-8`            | `0.001`                   | `false`                |
+| `radam`     | [`radam`](https://arxiv.org/abs/1908.03265)  | (N/A)                | `1.0e-8`            | `0.001`                   | `false`                |
+| `mtadam`    | [`mtadam`](https://arxiv.org/abs/2006.14683) | (N/A)                | `1.0e-8`            | `0.001`                   | `true`                 |
+| `lamb`      | [`lamb`](https://arxiv.org/abs/1904.00962)   | (N/A)                | `1.0e-6`            | `0.001`                   | `false`                |
 
 `optimizer.type={sgd|adam|radam|mtadam|lamb}` Specify the optimizer type. Override the value specified by the `optimizer` option.
 
