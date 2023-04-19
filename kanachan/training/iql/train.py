@@ -888,7 +888,7 @@ def _main(config: DictConfig) -> None:
         q2_source_model = nn.SyncBatchNorm.convert_sync_batchnorm(q2_source_model)
 
     def snapshot_writer(
-            *, value_model: nn.Module, q1_source_model: nn.Module, q2_source_model: nn.Module,
+            value_model: nn.Module, q1_source_model: nn.Module, q2_source_model: nn.Module,
             q1_target_model: QModel, q2_target_model: QModel, value_optimizer: Optimizer,
             q1_optimizer: Optimizer, q2_optimizer: Optimizer,
             num_samples: Optional[int]=None) -> None:
