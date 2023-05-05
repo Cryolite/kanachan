@@ -144,7 +144,7 @@ config_store.store(name='bert_base', node=BertBaseEncoderConfig, group='encoder'
 config_store.store(name='bert_large', node=BertLargeEncoderConfig, group='encoder')
 config_store.store(name='single', node=SingleDecoderConfig, group='decoder')
 config_store.store(name='double', node=DoubleDecoderConfig, group='decoder')
-config_store.store(name='triple', node=DoubleDecoderConfig, group='decoder')
+config_store.store(name='triple', node=TripleDecoderConfig, group='decoder')
 config_store.store(name='sgd', node=SgdOptimizerConfig, group='optimizer')
 config_store.store(name='adam', node=AdamOptimizerConfig, group='optimizer')
 config_store.store(name='radam', node=RAdamOptimizerConfig, group='optimizer')
