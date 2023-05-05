@@ -20,7 +20,7 @@ class CudaConfig:
 
 @dataclass
 class BertBaseEncoderConfig:
-    position_encoder: str = 'positional_encoding'
+    position_encoder: str = 'position_embedding'
     dimension: int = 768
     num_heads: int = 12
     dim_feedforward: Optional[int] = None
@@ -31,7 +31,7 @@ class BertBaseEncoderConfig:
 
 @dataclass
 class BertLargeEncoderConfig:
-    position_encoder: str = 'positional_encoding'
+    position_encoder: str = 'position_embedding'
     dimension: int = 1024
     num_heads: int = 16
     dim_feedforward: Optional[int] = None
@@ -57,6 +57,14 @@ class DoubleDecoderConfig:
     num_layers: int = 2
     load_from: Optional[Path] = None
 
+@dataclass
+class TripleDecoderConfig:
+    dim_feedforward: Optional[int] = None
+    activation_function: str = 'gelu'
+    dropout: float = 0.1
+    num_layers: int = 3
+    load_from: Optional[Path] = None
+
 
 @dataclass
 class SgdOptimizerConfig:
@@ -69,6 +77,14 @@ class SgdOptimizerConfig:
 @dataclass
 class AdamOptimizerConfig:
     type: str = 'adam'
+    momentum: Optional[float] = None
+    epsilon: Optional[float] = 1.0e-8
+    learning_rate: float = 0.001
+    initialize: bool = False
+
+@dataclass
+class RAdamOptimizerConfig:
+    type: str = 'radam'
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
@@ -128,8 +144,10 @@ config_store.store(name='bert_base', node=BertBaseEncoderConfig, group='encoder'
 config_store.store(name='bert_large', node=BertLargeEncoderConfig, group='encoder')
 config_store.store(name='single', node=SingleDecoderConfig, group='decoder')
 config_store.store(name='double', node=DoubleDecoderConfig, group='decoder')
+config_store.store(name='triple', node=DoubleDecoderConfig, group='decoder')
 config_store.store(name='sgd', node=SgdOptimizerConfig, group='optimizer')
 config_store.store(name='adam', node=AdamOptimizerConfig, group='optimizer')
+config_store.store(name='radam', node=RAdamOptimizerConfig, group='optimizer')
 config_store.store(name='mtadam', node=MTAdamOptimizerConfig, group='optimizer')
 config_store.store(name='lamb', node=LambOptimizerConfig, group='optimizer')
 config_store.store(name='config', node=Config)

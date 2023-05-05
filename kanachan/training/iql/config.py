@@ -83,6 +83,14 @@ class AdamOptimizerConfig:
     initialize: bool = False
 
 @dataclass
+class RAdamOptimizerConfig:
+    type: str = 'radam'
+    momentum: Optional[float] = None
+    epsilon: Optional[float] = 1.0e-8
+    learning_rate: float = 0.001
+    initialize: bool = False
+
+@dataclass
 class LambOptimizerConfig:
     type: str = 'lamb'
     momentum: Optional[float] = None
@@ -131,5 +139,6 @@ config_store.store(name='double', node=DoubleDecoderConfig, group='decoder')
 config_store.store(name='triple', node=TripleDecoderConfig, group='decoder')
 config_store.store(name='sgd', node=SgdOptimizerConfig, group='optimizer')
 config_store.store(name='adam', node=AdamOptimizerConfig, group='optimizer')
+config_store.store(name='radam', node=RAdamOptimizerConfig, group='optimizer')
 config_store.store(name='lamb', node=LambOptimizerConfig, group='optimizer')
 config_store.store(name='config', node=Config)
