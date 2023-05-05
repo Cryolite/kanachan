@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+from io import TextIOBase
+from argparse import ArgumentParser
+from typing import Optional, Tuple, List
+import sys
+
+
+def _parse(input_str: str, room_filter: int, curriculum: bool) -> None:
+    AnnotationKey = Tuple[str, int, int, int, int, int, int]
+    AnnotationValue = Tuple[str, str, str, str, str, str]
+    annotations: List[Tuple[AnnotationKey, AnnotationValue]] = []
+    for line in input_str.splitlines():
+        columns = line.split('\t')
+        if len(columns) != 7:
+            raise RuntimeError(f'An invalid line: {line}')
+        uuid, sparse, numeric, progression, actions, index, results = columns
+
+        sparse_fields = [int(field) for field in sparse.split(',')]
+        numeric_fields = [int(field) for field in numeric.split(',')]
+        progression_fields = [int(field) for field in progression.split(',')]
+
+        room = sparse_fields[0]
+        if room < room_filter:
+            continue
+        seat = sparse_fields[2] - 7
+        chang = sparse_fields[3] - 11
+        ju = sparse_fields[4] - 14 # pylint: disable=invalid-name
+        num_drawn_tiles = None
+        for field in sparse_fields:
+            if 203 <= field and field <= 272:
+                num_drawn_tiles = 272 - field
+                break
+        assert num_drawn_tiles is not None
+
+        ben = numeric_fields[0]
+
+        turn = len(progression_fields)
+
+        annotation = (
+            (uuid, seat, chang, ju, ben, turn, num_drawn_tiles),
+            (sparse, numeric, progression, actions, index, results)
+        )
+        annotations.append(annotation)
+    annotations.sort(key=lambda e: e[0])
+
+    if len(annotations) == 0:
+        return
+
+    output_line_chunks: List[List[str]] = []
+    output_line_chunks.append([])
+
+    i = 0
+    while i < len(annotations):
+        prev = annotations[i]
+        prev_uuid = prev[0][0]
+        prev_seat = prev[0][1]
+
+        next_uuid = None
+        next_seat = None
+        if i + 1 < len(annotations):
+            _next = annotations[i + 1]
+            next_uuid = _next[0][0]
+            next_seat = _next[0][1]
+
+        prev_sparse = prev[1][0]
+        prev_numeric = prev[1][1]
+        prev_progression = prev[1][2]
+        prev_actions = prev[1][3]
+        prev_index = prev[1][4]
+
+        if i + 1 >= len(annotations) or prev_uuid != next_uuid or prev_seat != next_seat:
+            result_fields = [int(field) for field in prev[1][5].split(',')]
+            game_rank = result_fields[9]
+            game_score = result_fields[10]
+            line = f'{prev_sparse}\t{prev_numeric}\t{prev_progression}\t{prev_actions}\t{prev_index}\t{game_rank}\t{game_score}'
+            output_line_chunks[-1].append(line)
+            if i + 1 >= len(annotations):
+                break
+            output_line_chunks.append([])
+            continue
+
+        next_sparse = _next[1][0]
+        next_numeric = _next[1][1]
+        next_progression = _next[1][2]
+        next_actions = _next[1][3]
+
+        line = f'{prev_sparse}\t{prev_numeric}\t{prev_progression}\t{prev_actions}\t{prev_index}\t{next_sparse}\t{next_numeric}\t{next_progression}\t{next_actions}'
+        output_line_chunks[-1].append(line)
+
+    if curriculum:
+        for output_lines in output_line_chunks:
+            num_lines = len(output_lines)
+            for i, output_line in enumerate(output_lines):
+                print(f'{num_lines - i - 1}\t{output_line}')
+    else:
+        for output_lines in output_line_chunks:
+            for output_line in output_lines:
+                print(output_line)
+
+
+def _main() -> None:
+    parser = ArgumentParser()
+    parser.add_argument(
+        '--filter-by-room', choices=('bronze', 'silver', 'gold', 'jade', 'throne'), default='gold',
+        help='filter annotations by the specified room or above')
+    parser.add_argument('--curriculum', action='store_true', help='add curriculum index')
+    parser.add_argument('INPUT', nargs='?', type=Path, help='path to input file')
+    args = parser.parse_args()
+
+    room_filter = None
+    if args.filter_by_room == 'bronze':
+        room_filter = 0
+    elif args.filter_by_room == 'silver':
+        room_filter = 1
+    elif args.filter_by_room == 'gold':
+        room_filter = 2
+    elif args.filter_by_room == 'jade':
+        room_filter = 3
+    elif args.filter_by_room == 'throne':
+        room_filter = 4
+    else:
+        raise RuntimeError(f'{args.filter_by_room}: An invalid room name.')
+    assert room_filter is not None
+
+    input_path: Optional[Path] = args.INPUT
+
+    if str(input_path) == '-':
+        input_path = None
+
+    if input_path is None:
+        fp: TextIOBase = sys.stdin # pylint: disable=invalid-name
+    else:
+        if not input_path.exists():
+            raise RuntimeError(f'{input_path}: Does not exist.')
+        if not input_path.is_file():
+            raise RuntimeError(f'{input_path}: Not a file.')
+        fp = open(input_path, encoding='UTF-8') # pylint: disable=invalid-name
+    input_str = fp.read()
+
+    try:
+        _parse(input_str, room_filter, args.curriculum)
+        fp.close()
+    except:
+        fp.close()
+        raise
+
+
+if __name__ == '__main__':
+    _main()
