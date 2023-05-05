@@ -20,7 +20,7 @@ class CudaConfig:
 
 @dataclass
 class BertBaseEncoderConfig:
-    position_encoder: str = 'positional_encoding'
+    position_encoder: str = 'position_embedding'
     dimension: int = 768
     num_heads: int = 12
     dim_feedforward: Optional[int] = None
@@ -31,7 +31,7 @@ class BertBaseEncoderConfig:
 
 @dataclass
 class BertLargeEncoderConfig:
-    position_encoder: str = 'positional_encoding'
+    position_encoder: str = 'position_embedding'
     dimension: int = 1024
     num_heads: int = 16
     dim_feedforward: Optional[int] = None
