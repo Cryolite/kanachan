@@ -27,7 +27,7 @@ kanachan$ docker build -f kanachan/training/ilql/Dockerfile -t cryolite/kanachan
 $ docker run --gpus all -v /path/to/host-data:/workspace/data --rm cryolite/kanachan.training.ilql OPTIONS...
 ```
 
-If you want to run this program on specific GPUs, modify the `--gpus` option for the `docker run` command (see https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/user-guide.html#gpu-enumeration) or `device.type` option (see below).
+If you want to run this program on specific GPUs, modify the `--gpus` option for the `docker run` command (see https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/user-guide.html#gpu-enumeration) or specify `device.type` option (see below).
 
 #### Options
 
