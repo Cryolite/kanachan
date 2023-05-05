@@ -13,17 +13,21 @@ The following items are required to run the programs in this directory:
 
 For detailed installation instructions for the above prerequisite items, refer to those for each OS and distribution.
 
-After the installation of the prerequisite items, [build the `cryolite/kanachan` Docker image](https://github.com/Cryolite/kanachan/blob/main/kanachan/README.md#cryolitekanachan-docker-image).
+After the installation of the prerequisite items, first [build the `cryolite/kanachan` Docker image](https://github.com/Cryolite/kanachan/blob/main/kanachan/README.md#cryolitekanachan-docker-image). Then, execute the following command with the top directory of the working tree of this repository as the current directory:
+
+```sh
+kanachan$ docker build -f kanachan/training/ilql/Dockerfile -t cryolite/kanachan.training.ilql .
+```
 
 ## `train.py`
 
 #### Usage
 
 ```
-$ docker run --gpus all -v /path/to/host-data:/workspace/data --rm cryolite/kanachan python3 -m kanachan.training.ilql.train OPTIONS...
+$ docker run --gpus all -v /path/to/host-data:/workspace/data --rm cryolite/kanachan.training.ilql OPTIONS...
 ```
 
-If you want to run this program on multiple GPUs, see [Running programs on multiple GPUs](https://github.com/Cryolite/kanachan/wiki/Running-programs-on-multiple-GPUs).
+If you want to run this program on specific GPUs, modify the `--gpus` option for the `docker run` command (see https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/user-guide.html#gpu-enumeration) or `device.type` option (see below).
 
 #### Options
 
@@ -53,7 +57,7 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 | `bert_base`  | `positional_encoding`      | `768`               | `12`                | `3072`                    | `gelu`                        | `0.1`             | `12`                 | (N/A)               |
 | `bert_large` | `positional_encoding`      | `1024`              | `16`                | `4096`                    | `gelu`                        | `0.1`             | `24`                 | (N/A)               |
 
-`encoder.position_encoder={positional_encoding|position_embedding}`: Specify the method of encoding positions. `positional_encoding` is the method used in the paper ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) to encode positions with a sinusoidal function. `positional_embedding` is the method used in the paper ["BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"](https://arxiv.org/abs/1810.04805) to encode positions with embeddings. Override the value specified by the `encoder` option. Default to `positional_encoding`.
+`encoder.position_encoder={positional_encoding|position_embedding}`: Specify the method of encoding positions. `positional_encoding` is the method used in the paper ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) to encode positions with a sinusoidal function. `position_embedding` is the method used in the paper ["BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"](https://arxiv.org/abs/1810.04805) to encode positions with embeddings. Override the value specified by the `encoder` option. Default to `positional_encoding`.
 
 `encoder.dimension=DIM`: Specify the embedding dimension for the encoder. The argument must be a positive integer. Override the value by the `encoder` option.
 
