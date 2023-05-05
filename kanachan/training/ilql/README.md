@@ -54,10 +54,10 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 | `encoder`    | `encoder.position_encoder` | `encoder.dimension` | `encoder.num_heads` | `encoder.dim_feedforward` | `encoder.activation_function` | `encoder.dropout` | `encoder.num_layers` | `encoder.load_from` |
 |--------------|----------------------------|---------------------|---------------------|---------------------------|-------------------------------|-------------------|----------------------|---------------------|
-| `bert_base`  | `positional_encoding`      | `768`               | `12`                | `3072`                    | `gelu`                        | `0.1`             | `12`                 | (N/A)               |
-| `bert_large` | `positional_encoding`      | `1024`              | `16`                | `4096`                    | `gelu`                        | `0.1`             | `24`                 | (N/A)               |
+| `bert_base`  | `position_embedding`       | `768`               | `12`                | `3072`                    | `gelu`                        | `0.1`             | `12`                 | (N/A)               |
+| `bert_large` | `position_embedding`       | `1024`              | `16`                | `4096`                    | `gelu`                        | `0.1`             | `24`                 | (N/A)               |
 
-`encoder.position_encoder={positional_encoding|position_embedding}`: Specify the method of encoding positions. `positional_encoding` is the method used in the paper ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) to encode positions with a sinusoidal function. `position_embedding` is the method used in the paper ["BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"](https://arxiv.org/abs/1810.04805) to encode positions with embeddings. Override the value specified by the `encoder` option. Default to `positional_encoding`.
+`encoder.position_encoder={positional_encoding|position_embedding}`: Specify the method of encoding positions. `positional_encoding` is the method used in the paper ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) to encode positions with a sinusoidal function. `position_embedding` is the method used in the paper ["BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"](https://arxiv.org/abs/1810.04805) to encode positions with embeddings. Override the value specified by the `encoder` option. Default to `position_embedding`.
 
 `encoder.dimension=DIM`: Specify the embedding dimension for the encoder. The argument must be a positive integer. Override the value by the `encoder` option.
 
