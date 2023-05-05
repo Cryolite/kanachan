@@ -97,7 +97,7 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 `initial_model_index=N`: Speficy the index of the initial model snapshot. The argument must be a non-negative integer. Must be used with `initial_model_prefix` option.
 
-`reward_plugin=REWARD_PLUGIN`: Specify the path to the reward plugin. The path must be one that can be interpreted within the Docker guest.
+`reward_plugin=REWARD_PLUGIN`: Specify the path to the [reward plug-in](https://github.com/Cryolite/kanachan/wiki/Reward-Plugin). The path must be one that can be interpreted within the Docker guest.
 
 `discount_factor=GAMMA`: Specify the discount factor (in the sense of reinforcement learning). The argument must be a real number in the range \[0.0, 1.0\]. Default to `1.0`.
 
