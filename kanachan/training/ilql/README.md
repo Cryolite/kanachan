@@ -1,5 +1,7 @@
 # `kanachan.training.ilql` Python submodule
 
+A training program with [ILQL](https://arxiv.org/abs/2206.11871).
+
 ## Prerequisits
 
 The following items are required to run the programs in this directory:
