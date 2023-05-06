@@ -3,6 +3,10 @@
 # kanachan
 A Mahjong AI that supports a variant of rules of 4-player Japanese Riichi Mahjong that is adopted in standard games in Mahjong Soul (雀魂, Jantama, [CN](https://www.maj-soul.com/), [JP](https://mahjongsoul.com/), [EN](https://mahjongsoul.yo-star.com/)).
 
+## Announcements
+
+- [\[2023/05/06\] Significant additions and changes to the repository's code base](https://github.com/Cryolite/kanachan/discussions/24)
+
 ## Brief Guide
 
 This repository provides an annotation tool for game records of Mahjong Soul, and programs training some types of Mahjong AI models. However, this repository does not provide any crawler for game records of Mahjong Soul, any training data, nor any trained models. Therefore, users are assumed to prepare their own training data and computation resources.
