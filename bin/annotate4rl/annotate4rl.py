@@ -7,11 +7,11 @@ from typing import Optional, Tuple, List
 import sys
 
 
-def _parse(input_str: str, room_filter: int, curriculum: bool) -> None:
+def _parse(input_lines: List[str], room_filter: int, curriculum: bool) -> None:
     AnnotationKey = Tuple[str, int, int, int, int, int, int]
     AnnotationValue = Tuple[str, str, str, str, str, str]
     annotations: List[Tuple[AnnotationKey, AnnotationValue]] = []
-    for line in input_str.splitlines():
+    for line in input_lines:
         columns = line.split('\t')
         if len(columns) != 7:
             raise RuntimeError(f'An invalid line: {line}')
@@ -79,6 +79,7 @@ def _parse(input_str: str, room_filter: int, curriculum: bool) -> None:
             if i + 1 >= len(annotations):
                 break
             output_line_chunks.append([])
+            i += 1
             continue
 
         next_sparse = _next[1][0]
@@ -88,6 +89,7 @@ def _parse(input_str: str, room_filter: int, curriculum: bool) -> None:
 
         line = f'{prev_sparse}\t{prev_numeric}\t{prev_progression}\t{prev_actions}\t{prev_index}\t{next_sparse}\t{next_numeric}\t{next_progression}\t{next_actions}'
         output_line_chunks[-1].append(line)
+        i += 1
 
     if curriculum:
         for output_lines in output_line_chunks:
@@ -130,21 +132,16 @@ def _main() -> None:
         input_path = None
 
     if input_path is None:
-        fp: TextIOBase = sys.stdin # pylint: disable=invalid-name
+        input_lines = sys.stdin.readlines()
     else:
         if not input_path.exists():
             raise RuntimeError(f'{input_path}: Does not exist.')
         if not input_path.is_file():
             raise RuntimeError(f'{input_path}: Not a file.')
-        fp = open(input_path, encoding='UTF-8') # pylint: disable=invalid-name
-    input_str = fp.read()
+        with open(input_path, encoding='UTF-8') as fp: # pylint: disable=invalid-name
+            input_lines = fp.readlines()
 
-    try:
-        _parse(input_str, room_filter, args.curriculum)
-        fp.close()
-    except:
-        fp.close()
-        raise
+    _parse(input_lines, room_filter, args.curriculum)
 
 
 if __name__ == '__main__':
