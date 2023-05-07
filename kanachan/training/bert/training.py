@@ -21,7 +21,7 @@ from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from kanachan.training.common import Dataset
 from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
 from kanachan.training.bert.encoder import Encoder
-from kanachan.model_loader import dump_model
+from kanachan.model_loader import dump_model, dump_object
 
 
 LossFunction = Callable[[torch.Tensor, float], torch.Tensor]
@@ -59,8 +59,8 @@ def _validate(
         if device != 'cpu':
             annotation = tuple(x.cuda() for x in annotation)
 
-        weights = model(*(annotation[:-1]))
-        loss = loss_function(weights, annotation[-1])
+        weights = model(*(annotation[:4]))
+        loss = loss_function(weights, *(annotation[4:]))
         prediction = prediction_function(weights)
 
         if math.isnan(loss.item()):
@@ -70,7 +70,7 @@ def _validate(
             loss /= world_size
         validation_loss += loss.item()
 
-        num_correct_predictions += torch.sum((prediction == annotation[-1]).long()).item()
+        num_correct_predictions += torch.sum((prediction == annotation[4]).long()).item()
 
         batch_count += 1
 
@@ -137,8 +137,8 @@ def _train(
             annotation = tuple(x.cuda() for x in annotation)
 
         with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
-            prediction = model(*(annotation[:-1]))
-        loss = loss_function(prediction, annotation[-1])
+            prediction = model(*(annotation[:4]))
+        loss = loss_function(prediction, *(annotation[4:]))
         if math.isnan(loss.item()):
             raise RuntimeError('Training loss becomes NaN.')
 
@@ -687,12 +687,11 @@ def main(
         torch.save(decoder.state_dict(), snapshots_path / f'decoder{infix}.pth')
         torch.save(optimizer.state_dict(), snapshots_path / f'optimizer{infix}.pth')
 
-        state = {
-            '__kanachan__': '11fc2bfe-c4c7-402e-b11e-7cb3ff6f9945',
-            'module': model_type.__module__,
-            'class': model_type.__qualname__,
-            'args': [
+        state = dump_object(
+            model.module if isinstance(model, DistributedDataParallel) else model,
+            [
                 dump_model(
+                    encoder,
                     [],
                     {
                         'position_encoder': config.encoder.position_encoder,
@@ -705,10 +704,10 @@ def main(
                         'checkpointing': config.checkpointing,
                         'device': config.device.type,
                         'dtype': dtype
-                    },
-                    encoder
+                    }
                 ),
                 dump_model(
+                    decoder,
                     [],
                     {
                         'dimension': config.encoder.dimension,
@@ -718,11 +717,11 @@ def main(
                         'num_layers': config.decoder.num_layers,
                         'device': config.device.type,
                         'dtype': dtype
-                    },
-                    decoder
+                    }
                 )
-            ]
-        }
+            ],
+            {}
+        )
         torch.save(state, snapshots_path / f'model{infix}.kanachan')
 
     with SummaryWriter(log_dir=tensorboard_path) as summary_writer:
