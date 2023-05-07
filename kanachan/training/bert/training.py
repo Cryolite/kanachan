@@ -688,7 +688,7 @@ def main(
         torch.save(optimizer.state_dict(), snapshots_path / f'optimizer{infix}.pth')
 
         state = dump_object(
-            model,
+            model.module if isinstance(model, DistributedDataParallel) else model,
             [
                 dump_model(
                     encoder,

@@ -925,9 +925,9 @@ def _main(config: DictConfig) -> None:
                                 'dimension': config.encoder.dimension,
                                 'num_heads': config.encoder.num_heads,
                                 'dim_feedforward': config.encoder.dim_feedforward,
-                                'num_layers': config.encoder.num_layers,
                                 'activation_function': config.encoder.activation_function,
                                 'dropout': config.encoder.dropout,
+                                'num_layers': config.encoder.num_layers,
                                 'checkpointing': config.checkpointing,
                                 'device': config.device.type,
                                 'dtype': dtype
