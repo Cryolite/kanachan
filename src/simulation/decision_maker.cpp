@@ -20,6 +20,8 @@
 #include <mutex>
 #include <thread>
 #include <stop_token>
+#include <sstream>
+#include <iomanip>
 #include <vector>
 #include <functional>
 #include <memory>
@@ -280,7 +282,14 @@ try {
         python::object index = index_batch[i].attr("item")();
         python::object candidate = candidates_batch[i][index];
         if (candidate >= num_types_of_actions_) {
-            KANACHAN_THROW<std::logic_error>("An invalid decision.");
+            std::ostringstream oss;
+            oss << "An invalid decision:\n";
+            for (python::ssize_t j = 0u; j < python::len(candidates_batch[i]); ++j) {
+                long candidate_ = python::extract<long>(candidates_batch[i][j].attr("item")());
+                double weight_ = python::extract<double>(weight_batch[i][j].attr("item")());
+                oss << std::setw(3) << candidate_ << ": " << weight_ << '\n';
+            }
+            KANACHAN_THROW<std::logic_error>(_1) << oss.str();
         }
     }
 
@@ -426,6 +435,10 @@ std::uint_fast16_t DecisionMaker::Impl_::operator()(
     std::stop_token stop_token)
 try {
     KANACHAN_ASSERT((PyGILState_Check() == 0));
+
+    if (candidates.size() == 0u) {
+        KANACHAN_THROW<std::invalid_argument>("An empty `candidates`.");
+    }
 
     std::unique_lock lock(mtx_);
     ready_to_enqueue_.wait(
