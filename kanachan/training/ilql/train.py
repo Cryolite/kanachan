@@ -16,6 +16,7 @@ from torch import backends
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Optimizer, SGD, Adam, RAdam
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce, barrier
@@ -120,8 +121,8 @@ def _backward(
 
 def _step(
         *, qv_source_model: QVModel, q_loss: torch.Tensor, v_loss: torch.Tensor,
-        qv_optimizer: Optimizer, max_gradient_norm: float,
-        grad_scaler: Optional[GradScaler]) -> float:
+        grad_scaler: Optional[GradScaler], max_gradient_norm: float, qv_optimizer: Optimizer,
+        scheduler: lr_scheduler.LRScheduler) -> float:
     if grad_scaler is not None:
         grad_scaler.unscale_(qv_optimizer)
     qv_gradient = nn.utils.parameters_to_vector(qv_source_model.parameters())
@@ -137,6 +138,7 @@ def _step(
             grad_scaler.step(qv_optimizer)
             grad_scaler.update()
     qv_optimizer.zero_grad()
+    scheduler.step()
     return qv_gradient_norm
 
 
@@ -154,7 +156,8 @@ def _training(
         reward_plugin: Path, discount_factor: float, expectile: float, target_update_interval: int,
         target_update_rate: float, batch_size: int, v_loss_scaling: float,
         gradient_accumulation_steps: int, max_gradient_norm: float, qv1_optimizer: Optimizer,
-        qv2_optimizer: Optimizer, snapshot_interval: int, num_samples: int,
+        lr_scheduler1: lr_scheduler.LRScheduler, qv2_optimizer: Optimizer,
+        lr_scheduler2: lr_scheduler.LRScheduler, snapshot_interval: int, num_samples: int,
         summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
@@ -246,12 +249,12 @@ def _training(
         if batch_count % gradient_accumulation_steps == 0:
             qv1_gradient_norm = _step(
                 qv_source_model=qv1_source_model, q_loss=q1_loss, v_loss=v1_loss,
-                qv_optimizer=qv1_optimizer, max_gradient_norm=max_gradient_norm,
-                grad_scaler=grad_scaler)
+                grad_scaler=grad_scaler, max_gradient_norm=max_gradient_norm,
+                qv_optimizer=qv1_optimizer, scheduler=lr_scheduler1)
             qv2_gradient_norm = _step(
                 qv_source_model=qv2_source_model, q_loss=q2_loss, v_loss=v2_loss,
-                qv_optimizer=qv2_optimizer, max_gradient_norm=max_gradient_norm,
-                grad_scaler=grad_scaler)
+                grad_scaler=grad_scaler, max_gradient_norm=max_gradient_norm,
+                qv_optimizer=qv2_optimizer, scheduler=lr_scheduler2)
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():
@@ -282,6 +285,7 @@ def _training(
                 summary_writer.add_scalars(
                     'QV Gradient Norm',
                     { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm }, num_samples)
+                summary_writer.add_scalar('LR', lr_scheduler1.get_last_lr())
         else:
             if is_main_process:
                 logging.info(
@@ -480,7 +484,8 @@ def _main(config: DictConfig) -> None:
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
                 match = re.search(
-                    '^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer)(?:\\.(\\d+))?\\.pth$', child)
+                    '^(?:qv[12]-source|qv[12]-target|qv[12]-optimizer|lr_scheduler[12])(?:\\.(\\d+))?\\.pth$',
+                    child)
                 if match is None:
                     continue
                 if match[1] is None:
@@ -499,37 +504,55 @@ def _main(config: DictConfig) -> None:
             num_samples = config.initial_model_index
             infix = f'.{num_samples}'
 
-        qv1_source_snapshot_path = config.initial_model_prefix / f'qv1-source{infix}.pth'
+        qv1_source_snapshot_path: Path = config.initial_model_prefix / f'qv1-source{infix}.pth'
         if not qv1_source_snapshot_path.exists():
             raise RuntimeError(f'{qv1_source_snapshot_path}: Does not exist.')
         if not qv1_source_snapshot_path.is_file():
             raise RuntimeError(f'{qv1_source_snapshot_path}: Not a file.')
 
-        qv2_source_snapshot_path = config.initial_model_prefix / f'qv2-source{infix}.pth'
+        qv2_source_snapshot_path: Path = config.initial_model_prefix / f'qv2-source{infix}.pth'
         if not qv2_source_snapshot_path.exists():
             raise RuntimeError(f'{qv2_source_snapshot_path}: Does not exist.')
         if not qv2_source_snapshot_path.is_file():
             raise RuntimeError(f'{qv2_source_snapshot_path}: Not a file.')
 
-        qv1_target_snapshot_path = config.initial_model_prefix / f'qv1-target{infix}.pth'
+        qv1_target_snapshot_path: Path = config.initial_model_prefix / f'qv1-target{infix}.pth'
         if not qv1_target_snapshot_path.exists():
             raise RuntimeError(f'{qv1_target_snapshot_path}: Does not exist.')
         if not qv1_target_snapshot_path.is_file():
             raise RuntimeError(f'{qv1_target_snapshot_path}: Not a file.')
 
-        qv2_target_snapshot_path = config.initial_model_prefix / f'qv2-target{infix}.pth'
+        qv2_target_snapshot_path: Path = config.initial_model_prefix / f'qv2-target{infix}.pth'
         if not qv2_target_snapshot_path.exists():
             raise RuntimeError(f'{qv2_target_snapshot_path}: Does not exist.')
         if not qv2_target_snapshot_path.is_file():
             raise RuntimeError(f'{qv2_target_snapshot_path}: Not a file.')
 
-        qv1_optimizer_snapshot_path = config.initial_model_prefix / f'qv1-optimizer{infix}.pth'
+        qv1_optimizer_snapshot_path: Path = config.initial_model_prefix / f'qv1-optimizer{infix}.pth'
         if not qv1_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
             qv1_optimizer_snapshot_path = None
 
-        qv2_optimizer_snapshot_path = config.initial_model_prefix / f'qv2-optimizer{infix}.pth'
+        qv2_optimizer_snapshot_path: Path = config.initial_model_prefix / f'qv2-optimizer{infix}.pth'
         if not qv2_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
             qv2_optimizer_snapshot_path = None
+
+        lr_scheduler1_snapshot_path: Path = config.initial_model_prefix / f'lr_scheduler1{infix}.pth'
+        if qv1_optimizer_snapshot_path is None:
+            lr_scheduler1_snapshot_path = None
+        else:
+            if not lr_scheduler1_snapshot_path.exists():
+                raise RuntimeError(f'{lr_scheduler1_snapshot_path}: Does not exist.')
+            if not lr_scheduler1_snapshot_path.is_file():
+                raise RuntimeError(f'{lr_scheduler1_snapshot_path}: Not a file.')
+
+        lr_scheduler2_snapshot_path: Path = config.initial_model_prefix / f'lr_scheduler2{infix}.pth'
+        if qv1_optimizer_snapshot_path is None:
+            lr_scheduler2_snapshot_path = None
+        else:
+            if not lr_scheduler2_snapshot_path.exists():
+                raise RuntimeError(f'{lr_scheduler2_snapshot_path}: Does not exist.')
+            if not lr_scheduler2_snapshot_path.is_file():
+                raise RuntimeError(f'{lr_scheduler2_snapshot_path}: Not a file.')
 
     if not config.reward_plugin.exists():
         raise RuntimeError(f'{config.reward_plugin}: Does not exist.')
@@ -587,6 +610,21 @@ def _main(config: DictConfig) -> None:
     if config.optimizer.learning_rate <= 0.0:
         raise RuntimeError(
             f'{config.optimizer.learning_rate}: An invalid value for `optimizer.learning_rate`.')
+
+    if config.optimizer.warmup_steps < 0:
+        raise RuntimeError(
+            f'{config.optimizer.warmup_steps}: '
+            '`optimizer.warmup_steps` must be a non-negative integer.')
+
+    if config.optimizer.annealing_steps is not None and config.optimizer.annealing_steps <= 0:
+        raise RuntimeError(
+            f'{config.optimizer.annealing_steps}: '
+            '`optimizer.annealing_steps` must be a positive integer.')
+
+    if config.optimizer.annealing_steps_factor <= 0:
+        raise RuntimeError(
+            f'{config.optimizer.annealing_steps_factor}: '
+            '`optimizer.annealing_steps_factor` must be a positive integer.')
 
     if config.target_update_interval <= 0:
         raise RuntimeError(
@@ -672,6 +710,16 @@ def _main(config: DictConfig) -> None:
         if config.optimizer in ('adam', 'radam', 'mtadam', 'lamb'):
             logging.info('Epsilon parameter: %E', config.optimizer.epsilon)
         logging.info('Learning rate: %E', config.optimizer.learning_rate)
+        if config.optimizer.warmup_steps == 0:
+            logging.info('LR warm-up: (disabled)')
+        else:
+            logging.info('# of steps for LR warm-up: %d', config.optimizer.warmup_steps)
+        if config.optimizer.annealing_steps is None:
+            logging.info('Cosine annealing: (disabled)')
+        else:
+            logging.info('# of steps for cosine annealing: %d', config.optimizer.annealing_steps)
+            logging.info(
+                'Step factor for cosine annealing: %d', config.optimizer.annealing_steps_factor)
         logging.info('Target update interval: %d', config.target_update_interval)
         logging.info('Target update rate: %f', config.target_update_rate)
         if config.initial_model_prefix is not None:
@@ -681,8 +729,10 @@ def _main(config: DictConfig) -> None:
             logging.info('Initial QV2 target network snapshot: %s', qv2_target_snapshot_path)
             if qv1_optimizer_snapshot_path is not None:
                 logging.info('Initial QV1 optimizer snapshot: %s', qv1_optimizer_snapshot_path)
+                logging.info('Initial LR scheduler 1 snapshot: %s', lr_scheduler1_snapshot_path)
             if qv2_optimizer_snapshot_path is not None:
                 logging.info('Initial QV2 optimizer snapshot: %s', qv2_optimizer_snapshot_path)
+                logging.info('Initial LR scheduler 2 snapshot: %s', lr_scheduler2_snapshot_path)
         logging.info('Experiment output: %s', experiment_path)
         if config.snapshot_interval == 0:
             logging.info('Snapshot interval: N/A')
@@ -776,6 +826,22 @@ def _main(config: DictConfig) -> None:
         raise NotImplementedError(config.optimizer.type)
     qv1_optimizer = construct_optimizer(qv1_source_model)
     qv2_optimizer = construct_optimizer(qv2_source_model)
+
+    warmup_lr_scheduler1 = lr_scheduler.LinearLR(
+        qv1_optimizer, start_factor=0.0, total_iters=config.optimizer.warmup_steps)
+    cosine_lr_scheduler1 = lr_scheduler.CosineAnnealingWarmRestarts(
+        qv1_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    lr_scheduler1 = lr_scheduler.SequentialLR(
+        qv1_optimizer, [warmup_lr_scheduler1, cosine_lr_scheduler1],
+        [warmup_lr_scheduler1.total_iters])
+
+    warmup_lr_scheduler2 = lr_scheduler.LinearLR(
+        qv2_optimizer, start_factor=0.0, total_iters=config.optimizer.warmup_steps)
+    cosine_lr_scheduler2 = lr_scheduler.CosineAnnealingWarmRestarts(
+        qv2_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    lr_scheduler2 = lr_scheduler.SequentialLR(
+        qv2_optimizer, [warmup_lr_scheduler2, cosine_lr_scheduler2],
+        [warmup_lr_scheduler2.total_iters])
 
     if config.encoder.load_from is not None:
         assert config.initial_model is None
@@ -912,6 +978,8 @@ def _main(config: DictConfig) -> None:
         torch.save(qv2_target_model.state_dict(), snapshots_path / f'qv2-target{infix}.pth')
         torch.save(qv1_optimizer.state_dict(), snapshots_path / f'qv1-optimizer{infix}.pth')
         torch.save(qv2_optimizer.state_dict(), snapshots_path / f'qv2-optimizer{infix}.pth')
+        torch.save(lr_scheduler1.state_dict(), snapshots_path / f'lr_scheduler1{infix}.pth')
+        torch.save(lr_scheduler2.state_dict(), snapshots_path / f'lr_scheduler2{infix}.pth')
 
         q_model = QModel(qv1_model=qv1_target_model, qv2_model=qv2_target_model)
         state = dump_object(
@@ -1006,8 +1074,9 @@ def _main(config: DictConfig) -> None:
             v_loss_scaling=config.v_loss_scaling,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             max_gradient_norm=config.max_gradient_norm, qv1_optimizer=qv1_optimizer,
-            qv2_optimizer=qv2_optimizer, snapshot_interval=config.snapshot_interval,
-            num_samples=num_samples, summary_writer=summary_writer,
+            lr_scheduler1=lr_scheduler1, qv2_optimizer=qv2_optimizer, lr_scheduler2=lr_scheduler2,
+            snapshot_interval=config.snapshot_interval, num_samples=num_samples,
+            summary_writer=summary_writer,
             snapshot_writer=snapshot_writer) # pylint: disable=missing-kwoa
 
 

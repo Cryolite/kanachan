@@ -72,6 +72,9 @@ class SgdOptimizerConfig:
     momentum: Optional[float] = 0.0
     epsilon: Optional[float] = None
     learning_rate: float = MISSING
+    warmup_steps: int = 0
+    annealing_steps: Optional[int] = None
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 @dataclass
@@ -80,6 +83,9 @@ class AdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
+    warmup_steps: int = 0
+    annealing_steps: Optional[int] = None
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 @dataclass
@@ -88,6 +94,9 @@ class RAdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
+    warmup_steps: int = 0
+    annealing_steps: Optional[int] = None
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 @dataclass
@@ -96,6 +105,9 @@ class MTAdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
+    warmup_steps: int = 0
+    annealing_steps: Optional[int] = None
+    annealing_steps_factor: int = 1
     initialize: bool = True
 
 @dataclass
@@ -104,6 +116,9 @@ class LambOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-6
     learning_rate: float = 0.001
+    warmup_steps: int = 0
+    annealing_steps: Optional[int] = None
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 
