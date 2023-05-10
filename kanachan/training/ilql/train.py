@@ -122,7 +122,8 @@ def _backward(
 def _step(
         *, qv_source_model: QVModel, q_loss: torch.Tensor, v_loss: torch.Tensor,
         grad_scaler: Optional[GradScaler], max_gradient_norm: float, qv_optimizer: Optimizer,
-        scheduler: lr_scheduler.LRScheduler) -> float:
+        scheduler#: lr_scheduler.LRScheduler
+        ) -> float:
     if grad_scaler is not None:
         grad_scaler.unscale_(qv_optimizer)
     qv_gradient = nn.utils.parameters_to_vector(qv_source_model.parameters())
@@ -156,8 +157,10 @@ def _training(
         reward_plugin: Path, discount_factor: float, expectile: float, target_update_interval: int,
         target_update_rate: float, batch_size: int, v_loss_scaling: float,
         gradient_accumulation_steps: int, max_gradient_norm: float, qv1_optimizer: Optimizer,
-        lr_scheduler1: lr_scheduler.LRScheduler, qv2_optimizer: Optimizer,
-        lr_scheduler2: lr_scheduler.LRScheduler, snapshot_interval: int, num_samples: int,
+        lr_scheduler1#: lr_scheduler.LRScheduler
+        , qv2_optimizer: Optimizer,
+        lr_scheduler2#: lr_scheduler.LRScheduler
+        , snapshot_interval: int, num_samples: int,
         summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
@@ -285,7 +288,7 @@ def _training(
                 summary_writer.add_scalars(
                     'QV Gradient Norm',
                     { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm }, num_samples)
-                summary_writer.add_scalar('LR', lr_scheduler1.get_last_lr())
+                summary_writer.add_scalar('LR', lr_scheduler1.get_last_lr()[0], num_samples)
         else:
             if is_main_process:
                 logging.info(
@@ -828,7 +831,8 @@ def _main(config: DictConfig) -> None:
     qv2_optimizer = construct_optimizer(qv2_source_model)
 
     warmup_lr_scheduler1 = lr_scheduler.LinearLR(
-        qv1_optimizer, start_factor=0.0, total_iters=config.optimizer.warmup_steps)
+        qv1_optimizer, start_factor=config.optimizer.warmup_start_factor,
+        total_iters=config.optimizer.warmup_steps)
     cosine_lr_scheduler1 = lr_scheduler.CosineAnnealingWarmRestarts(
         qv1_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
     lr_scheduler1 = lr_scheduler.SequentialLR(
@@ -836,7 +840,8 @@ def _main(config: DictConfig) -> None:
         [warmup_lr_scheduler1.total_iters])
 
     warmup_lr_scheduler2 = lr_scheduler.LinearLR(
-        qv2_optimizer, start_factor=0.0, total_iters=config.optimizer.warmup_steps)
+        qv2_optimizer, start_factor=config.optimizer.warmup_start_factor,
+        total_iters=config.optimizer.warmup_steps)
     cosine_lr_scheduler2 = lr_scheduler.CosineAnnealingWarmRestarts(
         qv2_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
     lr_scheduler2 = lr_scheduler.SequentialLR(

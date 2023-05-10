@@ -72,9 +72,9 @@ class SgdOptimizerConfig:
     momentum: Optional[float] = 0.0
     epsilon: Optional[float] = None
     learning_rate: float = MISSING
-    warmup_start_factor: float = 0.00001
+    warmup_start_factor: float = 0.1
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
@@ -84,9 +84,9 @@ class AdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
-    warmup_start_factor: float = 0.00001
+    warmup_start_factor: float = 0.1
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
@@ -96,23 +96,11 @@ class RAdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
-    warmup_start_factor: float = 0.00001
+    warmup_start_factor: float = 0.1
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
-
-@dataclass
-class MTAdamOptimizerConfig:
-    type: str = 'mtadam'
-    momentum: Optional[float] = None
-    epsilon: Optional[float] = 1.0e-8
-    learning_rate: float = 0.001
-    warmup_start_factor: float = 0.00001
-    warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
-    annealing_steps_factor: int = 1
-    initialize: bool = True
 
 @dataclass
 class LambOptimizerConfig:
@@ -120,9 +108,9 @@ class LambOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-6
     learning_rate: float = 0.001
-    warmup_start_factor: float = 0.00001
+    warmup_start_factor: float = 0.1
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
@@ -146,8 +134,9 @@ class Config:
     initial_model_index: Optional[int] = None
     reward_plugin: Path = MISSING
     discount_factor: float = 1.0
-    expectile: float = MISSING
-    v_loss_scaling: float = 1.0
+    policy_model: Path = MISSING
+    policy_model_requires_softmax: bool = True
+    alpha: float = 1.0
     checkpointing: bool = False
     batch_size: int = MISSING
     gradient_accumulation_steps: int = 1
@@ -168,6 +157,5 @@ config_store.store(name='triple', node=TripleDecoderConfig, group='decoder')
 config_store.store(name='sgd', node=SgdOptimizerConfig, group='optimizer')
 config_store.store(name='adam', node=AdamOptimizerConfig, group='optimizer')
 config_store.store(name='radam', node=RAdamOptimizerConfig, group='optimizer')
-config_store.store(name='mtadam', node=MTAdamOptimizerConfig, group='optimizer')
 config_store.store(name='lamb', node=LambOptimizerConfig, group='optimizer')
 config_store.store(name='config', node=Config)
