@@ -21,7 +21,8 @@ from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
+from kanachan.training.constants import (
+    NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES, NUM_TYPES_OF_ACTIONS)
 from kanachan.training.common import Dataset
 import kanachan.training.cql.config # pylint: disable=unused-import
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
@@ -97,6 +98,7 @@ def _training(
             assert q.dim() == 2
             assert q.size(0) == local_batch_size
             assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
+            q = torch.where(annotation[3] < NUM_TYPES_OF_ACTIONS, q, 0.0)
             q_sa = q[torch.arange(local_batch_size), annotation[4]]
 
             _q = q_sa.detach().clone().mean()
@@ -111,7 +113,6 @@ def _training(
             assert policy.size(1) == MAX_NUM_ACTION_CANDIDATES
             if policy_model_requires_softmax:
                 policy = nn.Softmax(dim=1)(policy)
-            policy = policy[torch.arange(local_batch_size), annotation[4]]
 
             q_next: torch.Tensor = q_source_model(*(annotation[5:9]))
             assert q_next.dim() == 2
@@ -123,7 +124,7 @@ def _training(
 
             # Compute the regularization term.
             log_z = torch.logsumexp(q, dim=1)
-            regularizer = torch.mean(log_z - policy * q_sa)
+            regularizer = torch.mean(log_z - torch.sum(policy * q, dim=1))
 
             # Compute the TD error.
             td_error = (annotation[9] + discount_factor * q_max - q_sa) ** 2.0
@@ -172,15 +173,16 @@ def _training(
 
             if is_main_process:
                 logging.info(
-                    'sample = %s, loss = %s, gradient norm = %s',
-                    num_samples, loss_to_display, gradient_norm)
+                    'sample = %s, loss = %s, Q = %E, gradient norm = %s',
+                    num_samples, loss_to_display, q_to_display, gradient_norm)
                 summary_writer.add_scalar('Q', q_to_display, num_samples)
                 summary_writer.add_scalar('Loss', loss_to_display, num_samples)
                 summary_writer.add_scalar('Gradient Norm', gradient_norm, num_samples)
                 summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], num_samples)
         else:
             if is_main_process:
-                logging.info('sample = %s, loss = %s', num_samples, loss_to_display)
+                logging.info(
+                    'sample = %s, loss = %s, Q = %E', num_samples, loss_to_display, q_to_display)
                 summary_writer.add_scalar('Q', q_to_display, num_samples)
                 summary_writer.add_scalar('Loss', loss_to_display, num_samples)
 
