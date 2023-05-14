@@ -223,7 +223,6 @@ def _training(
                     optimizer.step()
                 else:
                     grad_scaler.step(optimizer)
-                    grad_scaler.update()
                 optimizer.zero_grad()
                 scheduler.step()
                 return gradient_norm
@@ -234,6 +233,8 @@ def _training(
                 q1_source_model, q_max_gradient_norm, q1_optimizer, q1_lr_scheduler)
             q2_gradient_norm = _step(
                 q2_source_model, q_max_gradient_norm, q2_optimizer, q2_lr_scheduler)
+            if grad_scaler is not None:
+                grad_scaler.update()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():
