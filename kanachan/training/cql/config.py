@@ -134,8 +134,6 @@ class Config:
     initial_model_index: Optional[int] = None
     reward_plugin: Path = MISSING
     discount_factor: float = 1.0
-    policy_model: Path = MISSING
-    policy_model_requires_softmax: bool = True
     alpha: float = 1.0
     checkpointing: bool = False
     batch_size: int = MISSING

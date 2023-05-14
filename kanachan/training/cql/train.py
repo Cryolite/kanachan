@@ -21,14 +21,13 @@ from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from kanachan.training.constants import (
-    NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES, NUM_TYPES_OF_ACTIONS)
+from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import Dataset
 import kanachan.training.cql.config # pylint: disable=unused-import
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.q_model import QDecoder, QModel
-from kanachan.model_loader import load_model, dump_object, dump_model
+from kanachan.model_loader import dump_object, dump_model
 
 
 SnapshotWriter = Callable[[Optional[int]], None]
@@ -38,8 +37,7 @@ def _training(
         *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
         is_main_process: bool, training_data: Path, num_workers: int, device: torch.device,
         dtype: torch.dtype, amp_dtype: torch.dtype, q_source_model: QModel, q_target_model: QModel,
-        reward_plugin: Path, discount_factor: float, policy_model: nn.Module,
-        policy_model_requires_softmax: bool, alpha: float, batch_size: int,
+        reward_plugin: Path, discount_factor: float, alpha: float, batch_size: int,
         gradient_accumulation_steps: int, max_gradient_norm: float, q_optimizer: Optimizer,
         scheduler #: lr_scheduler.LRScheduler
         , target_update_interval: int, target_update_rate: float,
@@ -98,21 +96,7 @@ def _training(
             assert q.dim() == 2
             assert q.size(0) == local_batch_size
             assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
-            q = torch.where(annotation[3] < NUM_TYPES_OF_ACTIONS, q, 0.0)
             q_sa = q[torch.arange(local_batch_size), annotation[4]]
-
-            _q = q_sa.detach().clone().mean()
-            if is_multiprocess:
-                all_reduce(_q)
-                _q /= world_size
-            q_to_display = _q.item()
-
-            policy: torch.Tensor = policy_model(*(annotation[:4]))
-            assert policy.dim() == 2
-            assert policy.size(0) == local_batch_size
-            assert policy.size(1) == MAX_NUM_ACTION_CANDIDATES
-            if policy_model_requires_softmax:
-                policy = nn.Softmax(dim=1)(policy)
 
             q_next: torch.Tensor = q_source_model(*(annotation[5:9]))
             assert q_next.dim() == 2
@@ -122,27 +106,33 @@ def _training(
             is_terminal_state = annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES
             q_max = torch.where(is_terminal_state, torch.zeros_like(q_max), q_max)
 
-            # Compute the regularization term.
-            log_z = torch.logsumexp(q, dim=1)
-            regularizer = torch.mean(log_z - torch.sum(policy * q, dim=1))
+        _q = q_sa.detach().clone().mean()
+        if is_multiprocess:
+            all_reduce(_q)
+            _q /= world_size
+        q_to_display = _q.item()
 
-            # Compute the TD error.
-            td_error = (annotation[9] + discount_factor * q_max - q_sa) ** 2.0
-            td_error = torch.mean(td_error) / 2.0
+        # Compute the regularization term.
+        log_z = torch.logsumexp(q, dim=1)
+        regularizer = torch.mean(log_z - q_sa)
 
-            loss = alpha * regularizer + td_error
+        # Compute the TD error.
+        td_error = (annotation[9] + discount_factor * q_max - q_sa) ** 2.0
+        td_error = torch.mean(td_error) / 2.0
 
-            _loss = loss.detach().clone()
-            if is_multiprocess:
-                all_reduce(_loss)
-                _loss /= world_size
-            loss_to_display = _loss.item()
+        loss = alpha * regularizer + td_error
 
-            loss /= gradient_accumulation_steps
-            if grad_scaler is None:
-                loss.backward()
-            else:
-                grad_scaler.scale(loss).backward()
+        _loss = loss.detach().clone()
+        if is_multiprocess:
+            all_reduce(_loss)
+            _loss /= world_size
+        loss_to_display = _loss.item()
+
+        loss /= gradient_accumulation_steps
+        if grad_scaler is None:
+            loss.backward()
+        else:
+            grad_scaler.scale(loss).backward()
 
         num_samples += world_batch_size
         num_consumed_samples += world_batch_size
@@ -441,11 +431,6 @@ def _main(config: DictConfig) -> None:
     if config.discount_factor <= 0.0 or 1.0 < config.discount_factor:
         raise RuntimeError(f'{config.discount_factor}: An invalid value for `discount_factor`.')
 
-    if not config.policy_model.exists():
-        raise RuntimeError(f'{config.policy_model}: Does not exist.')
-    if not config.policy_model.is_file():
-        raise RuntimeError(f'{config.policy_model}: Not a file')
-
     if config.alpha < 0.0:
         raise RuntimeError(f'{config.alpha}: `alpha` must be a non-negative real value.')
 
@@ -577,8 +562,6 @@ def _main(config: DictConfig) -> None:
                 logging.info('(Will not load optimizer)')
         logging.info('Reward plugin: %s', config.reward_plugin)
         logging.info('Discount factor: %f', config.discount_factor)
-        logging.info('Policy model: %s', config.policy_model)
-        logging.info('Policy model requires softmax: %s', config.policy_model_requires_softmax)
         logging.info('Alpha: %f', config.alpha)
         logging.info('Checkpointing: %s', config.checkpointing)
         if world_size is None:
@@ -748,10 +731,6 @@ def _main(config: DictConfig) -> None:
             scheduler.load_state_dict(
                 torch.load(scheduler_snapshot_path, map_location='cpu'))
 
-    policy_model = load_model(config.policy_model, map_location='cpu')
-    if config.device.type != 'cpu':
-        policy_model.cuda()
-
     if is_multiprocess:
         init_process_group(backend='nccl')
         q_source_model = DistributedDataParallel(q_source_model)
@@ -819,9 +798,7 @@ def _main(config: DictConfig) -> None:
             num_workers=config.num_workers, device=config.device.type, dtype=dtype,
             amp_dtype=amp_dtype, q_source_model=q_source_model, q_target_model=q_target_model,
             reward_plugin=config.reward_plugin, discount_factor=config.discount_factor,
-            policy_model=policy_model,
-            policy_model_requires_softmax=config.policy_model_requires_softmax, alpha=config.alpha,
-            batch_size=config.batch_size,
+            alpha=config.alpha, batch_size=config.batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             max_gradient_norm=config.max_gradient_norm, q_optimizer=q_optimizer,
             scheduler=scheduler, target_update_interval=config.target_update_interval,
