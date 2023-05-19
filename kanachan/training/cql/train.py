@@ -39,7 +39,7 @@ def _training(
         dtype: torch.dtype, amp_dtype: torch.dtype, q_source_model: QModel, q_target_model: QModel,
         reward_plugin: Path, discount_factor: float, alpha: float, batch_size: int,
         gradient_accumulation_steps: int, max_gradient_norm: float, q_optimizer: Optimizer,
-        scheduler #: lr_scheduler.LRScheduler
+        scheduler #: Optional[lr_scheduler.LRScheduler]
         , target_update_interval: int, target_update_rate: float,
         snapshot_interval: int, num_samples: int, summary_writer: SummaryWriter,
         snapshot_writer: SnapshotWriter) -> None:
@@ -150,7 +150,8 @@ def _training(
             else:
                 grad_scaler.step(q_optimizer)
                 grad_scaler.update()
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
             q_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
@@ -168,7 +169,8 @@ def _training(
                 summary_writer.add_scalar('Q', q_to_display, num_samples)
                 summary_writer.add_scalar('Loss', loss_to_display, num_samples)
                 summary_writer.add_scalar('Gradient Norm', gradient_norm, num_samples)
-                summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], num_samples)
+                if scheduler is not None:
+                    summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], num_samples)
         else:
             if is_main_process:
                 logging.info(
@@ -661,13 +663,29 @@ def _main(config: DictConfig) -> None:
     else:
         raise NotImplementedError(config.optimizer.type)
 
-    warmup_scheduler = lr_scheduler.LinearLR(
-        q_optimizer, start_factor=config.optimizer.warmup_start_factor,
-        total_iters=config.optimizer.warmup_steps)
-    annealing_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-        q_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
-    scheduler = lr_scheduler.SequentialLR(
-        q_optimizer, [warmup_scheduler, annealing_scheduler], [warmup_scheduler.total_iters])
+    if config.optimizer.warmup_steps == 0:
+        warmup_scheduler = None
+    else:
+        warmup_scheduler = lr_scheduler.LinearLR(
+            q_optimizer, start_factor=config.optimizer.warmup_start_factor,
+            total_iters=config.optimizer.warmup_steps)
+    if config.optimizer.annealing_steps == 0:
+        annealing_scheduler = None
+    else:
+        annealing_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+            q_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    if warmup_scheduler is None and annealing_scheduler is None:
+        scheduler = None
+    elif warmup_scheduler is not None and annealing_scheduler is not None:
+        scheduler = lr_scheduler.SequentialLR(
+            q_optimizer, [warmup_scheduler, annealing_scheduler], [warmup_scheduler.total_iters])
+    elif warmup_scheduler is not None:
+        assert annealing_scheduler is None
+        scheduler = warmup_scheduler
+    else:
+        assert warmup_scheduler is None
+        assert annealing_scheduler is not None
+        scheduler = annealing_scheduler
 
     if config.encoder.load_from is not None:
         assert config.initial_model is None
