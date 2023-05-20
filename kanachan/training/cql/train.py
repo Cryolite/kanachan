@@ -769,7 +769,8 @@ def _main(config: DictConfig) -> None:
         torch.save(q_target_encoder.state_dict(), snapshots_path / f'q-target-encoder{infix}.pth')
         torch.save(q_target_decoder.state_dict(), snapshots_path / f'q-target-decoder{infix}.pth')
         torch.save(q_optimizer.state_dict(), snapshots_path / f'q-optimizer{infix}.pth')
-        torch.save(scheduler.state_dict(), snapshots_path / f'lr-scheduler{infix}.pth')
+        if scheduler is not None:
+            torch.save(scheduler.state_dict(), snapshots_path / f'lr-scheduler{infix}.pth')
 
         q_model = QModel(q_target_encoder, q_target_decoder)
         q_model_state = dump_object(
