@@ -746,8 +746,10 @@ def _main(config: DictConfig) -> None:
         if q_optimizer_snapshot_path is not None:
             q_optimizer.load_state_dict(
                 torch.load(q_optimizer_snapshot_path, map_location='cpu'))
-            scheduler.load_state_dict(
-                torch.load(scheduler_snapshot_path, map_location='cpu'))
+
+    if scheduler is not None and scheduler_snapshot_path is not None:
+        scheduler.load_state_dict(
+            torch.load(scheduler_snapshot_path, map_location='cpu'))
 
     if is_multiprocess:
         init_process_group(backend='nccl')
