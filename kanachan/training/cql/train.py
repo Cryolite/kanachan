@@ -417,13 +417,8 @@ def _main(config: DictConfig) -> None:
             q_optimizer_snapshot_path = None
 
         scheduler_snapshot_path: Path = config.initial_model_prefix / f'lr-scheduler{infix}.pth'
-        if q_optimizer_snapshot_path is None:
+        if not scheduler_snapshot_path.is_file() or config.optimizer.initialize:
             scheduler_snapshot_path = None
-        else:
-            if not scheduler_snapshot_path.exists():
-                raise RuntimeError(f'{scheduler_snapshot_path}: Does not exist.')
-            if not scheduler_snapshot_path.is_file():
-                raise RuntimeError(f'{scheduler_snapshot_path}: Not a file.')
 
     if not config.reward_plugin.exists():
         raise RuntimeError(f'{config.reward_plugin}: Does not exist.')
