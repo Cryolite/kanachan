@@ -63,12 +63,12 @@ BackwardResult = Tuple[torch.Tensor, torch.Tensor, float, float]
 
 
 def _backward(
-        *, is_multiprocess: bool, world_size: Optional[int], annotation: Annotation,
-        device: torch.device, dtype: torch.dtype, amp_dtype: torch.dtype, qv_source_model: QVModel,
-        qv_optimizer: Optimizer, reward: float, discount_factor: float, expectile: float,
-        v_loss_scaling: float, gradient_accumulation_steps: int, grad_scaler: GradScaler,
-        q_target: float, local_batch_size: int) -> BackwardResult:
-    with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+        *, is_multiprocess: bool, world_size: Optional[int], is_amp_enabled: bool,
+        annotation: Annotation, device: torch.device, amp_dtype: torch.dtype,
+        qv_source_model: QVModel, qv_optimizer: Optimizer, reward: float, discount_factor: float,
+        expectile: float, v_loss_scaling: float, gradient_accumulation_steps: int,
+        grad_scaler: GradScaler, q_target: float, local_batch_size: int) -> BackwardResult:
+    with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
         q, v = qv_source_model(*(annotation[:4]))
     q: torch.Tensor
     v: torch.Tensor
@@ -84,7 +84,7 @@ def _backward(
         all_reduce(v_batch_mean)
         v_batch_mean /= world_size
 
-    with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+    with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
         _, vv = qv_source_model(*(annotation[5:9]))
     vv: torch.Tensor
     is_terminal_state = (annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES)
@@ -163,6 +163,8 @@ def _training(
         summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
+    is_amp_enabled = (device != 'cpu' and dtype != amp_dtype)
+
     # Load the reward plugin.
     with open(reward_plugin, encoding='UTF-8') as file_pointer:
         exec(file_pointer.read(), globals()) # pylint: disable=exec-used
@@ -184,7 +186,7 @@ def _training(
     batch_count = 0
 
     grad_scaler = None
-    if device != 'cpu' and not isinstance(qv1_optimizer, MTAdam):
+    if is_amp_enabled and not isinstance(qv1_optimizer, MTAdam):
         assert not isinstance(qv2_optimizer, MTAdam)
         grad_scaler = GradScaler()
 
@@ -211,7 +213,7 @@ def _training(
         world_batch_size = batch_size
 
         # Compute the Q target value.
-        with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+        with torch.no_grad(), torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
             q1_target, q1_batch_mean = _get_q_target(
                 is_multiprocess=is_multiprocess, world_size=world_size,
                 annotation=annotation, qv_target_model=qv1_target_model,
@@ -228,19 +230,19 @@ def _training(
 
         # Backprop for the QV1 source model.
         q1_loss, v1_loss, v1_batch_mean, qv1_batch_loss = _backward(
-            is_multiprocess=is_multiprocess, world_size=world_size, annotation=annotation,
-            device=device, dtype=dtype, amp_dtype=amp_dtype, qv_source_model=qv1_source_model,
-            qv_optimizer=qv1_optimizer, reward=reward, discount_factor=discount_factor,
-            expectile=expectile, v_loss_scaling=v_loss_scaling,
+            is_multiprocess=is_multiprocess, world_size=world_size, is_amp_enabled=is_amp_enabled,
+            annotation=annotation, device=device, amp_dtype=amp_dtype,
+            qv_source_model=qv1_source_model, qv_optimizer=qv1_optimizer, reward=reward,
+            discount_factor=discount_factor, expectile=expectile, v_loss_scaling=v_loss_scaling,
             gradient_accumulation_steps=gradient_accumulation_steps, grad_scaler=grad_scaler,
             q_target=q_target, local_batch_size=local_batch_size)
 
         # Backprop for the QV2 source model.
         q2_loss, v2_loss, v2_batch_mean, qv2_batch_loss = _backward(
-            is_multiprocess=is_multiprocess, world_size=world_size, annotation=annotation,
-            device=device, dtype=dtype, amp_dtype=amp_dtype, qv_source_model=qv2_source_model,
-            qv_optimizer=qv2_optimizer, reward=reward, discount_factor=discount_factor,
-            expectile=expectile, v_loss_scaling=v_loss_scaling,
+            is_multiprocess=is_multiprocess, world_size=world_size, is_amp_enabled=is_amp_enabled,
+            annotation=annotation, device=device, amp_dtype=amp_dtype,
+            qv_source_model=qv2_source_model, qv_optimizer=qv2_optimizer, reward=reward,
+            discount_factor=discount_factor, expectile=expectile, v_loss_scaling=v_loss_scaling,
             gradient_accumulation_steps=gradient_accumulation_steps, grad_scaler=grad_scaler,
             q_target=q_target, local_batch_size=local_batch_size)
 
@@ -372,22 +374,30 @@ def _main(config: DictConfig) -> None:
     dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.dtype]
 
     if config.device.type == 'cpu':
         if config.device.amp_dtype is not None:
             raise RuntimeError('AMP is not supported on CPU.')
-        config.device.amp_dtype = 'bfloat16'
-    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype is None:
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.amp_dtype}: An invalid AMP dtype.')
     amp_dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.amp_dtype]
+    if dtype == torch.float32 and amp_dtype == torch.float64:
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
+    if dtype == torch.float16 and amp_dtype in (torch.float64, torch.float32):
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
 
     if backends.cudnn.is_available():
         backends.cudnn.benchmark = True
@@ -668,7 +678,10 @@ def _main(config: DictConfig) -> None:
         else:
             logging.info('cuDNN: N/A')
         logging.info('dtype: %s', dtype)
-        logging.info('AMP dtype: %s', amp_dtype)
+        if dtype == amp_dtype:
+            logging.info('AMP dtype: (AMP is disabled)')
+        else:
+            logging.info('AMP dtype: %s', amp_dtype)
         logging.info('Position encoder: %s', config.encoder.position_encoder)
         logging.info('Encoder dimension: %d', config.encoder.dimension)
         logging.info('# of heads for encoder: %d', config.encoder.num_heads)

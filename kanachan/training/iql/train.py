@@ -52,6 +52,8 @@ def _training(
         num_samples: int, summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
+    is_amp_enabled = (device != 'cpu' and dtype != amp_dtype)
+
     # Load the reward plugin.
     with open(reward_plugin, encoding='UTF-8') as file_pointer:
         exec(file_pointer.read(), globals()) # pylint: disable=exec-used
@@ -73,7 +75,7 @@ def _training(
     batch_count = 0
 
     grad_scaler = None
-    if device != 'cpu':
+    if is_amp_enabled:
         grad_scaler = GradScaler()
 
     batch_count = 0
@@ -100,7 +102,7 @@ def _training(
         # Get the Q target value to compute the loss of the V model.
         with torch.no_grad():
             def _compute_q_target(q_target_model: nn.Module) -> Tuple[torch.Tensor, float]:
-                with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+                with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
                     q: torch.Tensor = q_target_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
                 assert q.dim() == 2
                 assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
@@ -126,7 +128,7 @@ def _training(
             assert(q.size(0) == local_batch_size)
 
         # Backprop for the V model.
-        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
             value: torch.Tensor = value_model(*(annotation[:4]))
         assert(value.dim() == 1)
         assert(value.size(0) == local_batch_size)
@@ -163,7 +165,7 @@ def _training(
 
         # Get V to compute the loss of the Q source models.
         with torch.no_grad():
-            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
                 value = value_model(*(annotation[5:9]))
             assert(value.dim() == 1)
             assert(value.size(0) == local_batch_size)
@@ -171,7 +173,7 @@ def _training(
             value = value.detach()
 
         def _backprop(q_source_model: nn.Module) -> float:
-            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
                 q: torch.Tensor = q_source_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
             assert q.dim() == 2
             assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
@@ -340,27 +342,35 @@ def _main(config: DictConfig) -> None:
     if config.device.type == 'cuda':
         torch.cuda.set_device(rank)
 
-    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.dtype}: An invalid dtype.')
     dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.dtype]
 
     if config.device.type == 'cpu':
         if config.device.amp_dtype is not None:
             raise RuntimeError('AMP is not supported on CPU.')
-        config.device.amp_dtype = 'bfloat16'
-    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype is None:
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.amp_dtype}: An invalid AMP dtype.')
     amp_dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.amp_dtype]
+    if dtype == torch.float32 and amp_dtype == torch.float64:
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
+    if dtype == torch.float16 and amp_dtype in (torch.float64, torch.float32):
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
 
     if backends.cudnn.is_available():
         backends.cudnn.benchmark = True
@@ -653,7 +663,10 @@ def _main(config: DictConfig) -> None:
         else:
             logging.info('cuDNN: N/A')
         logging.info('dtype: %s', dtype)
-        logging.info('AMP dtype: %s', amp_dtype)
+        if dtype == amp_dtype:
+            logging.info('AMP dtype: (AMP is disabled)')
+        else:
+            logging.info('AMP dtype: %s', amp_dtype)
         logging.info('Position encoder: %s', config.encoder.position_encoder)
         logging.info('Encoder dimension: %d', config.encoder.dimension)
         logging.info('# of heads for encoder: %d', config.encoder.num_heads)

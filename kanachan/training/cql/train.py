@@ -45,6 +45,8 @@ def _training(
         snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
+    is_amp_enabled = (device != 'cpu' and dtype != amp_dtype)
+
     # Load the reward plugin.
     with open(reward_plugin, encoding='UTF-8') as file_pointer:
         exec(file_pointer.read(), globals()) # pylint: disable=exec-used
@@ -66,7 +68,7 @@ def _training(
     batch_count = 0
 
     grad_scaler = None
-    if device != 'cpu':
+    if is_amp_enabled:
         grad_scaler = GradScaler()
 
     for annotation in data_loader:
@@ -91,7 +93,7 @@ def _training(
         local_batch_size = annotation[0].size(0)
         world_batch_size = batch_size
 
-        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
             q: torch.Tensor = q_source_model(*(annotation[:4]))
             assert q.dim() == 2
             assert q.size(0) == local_batch_size
@@ -236,8 +238,7 @@ def _main(config: DictConfig) -> None:
     dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.dtype]
 
     if config.device.type == 'cpu':
@@ -251,15 +252,16 @@ def _main(config: DictConfig) -> None:
     amp_dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.amp_dtype]
     if amp_dtype == torch.float64 and dtype in (torch.float32, torch.float16):
         raise RuntimeError(
-            f'An invalid combination of `dtype` (`{dtype}`) and `amp_dtype` (`{amp_dtype}`).')
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
     if amp_dtype == torch.float32 and dtype == torch.float16:
         raise RuntimeError(
-            f'An invalid combination of `dtype` (`{dtype}`) and `amp_dtype` (`{amp_dtype}`).')
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
 
     if backends.cudnn.is_available():
         backends.cudnn.benchmark = True
@@ -531,7 +533,10 @@ def _main(config: DictConfig) -> None:
         else:
             logging.info('cuDNN: N/A')
         logging.info('dtype: %s', dtype)
-        logging.info('AMP dtype: %s', amp_dtype)
+        if dtype == amp_dtype:
+            logging.info('AMP dtype: (AMP is disabled)')
+        else:
+            logging.info('AMP dtype: %s', amp_dtype)
         logging.info('Position encoder: %s', config.encoder.position_encoder)
         logging.info('Encoder dimension: %d', config.encoder.dimension)
         logging.info('# of heads for encoder: %d', config.encoder.num_heads)
