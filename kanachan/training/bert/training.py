@@ -99,6 +99,8 @@ def _train(
         snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
 
+    is_amp_enabled = (device != 'cpu' and dtype != amp_dtype)
+
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
     dataset = Dataset(training_data, iterator_adaptor_type)
@@ -114,7 +116,7 @@ def _train(
     batch_count = 0
 
     grad_scaler = None
-    if device != 'cpu':
+    if is_amp_enabled:
         grad_scaler = GradScaler()
 
     for annotation in data_loader:
@@ -136,7 +138,7 @@ def _train(
         if device != 'cpu':
             annotation = tuple(x.cuda() for x in annotation)
 
-        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
             prediction = model(*(annotation[:4]))
         loss = loss_function(prediction, *(annotation[4:]))
         if math.isnan(loss.item()):
@@ -251,27 +253,35 @@ def main(
     if config.device.type == 'cuda':
         torch.cuda.set_device(rank)
 
-    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.dtype}: An invalid dtype.')
     dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.dtype]
 
     if config.device.type == 'cpu':
         if config.device.amp_dtype is not None:
             raise RuntimeError('AMP is not supported on CPU.')
-        config.device.amp_dtype = 'bfloat16'
-    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype is None:
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.amp_dtype}: An invalid AMP dtype.')
     amp_dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.amp_dtype]
+    if dtype == torch.float32 and amp_dtype == torch.float64:
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
+    if dtype == torch.float16 and amp_dtype in (torch.float64, torch.float32):
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
 
     if backends.cudnn.is_available():
         backends.cudnn.benchmark = True
@@ -504,7 +514,10 @@ def main(
         else:
             logging.info('cuDNN: N/A')
         logging.info('dtype: %s', dtype)
-        logging.info('AMP dtype: %s', amp_dtype)
+        if dtype == amp_dtype:
+            logging.info('AMP dtype: (AMP is disabled)')
+        else:
+            logging.info('AMP dtype: %s', amp_dtype)
         logging.info('Position encoder: %s', config.encoder.position_encoder)
         logging.info('Encoder dimension: %d', config.encoder.dimension)
         logging.info('# of heads for encoder: %d', config.encoder.num_heads)
