@@ -22,7 +22,7 @@ from torch.distributed import init_process_group, all_reduce, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
-from kanachan.training.common import Dataset
+from kanachan.training.common import Dataset, get_gradient, is_gradient_nan
 import kanachan.training.cql.config # pylint: disable=unused-import
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
@@ -141,19 +141,23 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if grad_scaler is not None:
-                grad_scaler.unscale_(q_optimizer)
-            gradient = nn.utils.parameters_to_vector(q_source_model.parameters())
-            gradient_norm: float = torch.linalg.vector_norm(gradient).item()
-            nn.utils.clip_grad_norm_(
-                q_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-            if grad_scaler is None:
-                q_optimizer.step()
+            if is_gradient_nan(q_source_model):
+                logging.warning('Skip an optimization step because of a NaN in the gradient.')
             else:
-                grad_scaler.step(q_optimizer)
-                grad_scaler.update()
-            if scheduler is not None:
-                scheduler.step()
+                if grad_scaler is not None:
+                    grad_scaler.unscale_(q_optimizer)
+                gradient = get_gradient(q_source_model)
+                gradient_norm: float = torch.linalg.vector_norm(gradient).item()
+                nn.utils.clip_grad_norm_(
+                    q_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+                if grad_scaler is None:
+                    q_optimizer.step()
+                else:
+                    grad_scaler.step(q_optimizer)
+                    grad_scaler.update()
+                if scheduler is not None:
+                    scheduler.step()
+
             q_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
