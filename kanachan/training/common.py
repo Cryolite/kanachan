@@ -3,7 +3,8 @@
 import re
 from pathlib import Path
 import logging
-from typing import (Optional, Union,)
+from typing import NoReturn, Optional, Union
+import torch
 from torch import nn
 from torch.utils.data import IterableDataset
 
@@ -46,3 +47,16 @@ class Dataset(IterableDataset):
 
     def __iter__(self):
         return self.__iterator_adaptor(self.__path)
+
+    def __getitem__(self, index) -> NoReturn:
+        raise NotImplementedError('Not implemented.')
+
+
+def get_gradient(model: nn.Module) -> torch.Tensor:
+    gradient = [param.grad.view(-1) for param in model.parameters() if param.grad is not None]
+    return torch.cat(gradient)
+
+
+def is_gradient_nan(model: nn.Module) -> bool:
+    gradient = get_gradient(model)
+    return torch.any(torch.isnan(gradient)).item()

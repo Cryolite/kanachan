@@ -24,7 +24,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
 from mtadam import MTAdam
 from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
-from kanachan.training.common import Dataset
+from kanachan.training.common import Dataset, is_gradient_nan, get_gradient
 import kanachan.training.ilql.config # pylint: disable=unused-import
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
@@ -126,7 +126,7 @@ def _step(
         ) -> float:
     if grad_scaler is not None:
         grad_scaler.unscale_(qv_optimizer)
-    qv_gradient = nn.utils.parameters_to_vector(qv_source_model.parameters())
+    qv_gradient = get_gradient(qv_source_model)
     qv_gradient_norm: float = torch.linalg.vector_norm(qv_gradient).item()
     nn.utils.clip_grad_norm_(
         qv_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
@@ -137,8 +137,9 @@ def _step(
             qv_optimizer.step()
         else:
             grad_scaler.step(qv_optimizer)
-    qv_optimizer.zero_grad()
-    scheduler.step()
+    if scheduler is not None:
+        scheduler.step()
+
     return qv_gradient_norm
 
 
@@ -251,16 +252,22 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            qv1_gradient_norm = _step(
-                qv_source_model=qv1_source_model, q_loss=q1_loss, v_loss=v1_loss,
-                grad_scaler=grad_scaler, max_gradient_norm=max_gradient_norm,
-                qv_optimizer=qv1_optimizer, scheduler=lr_scheduler1)
-            qv2_gradient_norm = _step(
-                qv_source_model=qv2_source_model, q_loss=q2_loss, v_loss=v2_loss,
-                grad_scaler=grad_scaler, max_gradient_norm=max_gradient_norm,
-                qv_optimizer=qv2_optimizer, scheduler=lr_scheduler2)
-            if grad_scaler is not None:
-                grad_scaler.update()
+            if is_gradient_nan(qv1_source_model) or is_gradient_nan(qv2_source_model):
+                logging.warning('Skip an optimization step because of a NaN in the gradient.')
+            else:
+                qv1_gradient_norm = _step(
+                    qv_source_model=qv1_source_model, q_loss=q1_loss, v_loss=v1_loss,
+                    grad_scaler=grad_scaler, max_gradient_norm=max_gradient_norm,
+                    qv_optimizer=qv1_optimizer, scheduler=lr_scheduler1)
+                qv2_gradient_norm = _step(
+                    qv_source_model=qv2_source_model, q_loss=q2_loss, v_loss=v2_loss,
+                    grad_scaler=grad_scaler, max_gradient_norm=max_gradient_norm,
+                    qv_optimizer=qv2_optimizer, scheduler=lr_scheduler2)
+                if grad_scaler is not None:
+                    grad_scaler.update()
+
+            qv1_optimizer.zero_grad()
+            qv2_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():

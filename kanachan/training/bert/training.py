@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from torch.distributed import init_process_group, all_reduce, barrier
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from kanachan.training.common import Dataset
+from kanachan.training.common import Dataset, get_gradient, is_gradient_nan
 from kanachan.training.iterator_adaptor_base import IteratorAdaptorBase
 from kanachan.training.bert.encoder import Encoder
 from kanachan.model_loader import dump_model, dump_object
@@ -161,17 +161,21 @@ def _train(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if grad_scaler is not None:
-                grad_scaler.unscale_(optimizer)
-            gradient = nn.utils.parameters_to_vector(model.parameters())
-            gradient_norm: float = torch.linalg.vector_norm(gradient).item()
-            nn.utils.clip_grad_norm_(
-                model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-            if grad_scaler is None:
-                optimizer.step()
+            if is_gradient_nan(model):
+                logging.warning('Skip an optimization step because of a NaN in the gradient.')
             else:
-                grad_scaler.step(optimizer)
-                grad_scaler.update()
+                if grad_scaler is not None:
+                    grad_scaler.unscale_(optimizer)
+                gradient = get_gradient(model)
+                gradient_norm: float = torch.linalg.vector_norm(gradient).item()
+                nn.utils.clip_grad_norm_(
+                    model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+                if grad_scaler is None:
+                    optimizer.step()
+                else:
+                    grad_scaler.step(optimizer)
+                    grad_scaler.update()
+
             optimizer.zero_grad()
 
             if is_main_process:
