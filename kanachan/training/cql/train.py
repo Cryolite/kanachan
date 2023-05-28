@@ -26,7 +26,7 @@ from kanachan.training.common import Dataset, get_gradient, is_gradient_nan
 import kanachan.training.cql.config # pylint: disable=unused-import
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
 from kanachan.training.bert.encoder import Encoder
-from kanachan.training.iql.q_model import QDecoder, QModel
+from kanachan.training.cql.q_model import ThetaDecoder, ThetaModel, QModel
 from kanachan.model_loader import dump_object, dump_model
 
 
@@ -36,9 +36,10 @@ SnapshotWriter = Callable[[Optional[int]], None]
 def _training(
         *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
         is_main_process: bool, training_data: Path, num_workers: int, device: torch.device,
-        dtype: torch.dtype, amp_dtype: torch.dtype, q_source_model: QModel, q_target_model: QModel,
-        reward_plugin: Path, discount_factor: float, alpha: float, batch_size: int,
-        gradient_accumulation_steps: int, max_gradient_norm: float, q_optimizer: Optimizer,
+        dtype: torch.dtype, amp_dtype: torch.dtype, num_qr_intervals: int,
+        theta_source_model: ThetaModel, theta_target_model: ThetaModel, reward_plugin: Path,
+        discount_factor: float, kappa: float, alpha: float, batch_size: int,
+        gradient_accumulation_steps: int, max_gradient_norm: float, optimizer: Optimizer,
         scheduler #: Optional[lr_scheduler.LRScheduler]
         , target_update_interval: int, target_update_rate: float,
         snapshot_interval: int, num_samples: int, summary_writer: SummaryWriter,
@@ -94,19 +95,35 @@ def _training(
         world_batch_size = batch_size
 
         with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
-            q: torch.Tensor = q_source_model(*(annotation[:4]))
+            theta: torch.Tensor = theta_source_model(*(annotation[:4]))
+            assert theta.dim() == 3
+            assert theta.size(0) == local_batch_size
+            assert theta.size(1) == num_qr_intervals
+            assert theta.size(2) == MAX_NUM_ACTION_CANDIDATES
+            q = torch.sum(theta * (1.0 / num_qr_intervals), dim=1)
             assert q.dim() == 2
             assert q.size(0) == local_batch_size
             assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
-            q_sa = q[torch.arange(local_batch_size), annotation[4]]
+            theta_sa = theta[torch.arange(local_batch_size), :, annotation[4]]
+            assert theta_sa.dim() == 2
+            assert theta_sa.size(0) == local_batch_size
+            assert theta_sa.size(1) == num_qr_intervals
+            q_sa = torch.sum(theta_sa * (1.0 / num_qr_intervals), dim=1)
+            assert q_sa.dim() == 1
+            assert q_sa.size(0) == local_batch_size
 
-            q_next: torch.Tensor = q_source_model(*(annotation[5:9]))
+            theta_next: torch.Tensor = theta_source_model(*(annotation[5:9]))
+            assert theta_next.dim() == 3
+            assert theta_next.size(0) == local_batch_size
+            assert theta_next.size(1) == num_qr_intervals
+            assert theta_next.size(2) == MAX_NUM_ACTION_CANDIDATES
+            q_next = torch.sum(theta_next * (1.0 / num_qr_intervals), dim=1)
             assert q_next.dim() == 2
             assert q_next.size(0) == local_batch_size
             assert q_next.size(1) == MAX_NUM_ACTION_CANDIDATES
-            q_max = torch.max(q_next, dim=1).values
-            is_terminal_state = annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES
-            q_max = torch.where(is_terminal_state, torch.zeros_like(q_max), q_max)
+            a_star = torch.argmax(q_next, dim=1)
+            assert a_star.dim() == 1
+            assert a_star.size(0) == local_batch_size
 
         _q = q_sa.detach().clone().mean()
         if is_multiprocess:
@@ -119,8 +136,34 @@ def _training(
         regularizer = torch.mean(log_z - q_sa)
 
         # Compute the TD error.
-        td_error = (annotation[9] + discount_factor * q_max - q_sa) ** 2.0
-        td_error = torch.mean(td_error) / 2.0
+        theta_ssaa = theta_next[torch.arange(local_batch_size), :, a_star]
+        assert theta_ssaa.dim() == 2
+        assert theta_ssaa.size(0) == local_batch_size
+        assert theta_ssaa.size(1) == num_qr_intervals
+        is_terminal_state = annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES
+        assert is_terminal_state.dim() == 1
+        assert is_terminal_state.size(0) == local_batch_size
+        is_terminal_state = torch.unsqueeze(is_terminal_state, dim=1).expand_as(theta_ssaa)
+        theta_ssaa = torch.where(is_terminal_state, torch.zeros_like(theta_ssaa), theta_ssaa)
+        theta_ssaa = torch.unsqueeze(theta_ssaa, dim=1)
+        theta_j = theta_ssaa.expand((local_batch_size, num_qr_intervals, num_qr_intervals))
+
+        theta_sa = torch.unsqueeze(theta_sa, dim=2)
+        theta_i = theta_sa.expand((local_batch_size, num_qr_intervals, num_qr_intervals))
+
+        u: torch.Tensor = annotation[9] + discount_factor * theta_j - theta_i
+        lu = torch.where(torch.abs(u) < kappa, (u ** 2.0) / 2.0, kappa * (torch.abs(u) - 0.5 * kappa))
+        factor_i = torch.arange(num_qr_intervals, device=u.device, dtype=u.dtype) / num_qr_intervals
+        factor_i += 1.0 / num_qr_intervals
+        factor_i = torch.unsqueeze(factor_i, dim=0)
+        factor_i = torch.unsqueeze(factor_i, dim=2)
+        factor_i = factor_i.expand_as(u).clone()
+        factor_i -= torch.where(u < 0.0, torch.ones_like(u), torch.zeros_like(u))
+        del u
+        rho = factor_i * lu / kappa
+        del lu
+        del factor_i
+        td_error = torch.mean(torch.sum(torch.mean(rho, dim=2), dim=1))
 
         loss = alpha * regularizer + td_error
 
@@ -141,34 +184,35 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if is_gradient_nan(q_source_model):
+            if False and is_gradient_nan(theta_source_model):
                 logging.warning('Skip an optimization step because of a NaN in the gradient.')
+                gradient_norm = None
             else:
                 if grad_scaler is not None:
-                    grad_scaler.unscale_(q_optimizer)
-                gradient = get_gradient(q_source_model)
+                    grad_scaler.unscale_(optimizer)
+                gradient = get_gradient(theta_source_model)
                 gradient_norm: float = torch.linalg.vector_norm(gradient).item()
                 nn.utils.clip_grad_norm_(
-                    q_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
+                    theta_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
                 if grad_scaler is None:
-                    q_optimizer.step()
+                    optimizer.step()
                 else:
-                    grad_scaler.step(q_optimizer)
+                    grad_scaler.step(optimizer)
                     grad_scaler.update()
                 if scheduler is not None:
                     scheduler.step()
 
-            q_optimizer.zero_grad()
+            optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():
-                    param_source = nn.utils.parameters_to_vector(q_source_model.parameters())
-                    param_target = nn.utils.parameters_to_vector(q_target_model.parameters())
+                    param_source = nn.utils.parameters_to_vector(theta_source_model.parameters())
+                    param_target = nn.utils.parameters_to_vector(theta_target_model.parameters())
                     param_target *= (1.0 - target_update_rate)
                     param_target += target_update_rate * param_source
-                    nn.utils.vector_to_parameters(param_target, q_target_model.parameters())
+                    nn.utils.vector_to_parameters(param_target, theta_target_model.parameters())
 
-            if is_main_process:
+            if is_main_process and gradient_norm is not None:
                 logging.info(
                     'sample = %s, loss = %s, Q = %E, gradient norm = %s',
                     num_samples, loss_to_display, q_to_display, gradient_norm)
@@ -374,7 +418,7 @@ def _main(config: DictConfig) -> None:
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
                 match = re.search(
-                    '^(?:q-(?:source|target)-(?:encoder|decoder)|q-optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$',
+                    '^(?:theta-(?:source|target)-(?:encoder|decoder)|optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$',
                     child)
                 if match is None:
                     continue
@@ -394,33 +438,37 @@ def _main(config: DictConfig) -> None:
             num_samples = config.initial_model_index
             infix = f'.{num_samples}'
 
-        q_source_encoder_snapshot_path: Path = config.initial_model_prefix / f'q-source-encoder{infix}.pth'
-        if not q_source_encoder_snapshot_path.exists():
-            raise RuntimeError(f'{q_source_encoder_snapshot_path}: Does not exist.')
-        if not q_source_encoder_snapshot_path.is_file():
-            raise RuntimeError(f'{q_source_encoder_snapshot_path}: Not a file.')
+        theta_source_encoder_snapshot_path: Path \
+            = config.initial_model_prefix / f'theta-source-encoder{infix}.pth'
+        if not theta_source_encoder_snapshot_path.exists():
+            raise RuntimeError(f'{theta_source_encoder_snapshot_path}: Does not exist.')
+        if not theta_source_encoder_snapshot_path.is_file():
+            raise RuntimeError(f'{theta_source_encoder_snapshot_path}: Not a file.')
 
-        q_source_decoder_snapshot_path: Path = config.initial_model_prefix / f'q-source-decoder{infix}.pth'
-        if not q_source_decoder_snapshot_path.exists():
-            raise RuntimeError(f'{q_source_decoder_snapshot_path}: Does not exist.')
-        if not q_source_decoder_snapshot_path.is_file():
-            raise RuntimeError(f'{q_source_decoder_snapshot_path}: Not a file.')
+        theta_source_decoder_snapshot_path: Path \
+            = config.initial_model_prefix / f'theta-source-decoder{infix}.pth'
+        if not theta_source_decoder_snapshot_path.exists():
+            raise RuntimeError(f'{theta_source_decoder_snapshot_path}: Does not exist.')
+        if not theta_source_decoder_snapshot_path.is_file():
+            raise RuntimeError(f'{theta_source_decoder_snapshot_path}: Not a file.')
 
-        q_target_encoder_snapshot_path: Path = config.initial_model_prefix / f'q-target-encoder{infix}.pth'
-        if not q_target_encoder_snapshot_path.exists():
-            raise RuntimeError(f'{q_target_encoder_snapshot_path}: Does not exist.')
-        if not q_target_encoder_snapshot_path.is_file():
-            raise RuntimeError(f'{q_target_encoder_snapshot_path}: Not a file.')
+        theta_target_encoder_snapshot_path: Path \
+            = config.initial_model_prefix / f'theta-target-encoder{infix}.pth'
+        if not theta_target_encoder_snapshot_path.exists():
+            raise RuntimeError(f'{theta_target_encoder_snapshot_path}: Does not exist.')
+        if not theta_target_encoder_snapshot_path.is_file():
+            raise RuntimeError(f'{theta_target_encoder_snapshot_path}: Not a file.')
 
-        q_target_decoder_snapshot_path: Path = config.initial_model_prefix / f'q-target-decoder{infix}.pth'
-        if not q_target_decoder_snapshot_path.exists():
-            raise RuntimeError(f'{q_target_decoder_snapshot_path}: Does not exist.')
-        if not q_target_decoder_snapshot_path.is_file():
-            raise RuntimeError(f'{q_target_decoder_snapshot_path}: Not a file.')
+        theta_target_decoder_snapshot_path: Path \
+            = config.initial_model_prefix / f'theta-target-decoder{infix}.pth'
+        if not theta_target_decoder_snapshot_path.exists():
+            raise RuntimeError(f'{theta_target_decoder_snapshot_path}: Does not exist.')
+        if not theta_target_decoder_snapshot_path.is_file():
+            raise RuntimeError(f'{theta_target_decoder_snapshot_path}: Not a file.')
 
-        q_optimizer_snapshot_path: Path = config.initial_model_prefix / f'q-optimizer{infix}.pth'
-        if not q_optimizer_snapshot_path.is_file() or config.optimizer.initialize:
-            q_optimizer_snapshot_path = None
+        optimizer_snapshot_path: Path = config.initial_model_prefix / f'optimizer{infix}.pth'
+        if not optimizer_snapshot_path.is_file() or config.optimizer.initialize:
+            optimizer_snapshot_path = None
 
         scheduler_snapshot_path: Path = config.initial_model_prefix / f'lr-scheduler{infix}.pth'
         if not scheduler_snapshot_path.is_file() or config.optimizer.initialize:
@@ -433,6 +481,13 @@ def _main(config: DictConfig) -> None:
 
     if config.discount_factor <= 0.0 or 1.0 < config.discount_factor:
         raise RuntimeError(f'{config.discount_factor}: An invalid value for `discount_factor`.')
+
+    if config.num_qr_intervals <= 0:
+        raise RuntimeError(
+            f'{config.num_qr_intervals}: `num_qr_intervals` must be a positive integer.')
+
+    if config.kappa < 0.0:
+        raise RuntimeError(f'{config.kappa}: `kappa` must be a non-negative real value.')
 
     if config.alpha < 0.0:
         raise RuntimeError(f'{config.alpha}: `alpha` must be a non-negative real value.')
@@ -568,6 +623,8 @@ def _main(config: DictConfig) -> None:
                 logging.info('(Will not load optimizer)')
         logging.info('Reward plugin: %s', config.reward_plugin)
         logging.info('Discount factor: %f', config.discount_factor)
+        logging.info('# of QR intervals: %d', config.num_qr_intervals)
+        logging.info('Kappa: %f', config.kappa)
         logging.info('Alpha: %f', config.alpha)
         logging.info('Checkpointing: %s', config.checkpointing)
         if world_size is None:
@@ -590,7 +647,7 @@ def _main(config: DictConfig) -> None:
         else:
             logging.info('Warm-up start factor: %E', config.optimizer.warmup_start_factor)
             logging.info('# of steps for LR warm-up: %d', config.optimizer.warmup_steps)
-        if config.optimizer.annealing_steps is None:
+        if config.optimizer.annealing_steps == 0:
             logging.info('Annealing: (disabled)')
         else:
             logging.info('# of steps for Annealing: %d', config.optimizer.annealing_steps)
@@ -598,12 +655,16 @@ def _main(config: DictConfig) -> None:
         logging.info('Target update interval: %d', config.target_update_interval)
         logging.info('Target update rate: %f', config.target_update_rate)
         if config.initial_model_prefix is not None:
-            logging.info('Initial Q source encoder snapshot: %s', q_source_encoder_snapshot_path)
-            logging.info('Initial Q source decoder snapshot: %s', q_source_decoder_snapshot_path)
-            logging.info('Initial Q target encoder snapshot: %s', q_target_encoder_snapshot_path)
-            logging.info('Initial Q target decoder snapshot: %s', q_target_decoder_snapshot_path)
-            if q_optimizer_snapshot_path is not None:
-                logging.info('Initial optimizer snapshot: %s', q_optimizer_snapshot_path)
+            logging.info(
+                'Initial theta source encoder snapshot: %s', theta_source_encoder_snapshot_path)
+            logging.info(
+                'Initial theta source decoder snapshot: %s', theta_source_decoder_snapshot_path)
+            logging.info(
+                'Initial theta target encoder snapshot: %s', theta_target_encoder_snapshot_path)
+            logging.info(
+                'Initial theta target decoder snapshot: %s', theta_target_decoder_snapshot_path)
+            if optimizer_snapshot_path is not None:
+                logging.info('Initial optimizer snapshot: %s', optimizer_snapshot_path)
                 logging.info('Initial LR scheduler snapshot: %s', scheduler_snapshot_path)
         logging.info('Output prefix: %s', output_prefix)
         if config.snapshot_interval == 0:
@@ -611,57 +672,63 @@ def _main(config: DictConfig) -> None:
         else:
             logging.info('Snapshot interval: %d', config.snapshot_interval)
 
-    q_source_encoder = Encoder(
+    theta_source_encoder = Encoder(
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
         num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
         device=config.device.type, dtype=dtype)
-    q_source_decoder = QDecoder(
+    theta_source_decoder = ThetaDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
-    q_source_model = QModel(q_source_encoder, q_source_decoder)
+        num_layers=config.decoder.num_layers, num_qr_intervals=config.num_qr_intervals,
+        device=config.device.type, dtype=dtype)
+    theta_source_model = ThetaModel(theta_source_encoder, theta_source_decoder)
+    theta_source_model.to(device=config.device.type, dtype=dtype)
+    q_source_model = QModel(theta_source_model)
     q_source_model.to(device=config.device.type, dtype=dtype)
 
-    q_target_encoder = Encoder(
+    theta_target_encoder = Encoder(
         position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
         num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
         activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
         num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
         device=config.device.type, dtype=dtype)
-    q_target_decoder = QDecoder(
+    theta_target_decoder = ThetaDecoder(
         dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
         activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, device=config.device.type, dtype=dtype)
-    q_target_model = QModel(q_target_encoder, q_target_decoder)
-    q_target_model.requires_grad_(False)
+        num_layers=config.decoder.num_layers, num_qr_intervals=config.num_qr_intervals,
+        device=config.device.type, dtype=dtype)
+    theta_target_model = ThetaModel(theta_target_encoder, theta_target_decoder)
+    theta_target_model.requires_grad_(False)
+    theta_target_model.to(device=config.device.type, dtype=dtype)
+    q_target_model = QModel(theta_target_model)
     q_target_model.to(device=config.device.type, dtype=dtype)
 
     if config.optimizer.type == 'sgd':
         if config.device.type == 'cpu':
-            q_optimizer = SGD(
+            optimizer = SGD(
                 q_source_model.parameters(), lr=config.optimizer.learning_rate,
                 momentum=config.optimizer.momentum)
         else:
-            q_optimizer = FusedSGD(
+            optimizer = FusedSGD(
                 q_source_model.parameters(), lr=config.optimizer.learning_rate,
                 momentum=config.optimizer.momentum)
     elif config.optimizer.type == 'adam':
         if config.device.type == 'cpu':
-            q_optimizer = Adam(
+            optimizer = Adam(
                 q_source_model.parameters(), lr=config.optimizer.learning_rate,
                 eps=config.optimizer.epsilon)
         else:
-            q_optimizer = FusedAdam(
+            optimizer = FusedAdam(
                 q_source_model.parameters(), lr=config.optimizer.learning_rate,
                 eps=config.optimizer.epsilon)
     elif config.optimizer.type == 'radam':
-        q_optimizer = RAdam(
+        optimizer = RAdam(
             q_source_model.parameters(), lr=config.optimizer.learning_rate,
             eps=config.optimizer.epsilon)
     elif config.optimizer.type == 'lamb':
-        q_optimizer = FusedLAMB(
+        optimizer = FusedLAMB(
             q_source_model.parameters(), lr=config.optimizer.learning_rate,
             eps=config.optimizer.epsilon)
     else:
@@ -671,18 +738,18 @@ def _main(config: DictConfig) -> None:
         warmup_scheduler = None
     else:
         warmup_scheduler = lr_scheduler.LinearLR(
-            q_optimizer, start_factor=config.optimizer.warmup_start_factor,
+            optimizer, start_factor=config.optimizer.warmup_start_factor,
             total_iters=config.optimizer.warmup_steps)
     if config.optimizer.annealing_steps == 0:
         annealing_scheduler = None
     else:
         annealing_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-            q_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+            optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
     if warmup_scheduler is None and annealing_scheduler is None:
         scheduler = None
     elif warmup_scheduler is not None and annealing_scheduler is not None:
         scheduler = lr_scheduler.SequentialLR(
-            q_optimizer, [warmup_scheduler, annealing_scheduler], [warmup_scheduler.total_iters])
+            optimizer, [warmup_scheduler, annealing_scheduler], [warmup_scheduler.total_iters])
     elif warmup_scheduler is not None:
         assert annealing_scheduler is None
         scheduler = warmup_scheduler
@@ -697,11 +764,11 @@ def _main(config: DictConfig) -> None:
         assert config.initial_model_index is None
 
         encoder_state_dict = torch.load(config.encoder.load_from, map_location='cpu')
-        q_source_encoder.load_state_dict(encoder_state_dict)
-        q_target_encoder.load_state_dict(encoder_state_dict)
+        theta_source_encoder.load_state_dict(encoder_state_dict)
+        theta_target_encoder.load_state_dict(encoder_state_dict)
         if config.device.type != 'cpu':
-            q_source_encoder.cuda()
-            q_target_encoder.cuda()
+            theta_source_encoder.cuda()
+            theta_target_encoder.cuda()
 
     if config.decoder.load_from is not None:
         assert config.initial_model is None
@@ -709,11 +776,11 @@ def _main(config: DictConfig) -> None:
         assert config.initial_model_index is None
 
         decoder_state_dict = torch.load(config.decoder.load_from, map_location='cpu')
-        q_source_decoder.load_state_dict(decoder_state_dict)
-        q_target_decoder.load_state_dict(decoder_state_dict)
+        theta_source_decoder.load_state_dict(decoder_state_dict)
+        theta_target_decoder.load_state_dict(decoder_state_dict)
         if config.device.type != 'cpu':
-            q_source_decoder.cuda()
-            q_target_decoder.cuda()
+            theta_source_decoder.cuda()
+            theta_target_decoder.cuda()
 
     if config.initial_model is not None:
         assert config.encoder.load_from is None
@@ -733,23 +800,27 @@ def _main(config: DictConfig) -> None:
         assert config.decoder.load_from is None
         assert config.initial_model is None
 
-        q_source_encoder_state_dict = torch.load(q_source_encoder_snapshot_path, map_location='cpu')
-        q_source_encoder.load_state_dict(q_source_encoder_state_dict)
-        q_source_decoder_state_dict = torch.load(q_source_decoder_snapshot_path, map_location='cpu')
-        q_source_decoder.load_state_dict(q_source_decoder_state_dict)
+        theta_source_encoder_state_dict = torch.load(
+            theta_source_encoder_snapshot_path, map_location='cpu')
+        theta_source_encoder.load_state_dict(theta_source_encoder_state_dict)
+        theta_source_decoder_state_dict = torch.load(
+            theta_source_decoder_snapshot_path, map_location='cpu')
+        theta_source_decoder.load_state_dict(theta_source_decoder_state_dict)
         if config.device.type != 'cpu':
             q_source_model.cuda()
 
-        q_target_encoder_state_dict = torch.load(q_target_encoder_snapshot_path, map_location='cpu')
-        q_target_encoder.load_state_dict(q_target_encoder_state_dict)
-        q_target_decoder_state_dict = torch.load(q_target_decoder_snapshot_path, map_location='cpu')
-        q_target_decoder.load_state_dict(q_target_decoder_state_dict)
+        theta_target_encoder_state_dict = torch.load(
+            theta_target_encoder_snapshot_path, map_location='cpu')
+        theta_target_encoder.load_state_dict(theta_target_encoder_state_dict)
+        theta_target_decoder_state_dict = torch.load(
+            theta_target_decoder_snapshot_path, map_location='cpu')
+        theta_target_decoder.load_state_dict(theta_target_decoder_state_dict)
         if config.device.type != 'cpu':
             q_target_model.cuda()
 
-        if q_optimizer_snapshot_path is not None:
-            q_optimizer.load_state_dict(
-                torch.load(q_optimizer_snapshot_path, map_location='cpu'))
+        if optimizer_snapshot_path is not None:
+            optimizer.load_state_dict(
+                torch.load(optimizer_snapshot_path, map_location='cpu'))
 
     if scheduler is not None and scheduler_snapshot_path is not None:
         scheduler.load_state_dict(
@@ -770,46 +841,56 @@ def _main(config: DictConfig) -> None:
 
         infix = '' if num_samples is None else f'.{num_samples}'
 
-        torch.save(q_source_encoder.state_dict(), snapshots_path / f'q-source-encoder{infix}.pth')
-        torch.save(q_source_decoder.state_dict(), snapshots_path / f'q-source-decoder{infix}.pth')
-        torch.save(q_target_encoder.state_dict(), snapshots_path / f'q-target-encoder{infix}.pth')
-        torch.save(q_target_decoder.state_dict(), snapshots_path / f'q-target-decoder{infix}.pth')
-        torch.save(q_optimizer.state_dict(), snapshots_path / f'q-optimizer{infix}.pth')
+        torch.save(
+            theta_source_encoder.state_dict(), snapshots_path / f'theta-source-encoder{infix}.pth')
+        torch.save(
+            theta_source_decoder.state_dict(), snapshots_path / f'theta-source-decoder{infix}.pth')
+        torch.save(
+            theta_target_encoder.state_dict(), snapshots_path / f'theta-target-encoder{infix}.pth')
+        torch.save(
+            theta_target_decoder.state_dict(), snapshots_path / f'theta-target-decoder{infix}.pth')
+        torch.save(optimizer.state_dict(), snapshots_path / f'optimizer{infix}.pth')
         if scheduler is not None:
             torch.save(scheduler.state_dict(), snapshots_path / f'lr-scheduler{infix}.pth')
 
-        q_model = QModel(q_target_encoder, q_target_decoder)
         q_model_state = dump_object(
-            q_model,
+            q_target_model,
             [
-                dump_model(
-                    q_target_encoder,
-                    [],
-                    {
-                        'position_encoder': config.encoder.position_encoder,
-                        'dimension': config.encoder.dimension,
-                        'num_heads': config.encoder.num_heads,
-                        'dim_feedforward': config.encoder.dim_feedforward,
-                        'num_layers': config.encoder.num_layers,
-                        'activation_function': config.encoder.activation_function,
-                        'dropout': config.encoder.dropout,
-                        'checkpointing': config.checkpointing,
-                        'device': config.device.type,
-                        'dtype': dtype
-                    }
-                ),
-                dump_model(
-                    q_target_decoder,
-                    [],
-                    {
-                        'dimension': config.encoder.dimension,
-                        'dim_feedforward': config.decoder.dim_feedforward,
-                        'activation_function': config.decoder.activation_function,
-                        'dropout': config.decoder.dropout,
-                        'num_layers': config.decoder.num_layers,
-                        'device': config.device.type,
-                        'dtype': dtype
-                    }
+                dump_object(
+                    theta_target_model,
+                    [
+                        dump_model(
+                            theta_target_encoder,
+                            [],
+                            {
+                                'position_encoder': config.encoder.position_encoder,
+                                'dimension': config.encoder.dimension,
+                                'num_heads': config.encoder.num_heads,
+                                'dim_feedforward': config.encoder.dim_feedforward,
+                                'num_layers': config.encoder.num_layers,
+                                'activation_function': config.encoder.activation_function,
+                                'dropout': config.encoder.dropout,
+                                'checkpointing': config.checkpointing,
+                                'device': config.device.type,
+                                'dtype': dtype
+                            }
+                        ),
+                        dump_model(
+                            theta_target_decoder,
+                            [],
+                            {
+                                'dimension': config.encoder.dimension,
+                                'dim_feedforward': config.decoder.dim_feedforward,
+                                'activation_function': config.decoder.activation_function,
+                                'dropout': config.decoder.dropout,
+                                'num_layers': config.decoder.num_layers,
+                                'num_qr_intervals': config.num_qr_intervals,
+                                'device': config.device.type,
+                                'dtype': dtype
+                            }
+                        )
+                    ],
+                    {}
                 )
             ],
             {}
@@ -821,11 +902,12 @@ def _main(config: DictConfig) -> None:
             is_multiprocess=is_multiprocess, world_size=world_size, rank=rank,
             is_main_process=is_main_process, training_data=config.training_data,
             num_workers=config.num_workers, device=config.device.type, dtype=dtype,
-            amp_dtype=amp_dtype, q_source_model=q_source_model, q_target_model=q_target_model,
+            amp_dtype=amp_dtype, num_qr_intervals=config.num_qr_intervals,
+            theta_source_model=theta_source_model, theta_target_model=theta_target_model,
             reward_plugin=config.reward_plugin, discount_factor=config.discount_factor,
-            alpha=config.alpha, batch_size=config.batch_size,
+            kappa=config.kappa, alpha=config.alpha, batch_size=config.batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
-            max_gradient_norm=config.max_gradient_norm, q_optimizer=q_optimizer,
+            max_gradient_norm=config.max_gradient_norm, optimizer=optimizer,
             scheduler=scheduler, target_update_interval=config.target_update_interval,
             target_update_rate=config.target_update_rate,
             snapshot_interval=config.snapshot_interval, num_samples=num_samples,

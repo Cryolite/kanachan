@@ -133,7 +133,9 @@ class Config:
     initial_model_prefix: Optional[Path] = None
     initial_model_index: Optional[int] = None
     reward_plugin: Path = MISSING
+    num_qr_intervals: int = 200
     discount_factor: float = 1.0
+    kappa: float = 1.0
     alpha: float = 1.0
     checkpointing: bool = False
     batch_size: int = MISSING
