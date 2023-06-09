@@ -229,7 +229,11 @@ def _training(
 
                 return gradient_norm
 
-            if is_gradient_nan(value_model) or is_gradient_nan(q1_source_model) or is_gradient_nan(q2_source_model):
+            is_grad_nan = is_gradient_nan(value_model) or is_gradient_nan(q1_source_model) or is_gradient_nan(q2_source_model)
+            is_grad_nan = torch.where(
+                is_grad_nan, torch.ones_like(is_grad_nan), torch.zeros_like(is_grad_nan))
+            all_reduce(is_grad_nan)
+            if is_grad_nan.item() >= 1:
                 logging.warning('Skip an optimization step because of a NaN in the gradient.')
             else:
                 v_gradient_norm = _step(

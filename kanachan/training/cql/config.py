@@ -47,6 +47,7 @@ class SingleDecoderConfig:
     activation_function: str = 'gelu'
     dropout: float = 0.1
     num_layers: int = 1
+    num_qr_intervals: int = 50
     load_from: Optional[Path] = None
 
 @dataclass
@@ -55,6 +56,7 @@ class DoubleDecoderConfig:
     activation_function: str = 'gelu'
     dropout: float = 0.1
     num_layers: int = 2
+    num_qr_intervals: int = 50
     load_from: Optional[Path] = None
 
 @dataclass
@@ -63,6 +65,7 @@ class TripleDecoderConfig:
     activation_function: str = 'gelu'
     dropout: float = 0.1
     num_layers: int = 3
+    num_qr_intervals: int = 50
     load_from: Optional[Path] = None
 
 
@@ -133,7 +136,6 @@ class Config:
     initial_model_prefix: Optional[Path] = None
     initial_model_index: Optional[int] = None
     reward_plugin: Path = MISSING
-    num_qr_intervals: int = 200
     discount_factor: float = 1.0
     kappa: float = 1.0
     alpha: float = 1.0

@@ -53,23 +53,24 @@ class ThetaDecoder(nn.Module):
                 dimension if num_layers == 1 else dim_feedforward, 1, device=device, dtype=dtype)
             self.layers_list.append(nn.Sequential(layers))
 
-    def forward(
-            self, candidates: torch.Tensor, encode: torch.Tensor) -> torch.Tensor:
+    def forward(self, candidates: torch.Tensor, encode: torch.Tensor) -> torch.Tensor:
+        batch_size = candidates.size(0)
         assert candidates.dim() == 2
+        assert candidates.size(1) == MAX_NUM_ACTION_CANDIDATES
         assert encode.dim() == 3
+        assert encode.size(0) == batch_size
         assert encode.size(1) == ENCODER_WIDTH
-        assert candidates.size(0) == encode.size(0)
-        
+
         value: torch.Tensor = self.value_decoder(candidates, encode)
         assert value.dim() == 1
-        assert value.size(0) == candidates.size(0)
+        assert value.size(0) == batch_size
         value = torch.unsqueeze(value, dim=1)
         value = value.expand(-1, MAX_NUM_ACTION_CANDIDATES)
 
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
 
         theta = torch.zeros(
-            (candidates.size(0), len(self.layers_list), MAX_NUM_ACTION_CANDIDATES),
+            (candidates.size(0), MAX_NUM_ACTION_CANDIDATES, len(self.layers_list)),
             device=encode.device, dtype=encode.dtype)
         for i, layers in enumerate(self.layers_list):
             i: int
@@ -77,10 +78,10 @@ class ThetaDecoder(nn.Module):
             advantage: torch.Tensor = layers(encode)
             advantage = torch.squeeze(advantage, dim=2)
             assert advantage.dim() == 2
-            assert advantage.size(0) == candidates.size(0)
+            assert advantage.size(0) == batch_size
             assert advantage.size(1) == MAX_NUM_ACTION_CANDIDATES
             q = value + advantage
-            theta[:, i, :] = torch.where(candidates < NUM_TYPES_OF_ACTIONS, q, -math.inf)
+            theta[:, :, i] = torch.where(candidates < NUM_TYPES_OF_ACTIONS, q, -math.inf)
 
         return theta
 
@@ -108,7 +109,7 @@ class QModel(nn.Module):
             candidates: torch.Tensor) -> torch.Tensor:
         theta: torch.Tensor = self.theta(sparse, numeric, progression, candidates)
 
-        q = torch.sum(theta * (1.0 / len(self.theta.decoder.layers_list)), dim=1)
+        q = torch.sum(theta * (1.0 / len(self.theta.decoder.layers_list)), dim=2)
         assert q.dim() == 2
         assert q.size(0) == sparse.size(0)
         assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
