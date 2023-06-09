@@ -658,10 +658,10 @@ def _main(config: DictConfig) -> None:
             f'{config.optimizer.warmup_steps}: '
             '`optimizer.warmup_steps` must be a non-negative integer.')
 
-    if config.optimizer.annealing_steps is not None and config.optimizer.annealing_steps <= 0:
+    if config.optimizer.annealing_steps < 0:
         raise RuntimeError(
             f'{config.optimizer.annealing_steps}: '
-            '`optimizer.annealing_steps` must be a positive integer.')
+            '`optimizer.annealing_steps` must be a non-negative integer.')
 
     if config.optimizer.annealing_steps_factor <= 0:
         raise RuntimeError(
@@ -759,7 +759,7 @@ def _main(config: DictConfig) -> None:
             logging.info('LR warm-up: (disabled)')
         else:
             logging.info('# of steps for LR warm-up: %d', config.optimizer.warmup_steps)
-        if config.optimizer.annealing_steps is None:
+        if config.optimizer.annealing_steps == 0:
             logging.info('Cosine annealing: (disabled)')
         else:
             logging.info('# of steps for cosine annealing: %d', config.optimizer.annealing_steps)
@@ -872,23 +872,55 @@ def _main(config: DictConfig) -> None:
     qv1_optimizer = construct_optimizer(qv1_source_model)
     qv2_optimizer = construct_optimizer(qv2_source_model)
 
-    warmup_lr_scheduler1 = lr_scheduler.LinearLR(
-        qv1_optimizer, start_factor=config.optimizer.warmup_start_factor,
-        total_iters=config.optimizer.warmup_steps)
-    cosine_lr_scheduler1 = lr_scheduler.CosineAnnealingWarmRestarts(
-        qv1_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
-    lr_scheduler1 = lr_scheduler.SequentialLR(
-        qv1_optimizer, [warmup_lr_scheduler1, cosine_lr_scheduler1],
-        [warmup_lr_scheduler1.total_iters])
+    if config.optimizer.warmup_steps == 0:
+        warmup_lr_scheduler1 = None
+    else:
+        warmup_lr_scheduler1 = lr_scheduler.LinearLR(
+            qv1_optimizer, start_factor=config.optimizer.warmup_start_factor,
+            total_iters=config.optimizer.warmup_steps)
+    if config.optimizer.annealing_steps == 0:
+        annealing_lr_scheduler1 = None
+    else:
+        annealing_lr_scheduler1 = lr_scheduler.CosineAnnealingWarmRestarts(
+            qv1_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    if warmup_lr_scheduler1 is None and annealing_lr_scheduler1 is None:
+        lr_scheduler1 = None
+    elif warmup_lr_scheduler1 is not None and annealing_lr_scheduler1 is not None:
+        lr_scheduler1 = lr_scheduler.SequentialLR(
+            qv1_optimizer, [warmup_lr_scheduler1, annealing_lr_scheduler1],
+            [warmup_lr_scheduler1.total_iters])
+    elif warmup_lr_scheduler1 is None:
+        assert annealing_lr_scheduler1 is not None
+        lr_scheduler1 = annealing_lr_scheduler1
+    else:
+        assert warmup_lr_scheduler1 is not None
+        assert annealing_lr_scheduler1 is None
+        lr_scheduler1 = warmup_lr_scheduler1
 
-    warmup_lr_scheduler2 = lr_scheduler.LinearLR(
-        qv2_optimizer, start_factor=config.optimizer.warmup_start_factor,
-        total_iters=config.optimizer.warmup_steps)
-    cosine_lr_scheduler2 = lr_scheduler.CosineAnnealingWarmRestarts(
-        qv2_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
-    lr_scheduler2 = lr_scheduler.SequentialLR(
-        qv2_optimizer, [warmup_lr_scheduler2, cosine_lr_scheduler2],
-        [warmup_lr_scheduler2.total_iters])
+    if config.optimizer.warmup_steps == 0:
+        warmup_lr_scheduler2 = None
+    else:
+        warmup_lr_scheduler2 = lr_scheduler.LinearLR(
+            qv1_optimizer, start_factor=config.optimizer.warmup_start_factor,
+            total_iters=config.optimizer.warmup_steps)
+    if config.optimizer.annealing_steps == 0:
+        annealing_lr_scheduler2 = None
+    else:
+        annealing_lr_scheduler2 = lr_scheduler.CosineAnnealingWarmRestarts(
+            qv1_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    if warmup_lr_scheduler2 is None and annealing_lr_scheduler2 is None:
+        lr_scheduler2 = None
+    elif warmup_lr_scheduler2 is not None and annealing_lr_scheduler2 is not None:
+        lr_scheduler2 = lr_scheduler.SequentialLR(
+            qv1_optimizer, [warmup_lr_scheduler2, annealing_lr_scheduler2],
+            [warmup_lr_scheduler2.total_iters])
+    elif warmup_lr_scheduler2 is None:
+        assert annealing_lr_scheduler2 is not None
+        lr_scheduler2 = annealing_lr_scheduler2
+    else:
+        assert warmup_lr_scheduler2 is not None
+        assert annealing_lr_scheduler2 is None
+        lr_scheduler2 = warmup_lr_scheduler2
 
     if config.encoder.load_from is not None:
         assert config.initial_model is None

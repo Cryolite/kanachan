@@ -74,7 +74,7 @@ class SgdOptimizerConfig:
     learning_rate: float = MISSING
     warmup_start_factor: float = 0.00001
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
@@ -86,7 +86,7 @@ class AdamOptimizerConfig:
     learning_rate: float = 0.001
     warmup_start_factor: float = 0.00001
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
@@ -98,7 +98,7 @@ class RAdamOptimizerConfig:
     learning_rate: float = 0.001
     warmup_start_factor: float = 0.00001
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
@@ -110,7 +110,7 @@ class MTAdamOptimizerConfig:
     learning_rate: float = 0.001
     warmup_start_factor: float = 0.00001
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = True
 
@@ -122,7 +122,7 @@ class LambOptimizerConfig:
     learning_rate: float = 0.001
     warmup_start_factor: float = 0.00001
     warmup_steps: int = 0
-    annealing_steps: Optional[int] = None
+    annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
 
