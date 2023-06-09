@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import re
 from pathlib import Path
 import logging
@@ -57,6 +55,6 @@ def get_gradient(model: nn.Module) -> torch.Tensor:
     return torch.cat(gradient)
 
 
-def is_gradient_nan(model: nn.Module) -> bool:
+def is_gradient_nan(model: nn.Module) -> torch.Tensor:
     gradient = get_gradient(model)
-    return torch.any(torch.isnan(gradient)).item()
+    return torch.any(torch.isnan(gradient))

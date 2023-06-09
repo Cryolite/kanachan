@@ -123,11 +123,14 @@ def _step(
         *, qv_source_model: QVModel, q_loss: torch.Tensor, v_loss: torch.Tensor,
         grad_scaler: Optional[GradScaler], max_gradient_norm: float, qv_optimizer: Optimizer,
         scheduler#: lr_scheduler.LRScheduler
-        ) -> float:
+        ) -> Optional[float]:
     if grad_scaler is not None:
         grad_scaler.unscale_(qv_optimizer)
-    qv_gradient = get_gradient(qv_source_model)
-    qv_gradient_norm: float = torch.linalg.vector_norm(qv_gradient).item()
+    if isinstance(qv_optimizer, MTAdam):
+        qv_gradient_norm = None
+    else:
+        qv_gradient = get_gradient(qv_source_model)
+        qv_gradient_norm: float = torch.linalg.vector_norm(qv_gradient).item()
     nn.utils.clip_grad_norm_(
         qv_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
     if isinstance(qv_optimizer, MTAdam):
@@ -252,8 +255,19 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            if is_gradient_nan(qv1_source_model) or is_gradient_nan(qv2_source_model):
-                logging.warning('Skip an optimization step because of a NaN in the gradient.')
+            if isinstance(qv1_optimizer, MTAdam):
+                assert isinstance(qv2_optimizer, MTAdam)
+                is_grad_nan = torch.zeros((), device='cpu', dtype=torch.long)
+            else:
+                is_grad_nan = is_gradient_nan(qv1_source_model) or is_gradient_nan(qv2_source_model)
+                is_grad_nan = torch.where(
+                    is_grad_nan, torch.ones_like(is_grad_nan), torch.zeros_like(is_grad_nan))
+                all_reduce(is_grad_nan)
+            if False:#is_grad_nan.item() >= 1:
+                if is_main_process:
+                    logging.warning('Skip an optimization step because of NaN in the gradient.')
+                qv1_gradient_norm = None
+                qv2_gradient_norm = None
             else:
                 qv1_gradient_norm = _step(
                     qv_source_model=qv1_source_model, q_loss=q1_loss, v_loss=v1_loss,
@@ -284,21 +298,28 @@ def _training(
                     nn.utils.vector_to_parameters(param2_target, qv2_target_model.parameters())
 
             if is_main_process:
-                logging.info(
-                    'sample = %s, QV1 loss = %s, QV2 loss = %s, '
-                    'QV1 gradient norm = %s, QV2 gradient norm = %s',
-                    num_samples, qv1_batch_loss, qv2_batch_loss, qv1_gradient_norm,
-                    qv2_gradient_norm)
+                if qv1_gradient_norm is not None and qv2_gradient_norm is not None:
+                    logging.info(
+                        'sample = %s, QV1 loss = %s, QV2 loss = %s, '
+                        'QV1 gradient norm = %s, QV2 gradient norm = %s',
+                        num_samples, qv1_batch_loss, qv2_batch_loss, qv1_gradient_norm,
+                        qv2_gradient_norm)
+                else:
+                    logging.info(
+                        'sample = %s, QV1 loss = %s, QV2 loss = %s, ',
+                        num_samples, qv1_batch_loss, qv2_batch_loss)
                 summary_writer.add_scalars(
                     'Q', { 'Q1': q1_batch_mean, 'Q2': q2_batch_mean }, num_samples)
                 summary_writer.add_scalars(
                     'V', { 'V1': v1_batch_mean, 'V2': v2_batch_mean }, num_samples)
                 summary_writer.add_scalars(
                     'QV Loss', { 'QV1': qv1_batch_loss, 'QV2': qv2_batch_loss }, num_samples)
-                summary_writer.add_scalars(
-                    'QV Gradient Norm',
-                    { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm }, num_samples)
-                summary_writer.add_scalar('LR', lr_scheduler1.get_last_lr()[0], num_samples)
+                if qv1_gradient_norm is not None and qv2_gradient_norm is not None:
+                    summary_writer.add_scalars(
+                        'QV Gradient Norm',
+                        { 'QV1': qv1_gradient_norm, 'QV2': qv2_gradient_norm }, num_samples)
+                if lr_scheduler1 is not None:
+                    summary_writer.add_scalar('LR', lr_scheduler1.get_last_lr()[0], num_samples)
         else:
             if is_main_process:
                 logging.info(
