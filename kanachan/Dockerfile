@@ -28,7 +28,7 @@ RUN set -euxo pipefail; \
     pushd /workspace; \
     git clone 'https://github.com/NVIDIA/apex.git'; \
     pushd apex; \
-    MAX_JOBS=$(($(nproc) / 2)) python3 -m pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./; \
+    MAX_JOBS=$(($(nproc) / 2)) python3 -m pip install -v --no-cache-dir --no-build-isolation --global-option="--cpp_ext" --global-option="--cuda_ext" ./; \
     popd; \
     rm -rf apex; \
     popd
