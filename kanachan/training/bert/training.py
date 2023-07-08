@@ -119,7 +119,7 @@ def _train(
 
     for annotation in data_loader:
         if num_consumed_samples < num_samples:
-            num_consumed_samples += batch_size
+            num_consumed_samples = (int(num_samples/batch_size)+1)*batch_size
             continue
 
         if is_multiprocess:
