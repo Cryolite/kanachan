@@ -221,7 +221,7 @@ Simulator::Impl_::Impl_(
     }
 
     for (std::size_t i = 0u; i < concurrency; ++i) {
-        threads_.emplace_back(&Impl_::threadMain_, this);
+        threads_.emplace_back(std::bind_front(&Impl_::threadMain_, this));
     }
 
     {
