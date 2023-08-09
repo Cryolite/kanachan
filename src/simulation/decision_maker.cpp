@@ -212,7 +212,7 @@ try : torch_(python::import("torch"))
         return this->tensor_(*args, **this->long_tensor_kwargs_);
     };
 
-    thread_ = std::jthread(&Impl_::threadMain_, this);
+    thread_ = std::jthread(std::bind_front(&Impl_::threadMain_, this));
 }
 catch (python::error_already_set const &) {
     Kanachan::translatePythonException();
