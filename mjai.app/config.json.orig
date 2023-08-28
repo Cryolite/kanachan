@@ -1,4 +1,7 @@
 {
+    "model": "./model.kanachan",
+    "device": "cpu",
+    "dtype": "float32",
     "my_name": "kanachan",
     "room": 3,
     "game_style": 1,

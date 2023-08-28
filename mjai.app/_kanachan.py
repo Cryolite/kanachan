@@ -1,22 +1,16 @@
-#!/usr/bin/env python3
-
-import re
 from pathlib import Path
 from collections import Counter
 import json
 import sys
-from typing import (Optional, List,)
+from typing import Tuple, Optional, List, Dict
 import torch
-from torch import nn
 from xiangting_calculator import XiangtingCalculator
 from hand_calculator import HandCalculator
-from kanachan.training.common import load_state_dict
 from kanachan.training.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_TYPES_OF_PROGRESSION_FEATURES, MAX_LENGTH_OF_PROGRESSION_FEATURES,
     NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES)
-from kanachan.training.bert.encoder import Encoder
-from kanachan.training.ilql.policy_model import (PolicyDecoder, PolicyModel,)
+from kanachan.model_loader import load_model
 
 
 _NUM2TILE = (
@@ -27,9 +21,10 @@ _NUM2TILE = (
 )
 
 
-_TILE2NUM = {}
-for i, tile in enumerate(_NUM2TILE):
-    _TILE2NUM[tile] = i
+_TILE2NUM: Dict[str, int] = {}
+for _I, _TILE in enumerate(_NUM2TILE):
+    _TILE2NUM[_TILE] = _I
+del _I, _TILE
 
 
 _TILE_OFFSETS = (
@@ -134,22 +129,24 @@ _NUM2CHI = (
 )
 
 
-_CHI2NUM = {}
-for i, (tile, consumed) in enumerate(_NUM2CHI):
-    k = (tile, tuple(consumed))
-    _CHI2NUM[k] = i
+_CHI2NUM: Dict[Tuple[str, Tuple[str, str]], int] = {}
+for _I, (_TILE, _CONSUMED) in enumerate(_NUM2CHI):
+    _K: Tuple[str, Tuple[str, str]] = (_TILE, tuple(_CONSUMED))
+    _CHI2NUM[_K] = _I
+del _I, _TILE, _CONSUMED, _K
 
 
-_CHI_COUNTS = []
-for tile, consumed in _NUM2CHI:
-    tile = _TILE2NUM[tile]
-    counts = {}
-    for t in consumed:
-        t = _TILE2NUM[t]
-        if t not in counts:
-            counts[t] = 0
-        counts[t] += 1
-    _CHI_COUNTS.append((tile, counts))
+_CHI_COUNTS: List[Tuple[int, Dict[int, int]]] = []
+for _TILE, _CONSUMED in _NUM2CHI:
+    _TILE = _TILE2NUM[_TILE]
+    _COUNTS: Dict[int, int] = {}
+    for _T in _CONSUMED:
+        _T = _TILE2NUM[_T]
+        if _T not in _COUNTS:
+            _COUNTS[_T] = 0
+        _COUNTS[_T] += 1
+    _CHI_COUNTS.append((_TILE, _COUNTS))
+del _TILE, _CONSUMED, _COUNTS, _T
 
 
 _CHI_TO_KUIKAE_TILES = (
@@ -290,22 +287,24 @@ _NUM2PENG = (
 )
 
 
-_PENG2NUM = {}
-for i, (tile, consumed) in enumerate(_NUM2PENG):
-    k = (tile, tuple(consumed))
-    _PENG2NUM[k] = i
+_PENG2NUM: Dict[Tuple[str, Tuple[str, str]], int] = {}
+for _I, (_TILE, _CONSUMED) in enumerate(_NUM2PENG):
+    _K: Tuple[str, Tuple[str, str]] = (_TILE, tuple(_CONSUMED))
+    _PENG2NUM[_K] = _I
+del _I, _TILE, _CONSUMED, _K
 
 
-_PENG_COUNTS = []
-for tile, consumed in _NUM2PENG:
-    tile = _TILE2NUM[tile]
-    counts = {}
-    for t in consumed:
-        t = _TILE2NUM[t]
-        if t not in counts:
-            counts[t] = 0
-        counts[t] += 1
-    _PENG_COUNTS.append((tile, counts))
+_PENG_COUNTS: List[Tuple[int, Dict[int, int]]] = []
+for _TILE, _CONSUMED in _NUM2PENG:
+    _TILE = _TILE2NUM[_TILE]
+    _COUNTS: Dict[int, int] = {}
+    for _T in _CONSUMED:
+        _T = _TILE2NUM[_T]
+        if _T not in _COUNTS:
+            _COUNTS[_T] = 0
+        _COUNTS[_T] += 1
+    _PENG_COUNTS.append((_TILE, _COUNTS))
+del _TILE, _CONSUMED, _COUNTS, _T
 
 
 _PENG_TO_KUIKAE_TILE = (
@@ -393,21 +392,23 @@ _NUM2DAMINGGANG = (
 )
 
 
-_DAMINGGANG2NUM = {}
-for i, (tile, consumed) in enumerate(_NUM2DAMINGGANG):
-    k = (tile, tuple(consumed))
-    _DAMINGGANG2NUM[k] = i
+_DAMINGGANG2NUM: Dict[Tuple[str, Tuple[str, str, str]], int] = {}
+for _I, (_TILE, _CONSUMED) in enumerate(_NUM2DAMINGGANG):
+    _K: Tuple[str, Tuple[str, str, str]] = (_TILE, tuple(_CONSUMED))
+    _DAMINGGANG2NUM[_K] = _I
+del _I, _TILE, _CONSUMED, _K
 
 
-_DAMINGGANG_COUNTS = []
-for tile, consumed in _NUM2DAMINGGANG:
-    counts = {}
-    for t in consumed:
-        t = _TILE2NUM[t]
-        if t not in counts:
-            counts[t] = 0
-        counts[t] += 1
-    _DAMINGGANG_COUNTS.append(counts)
+_DAMINGGANG_COUNTS: List[Dict[int, int]] = []
+for _TILE, _CONSUMED in _NUM2DAMINGGANG:
+    _COUNTS: Dict[int, int] = {}
+    for _T in _CONSUMED:
+        _T = _TILE2NUM[_T]
+        if _T not in _COUNTS:
+            _COUNTS[_T] = 0
+        _COUNTS[_T] += 1
+    _DAMINGGANG_COUNTS.append(_COUNTS)
+del _TILE, _CONSUMED, _COUNTS, _T
 
 
 _NUM2ANGANG = (
@@ -448,21 +449,23 @@ _NUM2ANGANG = (
 )
 
 
-_ANGANG2NUM = {}
-for i, consumed in enumerate(_NUM2ANGANG):
-    k = tuple(consumed)
-    _ANGANG2NUM[k] = i
+_ANGANG2NUM: Dict[Tuple[str, str, str, str], int] = {}
+for _I, _CONSUMED in enumerate(_NUM2ANGANG):
+    _K: Tuple[str, str, str, str] = tuple(_CONSUMED)
+    _ANGANG2NUM[_K] = _I
+del _I, _CONSUMED, _K
 
 
-_ANGANG_COUNTS = []
-for consumed in _NUM2ANGANG:
-    counts = {}
-    for tile in consumed:
-        tile = _TILE2NUM[tile]
-        if tile not in counts:
-            counts[tile] = 0
-        counts[tile] += 1
-    _ANGANG_COUNTS.append(counts)
+_ANGANG_COUNTS: List[Dict[int, int]] = []
+for _CONSUMED in _NUM2ANGANG:
+    _COUNTS: Dict[int, int] = {}
+    for _TILE in _CONSUMED:
+        _TILE = _TILE2NUM[_TILE]
+        if _TILE not in _COUNTS:
+            _COUNTS[_TILE] = 0
+        _COUNTS[_TILE] += 1
+    _ANGANG_COUNTS.append(_COUNTS)
+del _CONSUMED, _COUNTS, _TILE
 
 
 _JIAGANG_LIST = (
@@ -591,15 +594,48 @@ _JIAGANG_TO_PENG_LIST = (
 )
 
 
-_TILE_TO_JIAGANG_COUNTS = []
-for i, v in enumerate(_NUM2JIAGANG):
-    tile, consumed = v
-    counts = {}
-    for t in consumed:
-        if t not in counts:
-            counts[t] = 0
-        counts[t] += 1
-    _TILE_TO_JIAGANG_COUNTS.append(counts)
+_TILE_TO_JIAGANG_COUNTS: List[Dict[str, int]] = []
+for _I, _V in enumerate(_NUM2JIAGANG):
+    _TILE, _CONSUMED = _V
+    _COUNTS: Dict[str, int] = {}
+    for _T in _CONSUMED:
+        if _T not in _COUNTS:
+            _COUNTS[_T] = 0
+        _COUNTS[_T] += 1
+    _TILE_TO_JIAGANG_COUNTS.append(_COUNTS)
+del _I, _V, _TILE, _CONSUMED, _COUNTS, _T
+
+
+_TILE37_TO_TILE34 = (
+     4,  0,  1,  2,  3,  4,  5,  6,  7,  8,
+    13,  9, 10, 11, 12, 13, 14, 15, 16, 17,
+    22, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+    27, 28, 29, 30, 31, 32, 33
+)
+
+
+def _GET_HUPAI_CANDIDATES(
+        xiangting_calculator: XiangtingCalculator, hand: List[int], n: int) -> set[int]:
+    counts = Counter()
+    for tile37 in hand:
+        tile34 = _TILE37_TO_TILE34[tile37]
+        counts[tile34] += 1
+
+    result: set[int] = set()
+    for tile37 in range(37):
+        tile34 = _TILE37_TO_TILE34[tile37]
+
+        if counts[tile34] >= 4:
+            # 手牌にすでに4枚ある牌は候補から除外する．
+            assert counts[tile34] == 4
+            continue
+
+        new_hand = hand + [tile37]
+        new_hand.sort()
+        if xiangting_calculator.calculate(new_hand, n) == 0:
+            result.add(tile34)
+
+    return result
 
 
 class GameState:
@@ -615,12 +651,14 @@ class GameState:
         self.__player_grades = None
         self.__player_scores = None
 
-    def on_new_game(self) -> None:
-        pass
-
-    def on_new_round(self, seat: int, scores: List[int]) -> None:
+    def on_new_game(self, seat: int) -> None:
+        if seat < 0:
+            raise ValueError(seat)
+        if seat >= 4:
+            raise ValueError(seat)
         self.__seat = seat
 
+    def on_new_round(self, scores: List[int]) -> None:
         self.__player_grades = [None] * 4
         for i in range(4):
             if i == self.__seat:
@@ -682,22 +720,22 @@ class RoundState:
     def __init__(self) -> None:
         self.__xiangting_calculator = XiangtingCalculator('/workspace')
         self.__hand_calculator = HandCalculator()
-        self.__chang = None
-        self.__index = None
-        self.__ben_chang = None
-        self.__deposits = None
-        self.__dora_indicators = None
-        self.__num_left_tiles = None
-        self.__my_hand = None
-        self.__my_fulu_list = None
-        self.__zimo_pai = None
-        self.__my_first_zimo = None
-        self.__liqi_to_be_accepted = None
-        self.__my_liqi = None
-        self.__my_lingshang_zimo = None
+        self.__chang: Optional[int] = None
+        self.__index: Optional[int] = None
+        self.__ben_chang: Optional[int] = None
+        self.__deposits: Optional[int] = None
+        self.__dora_indicators: Optional[List[int]] = None
+        self.__num_left_tiles: Optional[int] = None
+        self.__my_hand: Optional[List[int]] = None
+        self.__my_fulu_list: Optional[List[int]] = None
+        self.__zimo_pai: Optional[int] = None
+        self.__my_first_zimo: Optional[bool] = None
+        self.__liqi_to_be_accepted: Optional[List[bool]] = None
+        self.__my_liqi: Optional[bool] = None
+        self.__my_lingshang_zimo: Optional[bool] = None
         self.__my_kuikae_tiles = None
-        self.__my_zhenting = None
-        self.__progression = None
+        self.__my_zhenting: Optional[int] = None
+        self.__progression: Optional[List[int]] = None
 
     def on_new_round(
         self, chang: int, index: int, ben_chang: int, deposits: int,
@@ -722,36 +760,46 @@ class RoundState:
         self.__progression = [0]
 
     def get_chang(self) -> int:
+        assert self.__chang is not None
         return self.__chang
 
     def get_index(self) -> int:
+        assert self.__index is not None
         return self.__index
 
     def get_num_ben_chang(self) -> int:
+        assert self.__ben_chang is not None
         return self.__ben_chang
 
     def get_num_deposits(self) -> int:
+        assert self.__deposits is not None
         return self.__deposits
 
     def get_dora_indicators(self) -> List[int]:
+        assert self.__dora_indicators is not None
         return self.__dora_indicators
 
     def get_num_left_tiles(self) -> int:
+        assert self.__num_left_tiles is not None
         return self.__num_left_tiles
 
     def get_my_hand(self) -> List[int]:
+        assert self.__my_hand is not None
         return self.__my_hand
 
     def get_my_fulu_list(self) -> List[int]:
+        assert self.__my_fulu_list is not None
         return self.__my_fulu_list
 
     def get_zimo_tile(self) -> Optional[int]:
         return self.__zimo_pai
 
     def is_in_liqi(self) -> bool:
+        assert self.__my_liqi is not None
         return self.__my_liqi
 
     def copy_progression(self) -> List[int]:
+        assert self.__progression is not None
         return list(self.__progression)
 
     def __get_my_hand_counts(self) -> Counter:
@@ -763,28 +811,65 @@ class RoundState:
     def __set_my_hand_counts(self, hand_counts: Counter) -> None:
         self.__my_hand = []
         for k, v in hand_counts.items():
-            for i in range(v):
+            for _ in range(v):
                 self.__my_hand.append(k)
         self.__my_hand.sort()
         if len(self.__my_hand) not in (1, 2, 4, 5, 7, 8, 10, 11, 13):
             raise RuntimeError('An invalid hand.')
+
+    def __remove_tile34_from_hand(self, tile34: int) -> List[int]:
+        assert tile34 >= 0
+        assert tile34 < 34
+
+        new_hand = list[self.__my_hand]
+
+        if 0 <= tile34 and tile34 <= 8:
+            tile37 = tile34 + 1
+            while new_hand.count(tile37) >= 1:
+                new_hand.remove(tile37)
+            if tile34 == 4 and new_hand.count(0) >= 1:
+                assert new_hand.count(0) == 1
+                new_hand.remove(0)
+            return new_hand
+
+        if 9 <= tile34 and tile34 <= 17:
+            tile37 = tile37 + 2
+            while new_hand.count(tile37) >= 1:
+                new_hand.remove(tile37)
+            if tile34 == 13 and new_hand.count(10) >= 1:
+                assert new_hand.count(10) == 1
+                new_hand.remove(10)
+            return new_hand
+
+        assert tile34 >= 18
+        tile37 = tile37 + 3
+        while new_hand.count(tile37) >= 1:
+            new_hand.remove(tile37)
+        if tile34 == 22 and new_hand.count(20) >= 1:
+            assert new_hand.count(20) == 1
+            new_hand.remove(20)
+        return new_hand
+
 
     def on_zimo(
         self, seat: int, mine: bool, tile: Optional[int],
         my_score: int) -> Optional[List[int]]:
         if self.__zimo_pai is not None:
             raise AssertionError(f'self.__zimo_pai = {self.__zimo_pai}')
+        if self.__num_left_tiles <= 0:
+            raise AssertionError(f'self.__num_left_tiles = {self.__num_left_tiles}')
 
         self.__num_left_tiles -= 1
         self.__my_kuikae_tiles = []
 
         if not mine:
+            # This is another player's self-draw, so there's no need for me to do anything.
             if tile is not None:
                 raise ValueError(f'tile = {tile}')
             return None
 
         if tile is None:
-            raise ValueError(f'TODO: (A suitable error message)')
+            raise ValueError('`tile` is `None`.')
         self.__zimo_pai = tile
 
         # 非立直中の栄和拒否による一時的なフリテンを解消する．
@@ -798,10 +883,12 @@ class RoundState:
             candidates.append(self.__zimo_pai * 4 + 1 * 2 + 0)
         else:
             # 以下，立直中でない場合．
-            # 手出しを候補として追加する．
-            for i in range(len(self.__my_hand)):
-                tile = self.__my_hand[i]
+            for i, tile in enumerate(self.__my_hand):
+                # 手出しを候補として追加する．
                 candidates.append(tile * 4 + 0 * 2 + 0)
+
+                # 手出し後の手牌 `new_hand` が聴牌かどうかをチェックし，聴牌かつ面前かつ持ち点が
+                # 1000点以上あれば立直が可能である．
                 new_hand = list(self.__my_hand)
                 new_hand[i] = self.__zimo_pai
                 if len(self.__my_fulu_list) == 0 and my_score >= 1000:
@@ -821,35 +908,43 @@ class RoundState:
         combined_hand = self.__my_hand + [self.__zimo_pai]
 
         # 暗槓が候補として追加できるかどうかをチェックする．
-        # TODO: 立直中の送り槓を禁止する．
-        counts = Counter()
-        for p in combined_hand:
-            if p == 0:
-                counts[4] += 1
-            elif 1 <= p and p <= 9:
-                counts[p - 1] += 1
-            elif p == 10:
-                counts[13] += 1
-            elif 11 <= p and p <= 19:
-                counts[p - 2] += 1
-            elif p == 20:
-                counts[22] += 1
-            elif 21 <= p:
-                assert(p < 37)
-                counts[p - 3] += 1
-        for k, v in counts.items():
-            if v >= 4:
-                candidates.append(148 + k)
+        if self.get_num_left_tiles() >= 1:
+            # 海底自摸では暗槓できない．
+            counts34 = Counter()
+            for tile37 in combined_hand:
+                tile34 = _TILE37_TO_TILE34[tile37]
+                counts34[tile34] += 1
+            for tile34, v in counts34.items():
+                if v >= 4:
+                    assert v == 4
+
+                    if self.is_in_liqi():
+                        # 立直中の送り槓を禁止する．
+                        if tile34 != _TILE37_TO_TILE34[self.__zimo_pai]:
+                            continue
+
+                        hupai_candidates_old = _GET_HUPAI_CANDIDATES(
+                            self.__xiangting_calculator, self.__my_hand,
+                            4 - len(self.__my_fulu_list))
+                        new_hand = self.__remove_tile34_from_hand(tile34)
+                        hupai_candidates_new = _GET_HUPAI_CANDIDATES(
+                            self.__xiangting_calculator, new_hand, 3 - len(self.__my_fulu_list))
+                        if hupai_candidates_new != hupai_candidates_old:
+                            continue
+
+                    candidates.append(148 + tile34)
 
         # 加槓が候補として追加できるかどうかをチェックする．
-        peng_list = []
-        for fulu in self.__my_fulu_list:
-            if 312 <= fulu and fulu <= 431:
-                peng = (fulu - 312) % 40
-                peng_list.append(peng)
-        for peng, t in enumerate(_JIAGANG_LIST):
-            if peng in peng_list and t in combined_hand:
-                candidates.append(182 + t)
+        if self.get_num_left_tiles() >= 1:
+            # 海底自摸では加槓できない．
+            peng_list = []
+            for fulu in self.__my_fulu_list:
+                if 312 <= fulu and fulu <= 431:
+                    peng = (fulu - 312) % 40
+                    peng_list.append(peng)
+            for peng, t in enumerate(_JIAGANG_LIST):
+                if peng in peng_list and t in combined_hand:
+                    candidates.append(182 + t)
 
         # 自摸和が候補として追加できるかどうかをチェックする．
         xiangting_number = self.__xiangting_calculator.calculate(
@@ -863,7 +958,7 @@ class RoundState:
                 candidates.append(219)
 
         if self.__my_first_zimo:
-            assert(not self.__my_liqi)
+            assert not self.__my_liqi
             # 九種九牌が候補として追加できるかどうかをチェックする．
             count = 0
             for p in set(combined_hand):
@@ -879,35 +974,30 @@ class RoundState:
         candidates.sort()
         return candidates
 
-    def __get_my_zhenting_tiles(self, seat: int) -> List[int]:
+    def __get_my_zhenting_tiles_34(self, seat: int) -> set[int]:
         # 自分が捨てた牌を列挙する．
-        discarded_tiles = set()
+        discarded_tiles_34 = set()
         for p in self.__progression:
             if p < 5 or 596 < p:
                 continue
             encode = p - 5
             actor = encode // 148
             encode = encode % 148
-            tile = encode // 4
+            tile37 = encode // 4
             if actor != seat:
                 continue
-            discarded_tiles.add(tile)
+            discarded_tiles_34.add(_TILE37_TO_TILE34[tile37])
 
         # 和牌の候補を列挙する．
-        hupai_candidates = []
-        for i in range(37):
-            combined_hand = self.__my_hand + [i]
-            xiangting_number = self.__xiangting_calculator.calculate(
-                combined_hand, 4 - len(self.__my_fulu_list))
-            if xiangting_number == 0:
-                hupai_candidates.append(i)
+        hupai_candidates_34 = _GET_HUPAI_CANDIDATES(
+            self.__xiangting_calculator, self.__my_hand, 4 - len(self.__my_fulu_list))
 
         # 和牌の候補の中に自分が捨てた牌が1つでも含まれているならば，
         # 和牌の候補全てがフリテンの対象でありロンできない．
-        for hupai_candidate in hupai_candidates:
-            if hupai_candidate in discarded_tiles:
-                return hupai_candidates
-        return []
+        for hupai_candidate_34 in hupai_candidates_34:
+            if hupai_candidate_34 in discarded_tiles_34:
+                return hupai_candidates_34
+        return set()
 
     def on_dapai(
         self, seat: int, actor: int, tile: int,
@@ -930,8 +1020,8 @@ class RoundState:
                 self.__zimo_pai = None
                 return None
             index = None
-            for i in range(len(self.__my_hand)):
-                if self.__my_hand[i] == tile:
+            for i, h in enumerate(self.__my_hand):
+                if h == tile:
                     index = i
                     break
             if index is None:
@@ -960,9 +1050,9 @@ class RoundState:
 
         candidates = []
 
-        if not self.__my_liqi and relseat == 2:
+        if not self.__my_liqi and relseat == 2 and self.get_num_left_tiles() >= 1:
             # チーができるかどうかチェックする．
-            # TODO: 河底牌に対するチーが可能かどうか確認する．
+            # 河底牌に対するチーは不可能であることに注意．
             for i, (t, consumed_counts) in enumerate(_CHI_COUNTS):
                 if tile != t:
                     continue
@@ -988,9 +1078,9 @@ class RoundState:
                         candidates.append(222 + i)
                         skippable = True
 
-        if not self.__my_liqi:
+        if not self.__my_liqi and self.get_num_left_tiles() >= 1:
             # ポンができるかどうかチェックする．
-            # TODO: 河底牌に対するポンが可能かどうか確認する．
+            # 河底牌に対するポンは不可能であることに注意．
             for i, (t, consumed_counts) in enumerate(_PENG_COUNTS):
                 if tile != t:
                     continue
@@ -1015,9 +1105,9 @@ class RoundState:
                         candidates.append(312 + relseat * 40 + i)
                         skippable = True
 
-        if not self.__my_liqi:
+        if not self.__my_liqi and self.get_num_left_tiles() >= 1:
             # 大明槓ができるかどうかチェックする．
-            # TODO: 河底牌に対する大明槓が可能かどうか確認する．
+            # 河底牌に対する大明槓は不可能であることに注意．．
             for t, consumed_counts in enumerate(_DAMINGGANG_COUNTS):
                 if tile != t:
                     continue
@@ -1034,7 +1124,7 @@ class RoundState:
 
         xiangting_number = self.__xiangting_calculator.calculate(
             combined_hand, 4 - len(self.__my_fulu_list))
-        if xiangting_number == 0 and tile not in self.__get_my_zhenting_tiles(seat) and self.__my_zhenting == 0:
+        if xiangting_number == 0 and _TILE37_TO_TILE34[tile] not in self.__get_my_zhenting_tiles_34(seat) and self.__my_zhenting == 0:
             # ロンが出来るかどうかチェックする．
             player_wind = (seat + 4 - self.__index) % 4
             has_yihan = self.__hand_calculator.has_yihan(
@@ -1075,7 +1165,10 @@ class RoundState:
             if tile not in self.__my_kuikae_tiles:
                 candidates.append(tile * 4 + 0 * 2 + 0)
         self.__my_kuikae_tiles = []
-        return list(set(candidates))
+
+        candidates = list(set(candidates))
+        candidates.sort()
+        return candidates
 
     def on_peng(
         self, mine: bool, seat: int, relseat: int,
@@ -1104,7 +1197,10 @@ class RoundState:
             if tile not in self.__my_kuikae_tiles:
                 candidates.append(tile * 4 + 0 * 2 + 0)
         self.__my_kuikae_tiles = []
-        return list(set(candidates))
+
+        candidates = list(set(candidates))
+        candidates.sort()
+        return candidates
 
     def on_daminggang(
         self, mine: bool, seat: int, relseat: int, daminggang: int) -> None:
@@ -1135,8 +1231,35 @@ class RoundState:
         self.__progression.append(1881 + actor * 34 + angang)
 
         if seat != actor:
-            # TODO: 暗槓に対する国士無双の槍槓をチェックする．
-            return None
+            # 暗槓に対する国士無双の槍槓が可能かどうかチェックする．
+            if len(self.__my_fulu_list) >= 1:
+                return None
+            if 0 <= angang and angang <= 8:
+                tile37 = angang + 1
+            elif 9 <= angang and angang <= 17:
+                tile37 = angang + 2
+            elif 18 <= angang:
+                assert angang < 34
+                tile37 = angang + 3
+            orphans = (1, 9, 11, 19, 21, 29, 30, 31, 32, 33, 34, 35, 36)
+            if tile37 not in orphans:
+                return None
+            combined_hand = self.__my_hand + [tile37]
+            counts = 0
+            for o in orphans:
+                if o in combined_hand:
+                    counts += 1
+            if counts < 13:
+                return None
+            assert counts == 13
+            hupai_candidates = _GET_HUPAI_CANDIDATES(
+                self.__xiangting_calculator, self.__my_hand, 4)
+            if angang not in hupai_candidates:
+                return None
+            if angang in self.__get_my_zhenting_tiles_34(seat):
+                return None
+            relseat = (actor + 4 - seat) % 4 - 1
+            return [221, 543 + relseat]
 
         if self.__zimo_pai is None:
             raise RuntimeError('TODO: (A suitable error message)')
@@ -1166,20 +1289,22 @@ class RoundState:
 
         if seat != actor:
             # 槍槓が可能かどうかをチェックする．
-            combined_hand = self.__my_hand + [tile]
-            xiangting_number = self.__xiangting_calculator.calculate(
-                combined_hand, 4 - len(self.__my_fulu_list))
-            if xiangting_number == 0:
-                relseat = (actor + 4 - seat) % 4 - 1
-                return [221, 543 + relseat]
-            return None
+            tile34 = _TILE37_TO_TILE34[tile]
+            hupai_candidates = _GET_HUPAI_CANDIDATES(
+                self.__xiangting_calculator, self.__my_hand, 4 - len(self.__my_fulu_list))
+            if tile34 not in hupai_candidates:
+                return None
+            if tile34 in self.__get_my_zhenting_tiles_34(seat):
+                return None
+            relseat = (actor + 4 - seat) % 4 - 1
+            return [221, 543 + relseat]
 
         if self.__zimo_pai is None:
             raise RuntimeError('TODO: A suitable error message')
 
         index = None
-        for i in range(len(self.__my_hand)):
-            if self.__my_hand[i] == tile:
+        for i, h in enumerate(self.__my_hand):
+            if h == tile:
                 index = i
                 break
         if index is not None:
@@ -1193,9 +1318,8 @@ class RoundState:
             self.__zimo_pai = None
 
         index = None
-        for i in range(len(self.__my_fulu_list)):
+        for i, fulu in enumerate(self.__my_fulu_list):
             # 加槓の対象となるポンを探す．
-            fulu = self.__my_fulu_list[i]
             if fulu < 312 or 431 < fulu:
                 # ポンではない．
                 continue
@@ -1239,35 +1363,30 @@ class RoundState:
 
 class Kanachan:
     def __init__(self) -> None:
-        with open('./encoder.json', encoding='UTF-8') as f:
-            encoder_config = json.load(f)
-        encoder = Encoder(**encoder_config)
-        encoder.cpu()
-        encoder_snapshot_path = Path('./encoder.pth')
-        encoder_state_dict = torch.load(
-            encoder_snapshot_path, map_location=torch.device('cpu'))
-        load_state_dict(encoder, encoder_state_dict)
-        encoder.eval()
+        with open('./config.json', encoding='UTF-8') as f:
+            config = json.load(f)
 
-        with open('./decoder.json', encoding='UTF-8') as f:
-            decoder_config = json.load(f)
-        decoder = PolicyDecoder(**decoder_config)
-        decoder.cpu()
-        decoder_snapshot_path = Path('./decoder.pth')
-        decoder_state_dict = torch.load(
-            decoder_snapshot_path, map_location=torch.device('cpu'))
-        load_state_dict(decoder, decoder_state_dict)
-        decoder.eval()
+        model_path: Path = Path(config['model'])
+        self.__device = config['device']
+        self.__dtype = {
+            'float64': torch.float64,
+            'double': torch.float64,
+            'float32': torch.float32,
+            'single': torch.float32,
+            'float16': torch.float16,
+            'half': torch.float16
+        }[config['dtype']]
+        self.__model = load_model(model_path, map_location='cpu')
+        self.__model.to(device=self.__device, dtype=self.__dtype)
+        self.__model.eval()
 
-        self.__model = PolicyModel(encoder, decoder)
-
-        with open('./game.json', encoding='UTF-8') as f:
-            game_config = json.load(f)
-        self.__game_state = GameState(**game_config)
+        self.__game_state = GameState(
+            my_name=config['my_name'], room=config['room'], game_style=config['game_style'],
+            my_grade=config['my_grade'], opponent_grade=config['opponent_grade'])
 
         self.__round_state = RoundState()
 
-    def __on_hello(self) -> None:
+    def __on_hello(self, message: dict) -> None:
         assert(message['type'] == 'hello')
 
         if 'can_act' not in message:
@@ -1277,32 +1396,25 @@ class Kanachan:
             raise RuntimeError(
                 f'A `hello` message with an invalid `can_act` (can_act = {can_act}).')
 
-        my_name = self.get_my_name()
+        my_name = self.__game_state.get_my_name()
         response = json.dumps({'type': 'join', 'name': my_name, 'room': 'default'})
         print(response, flush=True)
 
     def __on_start_game(self, message: dict) -> None:
         assert(message['type'] == 'start_game')
 
-        # 2022/10/06 時点でのAI雀荘の実装では， `start_game` メッセージに
-        # `id` キーが伴わないように推定されるので，この時点では `seat` を
-        # 設定できない．
-        #
-        #if 'id' not in message:
-        #    raise RuntimeError('A `start_game` message without the `id` key.')
-        #seat = message['id']
-        #if seat < 0 or 4 <= seat:
-        #    raise RuntimeError(
-        #        f'A `start_game` message with an invalid `id` (id = {seat}).')
-        #self.__game_state.on_new_game(seat)
-
-        self.__game_state.on_new_game()
+        seat = int(sys.argv[1])
+        if seat < 0 or 4 <= seat:
+            raise RuntimeError(f'{seat}: An invalid seat.')
+        self.__game_state.on_new_game(seat)
 
         response = json.dumps({'type': 'none'})
         print(response, flush=True)
 
     def __on_start_kyoku(self, message: dict) -> None:
         assert(message['type'] == 'start_kyoku')
+
+        seat = self.__game_state.get_seat()
 
         if 'bakaze' not in message:
             raise RuntimeError(
@@ -1317,6 +1429,8 @@ class Kanachan:
             raise RuntimeError(
                 'A `start_kyoku` message without the `kyoku` key.')
         round_index = message['kyoku']
+        if not isinstance(round_index, int):
+            raise RuntimeError(type(round_index))
         if round_index < 1 or 4 < round_index:
             raise RuntimeError(
                 f'A `start_kyoku` message with an invalid `kyoku` (kyoku = {round_index}).')
@@ -1326,6 +1440,8 @@ class Kanachan:
             raise RuntimeError(
                 'A `start_kyoku` message without the `honba` key.')
         ben_chang = message['honba']
+        if not isinstance(ben_chang, int):
+            raise RuntimeError(type(ben_chang))
         if ben_chang < 0:
             raise RuntimeError(
                 f'A `start_kyoku` message with an invalid `honba` (honba = {ben_chang}).')
@@ -1334,6 +1450,8 @@ class Kanachan:
             raise RuntimeError(
                 'A `start_kyoku` message without the `kyotaku` key.')
         deposits = message['kyotaku']
+        if not isinstance(deposits, int):
+            raise RuntimeError(type(deposits))
         if deposits < 0:
             raise RuntimeError(
                 f'A `start_kyoku` message with an invalid `kyotaku` (kyotaku = {deposits}).')
@@ -1341,6 +1459,8 @@ class Kanachan:
         if 'oya' not in message:
             raise RuntimeError('A `start_kyoku` message without the `oya` key.')
         dealer = message['oya']
+        if not isinstance(dealer, int):
+            raise RuntimeError(type(dealer))
         if dealer != round_index:
             raise RuntimeError(
                 f'An inconsistent `start_kyoku` message (round_index = {round_index}, oya = {dealer}).')
@@ -1358,29 +1478,32 @@ class Kanachan:
             raise RuntimeError(
                 'A `start_kyoku` message without the `scores` key.')
         scores = message['scores']
+        if not isinstance(scores, list):
+            raise RuntimeError(type(scores))
         if len(scores) != 4:
             raise RuntimeError(
                 f'A `start_kyoku` message with an invalid scores (length = {len(scores)}).')
+        for score in scores:
+            if not isinstance(score, int):
+                raise RuntimeError(type(score))
 
         if 'tehais' not in message:
             raise RuntimeError(
                 'A `start_kyoku` message without the `tehais` key.')
         hands = message['tehais']
+        if not isinstance(hands, list):
+            raise RuntimeError(type(hands))
         if len(hands) != 4:
             raise RuntimeError(
                 f'A `start_kyoku` message with an wrong `tehais` (length = {len(hands)}).')
-
-        # 2022/10/06 時点でのAI雀荘の実装では， `start_game` メッセージに
-        # `id` キーが伴わないように推定されるので，その時点では `seat` を
-        # 設定できない．以下は workaround
-        seat = None
-        for i in range(4):
-            if hands[i][0] != '?':
-                if seat is not None:
-                    raise RuntimeError('TODO: (A suitable error message)')
-                seat = i
-        if seat is None:
-            raise RuntimeError('TODO: (A suitable error message)')
+        for hand in hands:
+            if not isinstance(hand, list):
+                raise RuntimeError(type(hand))
+            if len(hand) != 13:
+                raise RuntimeError(len(hand))
+            for h in hand:
+                if h not in _TILE2NUM and h != '?':
+                    raise RuntimeError(h)
 
         for i, hand in enumerate(hands):
             if i != seat:
@@ -1396,9 +1519,9 @@ class Kanachan:
                         raise RuntimeError(
                             f'A `start_kyoku` message with an wrong `tehais` (seat = {seat}, hand = {hand}).')
                     hand[i] = _TILE2NUM[hand[i]]
-        hand = hands[seat]
+        hand = hands[self.__game_state.get_seat()]
 
-        self.__game_state.on_new_round(seat, scores)
+        self.__game_state.on_new_round(scores)
         self.__round_state.on_new_round(chang, round_index, ben_chang, deposits, dora_indicator, hand)
 
     def __respond(self, dapai: Optional[int], candidates: List[int]) -> None:
@@ -1439,7 +1562,7 @@ class Kanachan:
             sparse.append(zimo_tile + 489)
         for i in range(len(sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
             sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
-        sparse = torch.tensor(sparse, device='cpu', dtype=torch.int32)
+        sparse = torch.tensor(sparse, device=self.__device, dtype=torch.int32)
         sparse = torch.unsqueeze(sparse, dim=0)
 
         numeric = []
@@ -1449,23 +1572,24 @@ class Kanachan:
         numeric.append(self.__game_state.get_player_score((seat + 1) % 4) / 10000.0)
         numeric.append(self.__game_state.get_player_score((seat + 2) % 4) / 10000.0)
         numeric.append(self.__game_state.get_player_score((seat + 3) % 4) / 10000.0)
-        numeric = torch.tensor(numeric, device='cpu', dtype=torch.float32)
+        numeric = torch.tensor(numeric, device=self.__device, dtype=self.__dtype)
         numeric = torch.unsqueeze(numeric, dim=0)
 
         progression = self.__round_state.copy_progression()
         for i in range(len(progression), MAX_LENGTH_OF_PROGRESSION_FEATURES):
             progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
-        progression = torch.tensor(progression, device='cpu', dtype=torch.int32)
+        progression = torch.tensor(progression, device=self.__device, dtype=torch.int32)
         progression = torch.unsqueeze(progression, dim=0)
 
         candidates_ = list(candidates)
+        candidates_.append(NUM_TYPES_OF_ACTIONS)
         for i in range(len(candidates_), MAX_NUM_ACTION_CANDIDATES):
             candidates_.append(NUM_TYPES_OF_ACTIONS + 1)
-        candidates_ = torch.tensor(candidates_, device='cpu', dtype=torch.int32)
+        candidates_ = torch.tensor(candidates_, device=self.__device, dtype=torch.int32)
         candidates_ = torch.unsqueeze(candidates_, dim=0)
 
         with torch.no_grad():
-            prediction = self.__model((sparse, numeric, progression, candidates_))
+            prediction = self.__model(sparse, numeric, progression, candidates_)
             prediction = torch.squeeze(prediction, dim=0)
             prediction = prediction[:len(candidates)]
             argmax = torch.argmax(prediction)
@@ -1606,10 +1730,9 @@ class Kanachan:
         my_score = self.__game_state.get_player_score(seat)
 
         if not mine:
-            # TODO: https://github.com/smly/mjai.app/discussions/11
-            #if tile != '?':
-            #    raise RuntimeError(
-            #        f'An inconsistent `tsumo` message (seat = {seat}, actor = {actor}, pai = {tile}).')
+            if tile != '?':
+                raise RuntimeError(
+                    f'An inconsistent `tsumo` message (seat = {seat}, actor = {actor}, pai = {tile}).')
             self.__round_state.on_zimo(seat, mine, None, my_score)
         else:
             if tile not in _TILE2NUM:
@@ -1939,7 +2062,7 @@ class Kanachan:
         dora_indicator = message['dora_marker']
         if dora_indicator not in _TILE2NUM:
             raise RuntimeError(
-                f'A `dora` message with an invalid `dora_marker` (dora_marker = {dora_marker}).')
+                f'A `dora` message with an invalid `dora_marker` (dora_marker = {dora_indicator}).')
         dora_indicator = _TILE2NUM[dora_indicator]
 
         self.__round_state.on_new_dora(dora_indicator)
@@ -2010,7 +2133,7 @@ class Kanachan:
             if message['type'] == 'hello':
                 if len(messages) > 1:
                     raise RuntimeError('A multi-line `hello` message.')
-                self.__on_hello()
+                self.__on_hello(message)
                 messages.pop(0)
                 continue
 
