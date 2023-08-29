@@ -553,6 +553,50 @@ _NUM2JIAGANG = (
 )
 
 
+_PENG_TO_JIAGANG_LIST = (
+     1, #  0: (1m, 1m, 1m) + 1m
+     2, #  1: (2m, 2m, 2m) + 2m
+     3, #  2: (3m, 3m, 3m) + 3m
+     4, #  3: (4m, 4m, 4m) + 4m
+     0, #  4: (5m, 5m, 5m) + 0m
+     5, #  5: (0m, 5m, 5m) + 5m
+     5, #  6: (5m, 5m, 0m) + 5m
+     6, #  7: (6m, 6m, 6m) + 6m
+     7, #  8: (7m, 7m, 7m) + 7m
+     8, #  9: (8m, 8m, 8m) + 8m
+     9, # 10: (9m, 9m, 9m) + 9m
+    11, # 11: (1p, 1p, 1p) + 1p
+    12, # 12: (2p, 2p, 2p) + 2p
+    13, # 13: (3p, 3p, 3p) + 3p
+    14, # 14: (4p, 4p, 4p) + 4p
+    10, # 15: (5p, 5p, 5p) + 0p
+    15, # 16: (0p, 5p, 5p) + 5p
+    15, # 17: (5p, 5p, 0p) + 5p
+    16, # 18: (6p, 6p, 6p) + 6p
+    17, # 19: (7p, 7p, 7p) + 7p
+    18, # 20: (8p, 8p, 8p) + 8p
+    19, # 21: (9p, 9p, 9p) + 9p
+    21, # 22: (1s, 1s, 1s) + 1s
+    22, # 23: (2s, 2s, 2s) + 2s
+    23, # 24: (3s, 3s, 3s) + 3s
+    24, # 25: (4s, 4s, 4s) + 4s
+    20, # 26: (5s, 5s, 5s) + 0s
+    25, # 27: (0s, 5s, 5s) + 5s
+    25, # 28: (5s, 5s, 0s) + 5s
+    26, # 29: (6s, 6s, 6s) + 6s
+    27, # 30: (7s, 7s, 7s) + 7s
+    28, # 31: (8s, 8s, 8s) + 8s
+    29, # 32: (9s, 9s, 9s) + 9s
+    30, # 33: (1z, 1z, 1z) + 1z
+    31, # 34: (2z, 2z, 2z) + 2z
+    32, # 35: (3z, 3z, 3z) + 3z
+    33, # 36: (4z, 4z, 4z) + 4z
+    34, # 37: (5z, 5z, 5z) + 5z
+    35, # 38: (6z, 6z, 6z) + 6z
+    36  # 39: (7z, 7z, 7z) + 7z
+)
+
+
 _JIAGANG_TO_PENG_LIST = (
     ( 4,),
     ( 0,),
@@ -658,7 +702,6 @@ class GameState:
             raise ValueError(seat)
         self.__seat = seat
 
-    def on_new_round(self, scores: List[int]) -> None:
         self.__player_grades = [None] * 4
         for i in range(4):
             if i == self.__seat:
@@ -666,13 +709,13 @@ class GameState:
             else:
                 self.__player_grades[i] = self.__opponent_grade
 
+    def on_new_round(self, scores: List[int]) -> None:
         self.__player_scores = list(scores)
 
     def __assert_initialized(self) -> None:
         if self.__player_grades is None:
             raise RuntimeError(
                 'A method is called on a non-initialized `GameState` object.')
-        assert(self.__player_scores is not None)
 
     def on_liqi_acceptance(self, seat: int) -> None:
         self.__assert_initialized()
@@ -821,31 +864,31 @@ class RoundState:
         assert tile34 >= 0
         assert tile34 < 34
 
-        new_hand = list[self.__my_hand]
+        new_hand = list(self.__my_hand)
 
         if 0 <= tile34 and tile34 <= 8:
             tile37 = tile34 + 1
-            while new_hand.count(tile37) >= 1:
+            while tile37 in new_hand:
                 new_hand.remove(tile37)
-            if tile34 == 4 and new_hand.count(0) >= 1:
+            if tile34 == 4 and 0 in new_hand:
                 assert new_hand.count(0) == 1
                 new_hand.remove(0)
             return new_hand
 
         if 9 <= tile34 and tile34 <= 17:
-            tile37 = tile37 + 2
-            while new_hand.count(tile37) >= 1:
+            tile37 = tile34 + 2
+            while tile37 in new_hand:
                 new_hand.remove(tile37)
-            if tile34 == 13 and new_hand.count(10) >= 1:
+            if tile34 == 13 and 10 in new_hand:
                 assert new_hand.count(10) == 1
                 new_hand.remove(10)
             return new_hand
 
         assert tile34 >= 18
-        tile37 = tile37 + 3
-        while new_hand.count(tile37) >= 1:
+        tile37 = tile34 + 3
+        while tile37 in new_hand:
             new_hand.remove(tile37)
-        if tile34 == 22 and new_hand.count(20) >= 1:
+        if tile34 == 22 and 20 in new_hand:
             assert new_hand.count(20) == 1
             new_hand.remove(20)
         return new_hand
@@ -891,7 +934,7 @@ class RoundState:
                 # 1000点以上あれば立直が可能である．
                 new_hand = list(self.__my_hand)
                 new_hand[i] = self.__zimo_pai
-                if len(self.__my_fulu_list) == 0 and my_score >= 1000:
+                if len(self.__my_fulu_list) == 0 and my_score >= 1000 and self.get_num_left_tiles() >= 4:
                     xiangting_number = self.__xiangting_calculator.calculate(new_hand, 4)
                     if xiangting_number == 1:
                         # 立直宣言を伴う手出しを候補として追加する．
@@ -899,7 +942,7 @@ class RoundState:
 
             # 自摸切りを候補として追加する．
             candidates.append(self.__zimo_pai * 4 + 1 * 2 + 0)
-            if len(self.__my_fulu_list) == 0 and my_score >= 1000:
+            if len(self.__my_fulu_list) == 0 and my_score >= 1000 and self.get_num_left_tiles() >= 4:
                 xiangting_number = self.__xiangting_calculator.calculate(self.__my_hand, 4)
                 if xiangting_number == 1:
                     # 立直宣言を伴う自摸切りを候補として追加する．
@@ -1329,7 +1372,12 @@ class RoundState:
                 break
         if index is None:
             raise RuntimeError('TODO: (A suitable error message)')
-        self.__my_fulu_list[index] = (self.__my_fulu_list[index] - 312) % 40 + 182
+        encode = self.__my_fulu_list[index] - 312
+        relseat = encode // 40
+        peng = encode % 40
+        if tile != _PENG_TO_JIAGANG_LIST[peng]:
+            raise RuntimeError(tile)
+        self.__my_fulu_list[index] = 182 + tile
 
         self.__my_lingshang_zimo = True
 

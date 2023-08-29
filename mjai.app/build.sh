@@ -17,7 +17,7 @@ docker exec -it $container_id bash -c 'cd /opt/kanachan/src/common && protoc -I.
 docker exec -it $container_id mkdir -p /opt/kanachan/build
 docker exec -it $container_id bash -c \
   'cd /opt/kanachan/build && \
-   CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ cmake \
+   cmake \
      -DPYTHON_VERSION="$(python3 -V | sed -e '\''s@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@'\'')" \
      -DPYTHON_INCLUDE_PATH=/usr/local/include/python"$(python3 -V | sed -e '\''s@^Python[[:space:]]\{1,\}\([[:digit:]]\{1,\}\.[[:digit:]]\{1,\}\)\.[[:digit:]]\{1,\}@\1@'\'')" \
      -DMARISA_TRIE_ROOT=/usr/local \
@@ -25,7 +25,7 @@ docker exec -it $container_id bash -c \
      -DCMAKE_BUILD_TYPE=Release \
      -DCMAKE_BUILD_RPATH=/workspace/.local/lib \
      ..'
-docker exec -it $container_id bash -c 'cd /opt/kanachan/build && VERBOSE=1 make -j make_trie simulation'
+docker exec -it $container_id bash -c 'cd /opt/kanachan/build && VERBOSE=1 make -j make_trie xiangting_calculator'
 docker exec -it $container_id /opt/kanachan/build/src/xiangting/make_trie /opt/src/shanten-number /opt/kanachan/mjai.app
 
 docker exec -it $container_id mkdir -p /opt/kanachan/mjai.app/.local/lib
@@ -33,7 +33,7 @@ docker exec -it $container_id bash -c 'cp -f /usr/local/lib/libboost_stacktrace_
 docker exec -it $container_id bash -c 'cp -f /usr/local/lib/libboost_python* /opt/kanachan/mjai.app/.local/lib'
 docker exec -it $container_id bash -c 'cp -f /usr/local/lib/libmarisa.so* /opt/kanachan/mjai.app/.local/lib'
 docker exec -it $container_id cp -rf /opt/src/mahjong/mahjong /opt/kanachan/mjai.app
-docker exec -it $container_id bash -c 'cd /opt/kanachan && cp -f build/src/simulation/libsimulation.so mjai.app/xiangting_calculator/_xiangting_calculator.so'
+docker exec -it $container_id bash -c 'cd /opt/kanachan && cp -f build/src/simulation/libxiangting_calculator.so mjai.app/xiangting_calculator/_xiangting_calculator.so'
 docker exec -it $container_id cp -rf /opt/kanachan/kanachan /opt/kanachan/mjai.app
 
 docker cp "$1" ${container_id}:/opt/kanachan/mjai.app/model.kanachan

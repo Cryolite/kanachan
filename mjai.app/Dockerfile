@@ -25,8 +25,6 @@ RUN apt-get update && \
     locale-gen en_US.UTF-8 ja_JP.UTF-8 && \
     mkdir -p /opt/src && \
     (cd /opt && git clone 'https://github.com/Cryolite/prerequisites.git') && \
-    /opt/prerequisites/gcc/install --debug && \
-    /opt/prerequisites/libbacktrace/install --debug && \
     /opt/prerequisites/cmake/install --debug && \
     (cd /opt/src && curl -fLsSo Python-3.10.7.tar.xz 'https://www.python.org/ftp/python/3.10.7/Python-3.10.7.tar.xz') && \
     (cd /opt/src && tar xf Python-3.10.7.tar.xz) && \

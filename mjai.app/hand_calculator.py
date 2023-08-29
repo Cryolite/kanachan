@@ -351,7 +351,9 @@ class HandCalculator:
                     flag = True
                     break
             if not flag:
-                raise RuntimeError('TODO: (A suitable error message)')
+                raise RuntimeError(
+                    f'hand = {hand}, fulu_list = {fulu_list}, hupai = {hupai}, tiles = {tiles}, '
+                    f'tile = {tile}')
 
         # `tiles` には和了牌も含めなければならない．
         flag = False
