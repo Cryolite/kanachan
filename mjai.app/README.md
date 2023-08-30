@@ -4,7 +4,7 @@ AIJansou (mjai.app) is a Riichi Mahjong AI competition platform. This directory 
 
 ## `build.sh`
 
-First, prepare a model file (a file with the `.kanachan` extension). Next, with the top-level directory of the working tree of this repository as the current directory, execute the following command:
+`build.sh` is a script that converts the model trained with kanachan into a `.zip` file for submission to AIJansou. First, prepare a model file (a file with the `.kanachan` extension). Next, with the top-level directory of the working tree of this repository as the current directory, execute the following command:
 
 ```
 $ mjai.app/build.sh PATH_TO_MODEL_FILE
