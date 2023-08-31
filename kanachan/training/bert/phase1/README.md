@@ -13,7 +13,7 @@ The following items are required to run the program in this directory:
 
 For detailed installation instructions for the above prerequisite items, refer to those for each OS and distribution.
 
-After the installation of the prerequisite items, first [build the `cryolite/kanachan` Docker image](https://github.com/Cryolite/kanachan/blob/main/kanachan/README.md#cryolitekanachan-docker-image). Then, execute the following command with the top directory of the working tree of this repository as the current directory:
+After the installation of the prerequisite items, first [build the `cryolite/kanachan` Docker image](../../../README.md#cryolitekanachan-docker-image). Then, execute the following command with the top directory of the working tree of this repository as the current directory:
 
 ```sh
 kanachan$ docker build -f kanachan/training/bert/phase1/Dockerfile -t cryolite/kanachan.training.bert.phase1 .
