@@ -25,7 +25,7 @@ from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB)
 import kanachan.training.iql.config # pylint: disable=unused-import
 from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import Dataset, is_gradient_nan, get_gradient
-from kanachan.training.bert.encoder import Encoder
+from kanachan.nn import Encoder
 from kanachan.training.iql.value_model import (ValueDecoder, ValueModel)
 from kanachan.training.iql.q_model import (QDecoder, QModel)
 from kanachan.training.iql.qq_model import QQModel

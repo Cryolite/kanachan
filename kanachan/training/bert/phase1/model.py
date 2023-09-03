@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from kanachan.training.bert.encoder import Encoder
+from kanachan.nn import Encoder
 from kanachan.training.bert.phase1.decoder import Decoder
 
 

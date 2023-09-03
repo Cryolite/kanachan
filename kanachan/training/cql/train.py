@@ -26,7 +26,7 @@ from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_AC
 from kanachan.training.common import Dataset, get_gradient, is_gradient_nan
 import kanachan.training.cql.config # pylint: disable=unused-import
 from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
-from kanachan.training.bert.encoder import Encoder
+from kanachan.nn import Encoder
 from kanachan.training.cql.q_model import ThetaDecoder, ThetaModel, QModel
 from kanachan.model_loader import dump_object, dump_model
 

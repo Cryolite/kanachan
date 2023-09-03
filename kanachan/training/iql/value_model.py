@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from kanachan.training.constants import (
     NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES,)
-from kanachan.training.bert.encoder import Encoder
+from kanachan.nn import Encoder
 
 
 class ValueDecoder(nn.Module):
