@@ -47,7 +47,5 @@ EOF
   popd
 
   python3 "$tempdir/test.py" || true
-  if [[ -e "$logs_dir/errors.json" && $(($(wc -c < "$logs_dir/errors.json") <= 18)) == 1 ]]; then
-    rm -rf "$logs_dir"
-  fi
+  grep -Fqr '"error"' "$logs_dir" || rm -rf "$logs_dir"
 done
