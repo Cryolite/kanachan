@@ -134,8 +134,8 @@ class Config:
     initial_model_index: Optional[int] = None
     value_model: Optional[Path] = None
     q_model: Path = MISSING
-    beta: float = 1.0
-    weight_clipping: float = 1.0
+    beta: float = 0.05
+    weight_clipping: float = 20.0
     checkpointing: bool = False
     batch_size: int = MISSING
     gradient_accumulation_steps: int = 1
