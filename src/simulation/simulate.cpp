@@ -85,7 +85,7 @@ catch (...) {
 }
 #pragma GCC diagnostic pop
 
-python::dict test(
+std::shared_ptr<Kanachan::GameLog> test(
   python::long_ const simulation_mode, python::tuple const grades,
   python::object test_model, python::list const test_paishan_list)
 try {

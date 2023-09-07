@@ -96,6 +96,7 @@ private:
     std::vector<long> decision_batch_;
     std::size_t batch_index_;
     std::size_t result_count_;
+    std::uint_fast8_t state_;
     mutable std::mutex mtx_;
     std::condition_variable_any ready_to_enqueue_;
     std::condition_variable_any ready_to_run_;
@@ -184,6 +185,7 @@ try : torch_(python::import("torch"))
     , decision_batch_()
     , batch_index_(0u)
     , result_count_(0u)
+    , state_(0u)
     , mtx_()
     , ready_to_enqueue_()
     , ready_to_run_()
@@ -238,10 +240,19 @@ void DecisionMaker::Impl_::shrinkBatchSizeToFitNumThreads(std::size_t const num_
         return;
     }
 
-    std::size_t const log2_new_batch_size = std::log2(num_threads + 1u) - 1.0;
+    ready_to_enqueue_.wait(lock, [&]{ return state_ == 0u; });
+    std::size_t const log2_new_batch_size = std::log2(num_threads + 3u) - 2u;
     std::size_t const new_batch_size = 1 << log2_new_batch_size;
-    batch_size_ = new_batch_size;
-    if (batch_index_ >= batch_size_ && result_count_ == 0u) {
+    batch_size_ = std::min(batch_size_, new_batch_size);
+    if (num_threads < batch_size_ * 2u - 1u) {
+        KANACHAN_THROW<std::logic_error>(_1)
+            << "num_threads == " << num_threads << ", batch_size_ == " << batch_size_;
+    }
+    if (batch_index_ >= batch_size_) {
+        if (result_count_ > 0u) {
+            KANACHAN_THROW<std::logic_error>(_1) << "result_count_ == " << result_count_;
+        }
+        state_ = 1u;
         ready_to_run_.notify_all();
     }
 }
@@ -250,8 +261,7 @@ python::object DecisionMaker::Impl_::decide_(
     python::object sparse_batch, python::object numeric_batch, python::object progression_batch,
     python::object candidates_batch)
 try {
-    KANACHAN_ASSERT((batch_index_ >= 1u));
-    KANACHAN_ASSERT((result_count_ == 0u));
+    KANACHAN_ASSERT((PyGILState_Check() == 0));
 
     python::object weight_batch = model_(
         sparse_batch, numeric_batch, progression_batch, candidates_batch);
@@ -310,13 +320,45 @@ try {
         std::vector<std::vector<std::uint_fast16_t>> candidates_batch;
         {
             std::unique_lock lock(mtx_);
-            ready_to_run_.wait(
-                lock, stop_token,
-                [this]() { return batch_index_ >= batch_size_ && result_count_ == 0u; });
-            if (stop_token.stop_requested() && batch_index_ == 0u) {
+            ready_to_run_.wait(lock, stop_token, [this]() { return state_ == 1u; });
+            if (stop_token.stop_requested()) {
+                if (batch_index_ > 0u) {
+                    KANACHAN_THROW<std::logic_error>(_1) << "batch_index_ == " << batch_index_;
+                }
                 return;
             }
-            ready_to_run_.wait(lock, [this]() { return result_count_ == 0u; });
+            if (batch_index_ < batch_size_) {
+                KANACHAN_THROW<std::logic_error>(_1)
+                    << "batch_index_ == " << batch_index_ << ", batch_size_ == " << batch_size_;
+            }
+            if (result_count_ > 0u) {
+                KANACHAN_THROW<std::logic_error>(_1) << "result_count_ == " << result_count_;
+            }
+
+            if (sparse_batch_.size() < batch_index_) {
+                KANACHAN_THROW<std::logic_error>(_1)
+                    << "sparse_batch_.size() == " << sparse_batch_.size()
+                    << ", batch_index_" << batch_index_;
+            }
+            sparse_batch_.resize(batch_index_);
+            if (numeric_batch_.size() < batch_index_) {
+                KANACHAN_THROW<std::logic_error>(_1)
+                    << "numeric_batch_.size() == " << numeric_batch_.size()
+                    << ", batch_index_" << batch_index_;
+            }
+            numeric_batch_.resize(batch_index_);
+            if (progression_batch_.size() < batch_index_) {
+                KANACHAN_THROW<std::logic_error>(_1)
+                    << "progression_batch_.size() == " << progression_batch_.size()
+                    << ", batch_index_" << batch_index_;
+            }
+            progression_batch_.resize(batch_index_);
+            if (candidates_batch_.size() < batch_index_) {
+                KANACHAN_THROW<std::logic_error>(_1)
+                    << "candidates_batch_.size() == " << candidates_batch_.size()
+                    << ", batch_index_" << batch_index_;
+            }
+            candidates_batch_.resize(batch_index_);
 
             sparse_batch = sparse_batch_;
             numeric_batch = numeric_batch_;
@@ -421,6 +463,7 @@ try {
             decision_batch_.swap(decision_batch);
             result_count_ = batch_index_;
             batch_index_ = 0u;
+            state_ = 2u;
         }
         ready_to_dequeue_.notify_all();
     }
@@ -441,10 +484,16 @@ try {
     }
 
     std::unique_lock lock(mtx_);
-    ready_to_enqueue_.wait(
-        lock, stop_token, [this]() { return batch_index_ < batch_size_ && result_count_ == 0u; });
+    ready_to_enqueue_.wait(lock, stop_token, [this]() { return state_ == 0; });
     if (stop_token.stop_requested()) {
         KANACHAN_THROW<Kanachan::ThreadTermination>("Graceful termination.");
+    }
+    if (batch_index_ >= batch_size_) {
+        KANACHAN_THROW<std::logic_error>(_1)
+            << "batch_index_ == " << batch_index_ << ", batch_size_" << batch_size_;
+    }
+    if (result_count_ > 0u) {
+        KANACHAN_THROW<std::logic_error>(_1) << "result_count_ == " << result_count_;
     }
 
     sparse_batch_[batch_index_].swap(sparse);
@@ -454,28 +503,51 @@ try {
 
     std::size_t const my_index = batch_index_++;
     if (batch_index_ == batch_size_) {
+        state_ = 1u;
         ready_to_run_.notify_all();
     }
 
-    ready_to_dequeue_.wait(lock, stop_token, [this]() { return result_count_ > 0u; });
+    ready_to_dequeue_.wait(lock, stop_token, [this]() { return state_ == 2u; });
     if (stop_token.stop_requested()) {
         KANACHAN_THROW<Kanachan::ThreadTermination>("Graceful termination.");
     }
-    KANACHAN_ASSERT((batch_index_ == 0u));
+    if (batch_index_ > 0u) {
+        KANACHAN_THROW<std::logic_error>(_1) << "batch_index_ == " << batch_index_;
+    }
+    if (result_count_ == 0u) {
+        KANACHAN_THROW<std::logic_error>(_1) << "result_count_ == " << result_count_;
+    }
 
     std::uint_fast16_t const decision = decision_batch_[my_index];
     --result_count_;
     if (result_count_ == 0u) {
+        if (sparse_batch_.size() < batch_size_) {
+            KANACHAN_THROW<std::logic_error>(_1)
+                << "sparse_batch_.size() == " << sparse_batch_.size()
+                << "batch_size_ == " << batch_size_;
+        }
         sparse_batch_.resize(batch_size_);
+        if (numeric_batch_.size() < batch_size_) {
+            KANACHAN_THROW<std::logic_error>(_1)
+                << "numeric_batch_.size() == " << numeric_batch_.size()
+                << "batch_size_ == " << batch_size_;
+        }
         numeric_batch_.resize(batch_size_);
+        if (progression_batch_.size() < batch_size_) {
+            KANACHAN_THROW<std::logic_error>(_1)
+                << "progression_batch_.size() == " << progression_batch_.size()
+                << "batch_size_ == " << batch_size_;
+        }
         progression_batch_.resize(batch_size_);
+        if (candidates_batch_.size() < batch_size_) {
+            KANACHAN_THROW<std::logic_error>(_1)
+                << "candidates_batch_.size() == " << candidates_batch_.size()
+                << "batch_size_ == " << batch_size_;
+        }
         candidates_batch_.resize(batch_size_);
-        if (batch_index_ < batch_size_) {
-            ready_to_enqueue_.notify_all();
-        }
-        else {
-            ready_to_run_.notify_all();
-        }
+
+        state_ = 0u;
+        ready_to_enqueue_.notify_all();
     }
 
     return decision;

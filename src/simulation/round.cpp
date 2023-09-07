@@ -4,8 +4,8 @@
 #include "simulation/round_state.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/game_state.hpp"
+#include "simulation/game_log.hpp"
 #include "common/throw.hpp"
-#include <boost/python/dict.hpp>
 #include <vector>
 #include <functional>
 #include <any>
@@ -13,25 +13,17 @@
 #include <cstdint>
 
 
-namespace{
-
-namespace python = boost::python;
-
-} // namespace `anonymous`
-
 namespace Kanachan{
 
 bool simulateRound(
   std::vector<std::uint_least32_t> const &seed, Kanachan::GameState &game_state,
-  Kanachan::Paishan const * const p_test_paishan, python::dict result)
+  Kanachan::Paishan const * const p_test_paishan, Kanachan::GameLog &game_log)
 {
-  if (result.is_none()) {
-    KANACHAN_THROW<std::invalid_argument>("`result` must not be a `None`.");
-  }
-
   Kanachan::RoundState round_state(seed, game_state, p_test_paishan);
+  game_log.onBeginningOfRound();
 
-  std::function<std::any()> next_step = std::bind(&Kanachan::zimo, std::ref(round_state), result);
+  std::function<std::any()> next_step = std::bind(
+    &Kanachan::zimo, std::ref(round_state), std::ref(game_log));
 
   for (;;) {
     std::any next_step_ = next_step();
