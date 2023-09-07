@@ -44,13 +44,17 @@ namespace python = boost::python;
 namespace Kanachan{
 
 python::list simulate(
-  std::string const &device, python::object dtype,
-  long baseline_grade, python::object baseline_model,
-  long proposed_grade, python::object proposed_model,
-  long simulation_mode, long num_simulation_sets, long batch_size, long concurrency)
+  std::string const &device, python::object dtype, long const room,
+  long const baseline_grade, python::object baseline_model,
+  long const proposed_grade, python::object proposed_model,
+  long const simulation_mode, long const num_simulation_sets,
+  long const batch_size, long const concurrency)
 try {
   if (dtype.is_none()) {
     KANACHAN_THROW<std::invalid_argument>("`dtype` must not be `None`.");
+  }
+  if (room < 0 || 4 < room) {
+    KANACHAN_THROW<std::invalid_argument>(_1) << room << ": An invalid value for `room`.";
   }
   if (baseline_grade < 0 || 16 <= baseline_grade) {
     KANACHAN_THROW<std::invalid_argument>(_1)
@@ -68,7 +72,7 @@ try {
   }
 
   Kanachan::Simulator simulator(
-    device, dtype, baseline_grade, baseline_model, proposed_grade, proposed_model,
+    device, dtype, room, baseline_grade, baseline_model, proposed_grade, proposed_model,
     simulation_mode, num_simulation_sets, batch_size, concurrency);
   return simulator.run();
 }
@@ -147,7 +151,7 @@ try {
     KANACHAN_THROW<std::invalid_argument>(_1) << "`grades` is `None`.";
   }
   auto p_test_decision_maker = std::make_shared<Kanachan::DecisionMaker>(
-    "cpu", python::import("torch").attr("float64"), test_model, 1u);
+    "cpu", python::import("torch").attr("float64"), test_model, 1u, false);
 
   if (test_paishan_list.is_none()) {
     KANACHAN_THROW<std::invalid_argument>(_1) << "`test_paishan_list` is `None`.";
