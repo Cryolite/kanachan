@@ -10,6 +10,6 @@ The use of the term **BERT** here is a deliberate abuse. The term BERT actually 
 
 A training program for BERT with an objective function that imitates human choices in training data.
 
-### [`kanachan.training.bert.phase2`](phase1) Python submodule
+### [`kanachan.training.bert.phase2`](phase2) Python submodule
 
 A training program for BERT with an objective function that maximizes round deltas in training data.
