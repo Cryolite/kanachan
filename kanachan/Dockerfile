@@ -1,5 +1,7 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.08-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.12-py3
+ARG BUILD_TYPE=Release
 FROM $BASE_IMAGE
+ARG BUILD_TYPE
 
 SHELL ["/bin/bash", "-c"]
 
@@ -26,7 +28,7 @@ RUN set -euxo pipefail; \
     . "$HOME/.local/bin/activate"; \
     python3 -m pip install -U pip; \
     pushd /workspace; \
-    git clone 'https://github.com/NVIDIA/apex.git'; \
+    git clone -b 22.12-dev 'https://github.com/NVIDIA/apex.git'; \
     pushd apex; \
     MAX_JOBS=$(($(nproc) / 2)) python3 -m pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./; \
     popd; \
@@ -93,9 +95,18 @@ RUN set -euxo pipefail; \
     python_version="$(python3 -V | grep -Eo '^Python [[:digit:]]+\.[[:digit:]]+' | grep -Eo '[[:digit:]]+\.[[:digit:]]+')"; \
     echo "import toolset : using ; using python : : $(which python3) : /usr/include/python$python_version ;" > "$HOME/user-config.jam"; \
     /workspace/prerequisites/boost/download --debug --source-dir /workspace/boost; \
-    /workspace/prerequisites/boost/build --debug --source-dir /workspace/boost --prefix "$HOME/.local" -- \
-      -d+2 --with-headers --with-stacktrace --with-python --with-timer --build-type=complete --layout=tagged \
-      toolset=gcc variant=release threading=multi link=shared runtime-link=shared; \
+    if [[ $BUILD_TYPE == 'Debug' ]]; then \
+      /workspace/prerequisites/boost/build --debug --source-dir /workspace/boost --prefix "$HOME/.local" -- \
+        -d+2 --with-headers --with-stacktrace --with-python --with-timer --build-type=complete --layout=tagged \
+        toolset=gcc variant=debug threading=multi link=shared runtime-link=shared \
+        cxxflags=-D_GLIBCXX_DEBUG cxxflags=-D_GLIBCXX_DEBUG_PEDANTIC \
+        cflags=-fsanitize=address cxxflags=-fsanitize=address linkflags=-fsanitize=address \
+        cflags=-fsanitize=undefined cxxflags=-fsanitize=undefined linkflags=-fsanitize=undefined; \
+    else \
+      /workspace/prerequisites/boost/build --debug --source-dir /workspace/boost --prefix "$HOME/.local" -- \
+        -d+2 --with-headers --with-stacktrace --with-python --with-timer --build-type=complete --layout=tagged \
+        toolset=gcc variant=release threading=multi link=shared runtime-link=shared; \
+    fi; \
     rm -rf /workspace/boost
 
 # Install `marisa-trie`.
@@ -104,7 +115,11 @@ RUN set -euxo pipefail; \
     git clone 'https://github.com/s-yata/marisa-trie.git'; \
     pushd marisa-trie; \
     autoreconf -i; \
-    CFLAGS='-DNDEBUG -O3 -flto' CXXFLAGS='-DNDEBUG -O3 -flto' ./configure --prefix="$HOME/.local" --enable-native-code --disable-static; \
+    if [[ $BUILD_TYPE == 'Debug' ]]; then \
+      CFLAGS='-D_DEBUG -g' CXXFLAGS='-D_DEBUG -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -g' ./configure --prefix="$HOME/.local" --enable-native-code --disable-static; \
+    else \
+      CFLAGS='-DNDEBUG -O3 -flto' CXXFLAGS='-DNDEBUG -O3 -flto' ./configure --prefix="$HOME/.local" --enable-native-code --disable-static; \
+    fi; \
     make -j; \
     make install; \
     popd; \
@@ -129,10 +144,17 @@ RUN set -euxo pipefail; \
     popd; \
     mkdir -p /workspace/kanachan/build; \
     pushd /workspace/kanachan/build; \
-    CC=/home/ubuntu/.local/bin/gcc CXX=/home/ubuntu/.local/bin/g++ cmake \
-      -DSHANTEN_NUMBER_SOURCE_PATH=/workspace/shanten-number \
-      -DCMAKE_BUILD_TYPE=Release \
-      ..; \
+    if [[ $BUILD_TYPE == 'Debug' ]]; then \
+      CC=/home/ubuntu/.local/bin/gcc CXX=/home/ubuntu/.local/bin/g++ cmake \
+        -DSHANTEN_NUMBER_SOURCE_PATH=/workspace/shanten-number \
+        -DCMAKE_BUILD_TYPE=Debug \
+        ..; \
+    else \
+      CC=/home/ubuntu/.local/bin/gcc CXX=/home/ubuntu/.local/bin/g++ cmake \
+        -DSHANTEN_NUMBER_SOURCE_PATH=/workspace/shanten-number \
+        -DCMAKE_BUILD_TYPE=Release \
+        ..; \
+    fi; \
     make VERBOSE=1 -j make_trie simulation; \
     mkdir -p /home/ubuntu/.local/share/kanachan; \
     src/xiangting/make_trie /workspace/shanten-number /home/ubuntu/.local/share/kanachan; \
