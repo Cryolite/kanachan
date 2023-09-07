@@ -48,7 +48,7 @@ private:
 
 public:
     Impl_(
-        std::string const &device, python::object dtype,
+        std::string const &device, python::object dtype, std::uint_fast8_t room,
         std::uint_fast8_t baseline_grade, python::object baseline_model,
         std::uint_fast8_t proposed_grade, python::object proposed_model,
         unsigned long simulation_mode, std::size_t num_simulation_sets,
@@ -78,13 +78,13 @@ private:
 }; // class Simulator::Impl_
 
 Simulator::Simulator(
-    std::string const &device, python::object dtype,
-    std::uint_fast8_t baseline_grade, python::object baseline_model,
-    std::uint_fast8_t proposed_grade, python::object proposed_model,
-    unsigned long simulation_mode, std::size_t num_simulation_sets,
-    std::size_t batch_size, std::size_t concurrency)
+    std::string const &device, python::object dtype, std::uint_fast8_t const room,
+    std::uint_fast8_t const baseline_grade, python::object baseline_model,
+    std::uint_fast8_t const proposed_grade, python::object proposed_model,
+    unsigned long const simulation_mode, std::size_t const num_simulation_sets,
+    std::size_t const batch_size, std::size_t const concurrency)
     : p_impl_(std::make_shared<Impl_>(
-        device, dtype, baseline_grade, baseline_model, proposed_grade, proposed_model,
+        device, dtype, room, baseline_grade, baseline_model, proposed_grade, proposed_model,
         simulation_mode, num_simulation_sets, batch_size, concurrency))
 {}
 
@@ -95,17 +95,17 @@ python::list Simulator::run()
 }
 
 Simulator::Impl_::Impl_(
-    std::string const &device, python::object dtype,
-    std::uint_fast8_t baseline_grade, python::object baseline_model,
-    std::uint_fast8_t proposed_grade, python::object proposed_model,
-    unsigned long simulation_mode, std::size_t num_simulation_sets,
-    std::size_t batch_size, std::size_t concurrency)
+    std::string const &device, python::object dtype, std::uint_fast8_t const room,
+    std::uint_fast8_t const baseline_grade, python::object baseline_model,
+    std::uint_fast8_t const proposed_grade, python::object proposed_model,
+    unsigned long const simulation_mode, std::size_t const num_simulation_sets,
+    std::size_t const batch_size, std::size_t const concurrency)
     : dong_feng_zhan_(simulation_mode & 2u)
-    , room_(std::numeric_limits<std::uint_fast8_t>::max())
+    , room_(room)
     , p_baseline_decision_maker_(
-          std::make_shared<Kanachan::DecisionMaker>(device, dtype, baseline_model, batch_size))
+          std::make_shared<Kanachan::DecisionMaker>(device, dtype, baseline_model, batch_size, simulation_mode & 8u))
     , p_proposed_decision_maker_(
-          std::make_shared<Kanachan::DecisionMaker>(device, dtype, proposed_model, batch_size))
+          std::make_shared<Kanachan::DecisionMaker>(device, dtype, proposed_model, batch_size, simulation_mode & 8u))
     , threads_()
     , seeds_()
     , seats_list_()
@@ -119,37 +119,6 @@ Simulator::Impl_::Impl_(
 
     bool const no_duplicate = (simulation_mode & 1u);
     bool const one_versus_three = (simulation_mode & 4u);
-
-    if ((simulation_mode & 8u) != 0u) {
-        room_ = 0u;
-    }
-    if ((simulation_mode & 16u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 1u;
-    }
-    if ((simulation_mode & 32u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 2u;
-    }
-    if ((simulation_mode & 64u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 3u;
-    }
-    if ((simulation_mode & 128u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 4u;
-    }
-    if (room_ == std::numeric_limits<std::uint_fast8_t>::max()) {
-        KANACHAN_THROW<std::invalid_argument>("simulation_mode: Room not specified.");
-    }
 
     if (baseline_grade < 0 || 16 <= baseline_grade) {
         KANACHAN_THROW<std::invalid_argument>(_1)

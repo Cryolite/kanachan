@@ -44,7 +44,7 @@ class DecisionMaker::Impl_
 public:
     Impl_(
         std::string const &device, python::object dtype, python::object model,
-        std::size_t batch_size);
+        std::size_t batch_size, bool stochastic);
 
     Impl_(Impl_ const &) = delete;
 
@@ -55,9 +55,9 @@ public:
 private:
     python::object decide_(
         python::object sparse_batch, python::object numeric_batch,
-        python::object progression_batch, python::object candidates_batch);
+        python::object progression_batch, python::object candidates_batch, bool stochastic);
 
-    void threadMain_(std::stop_token stop_token);
+    void threadMain_(std::stop_token stop_token, bool stochastic);
 
 public:
     std::uint_fast16_t operator()(
@@ -104,7 +104,8 @@ private:
 }; // class DecisionMaker::Impl_
 
 DecisionMaker::DecisionMaker(
-    std::string const &device, python::object dtype, python::object model, std::size_t batch_size)
+    std::string const &device, python::object dtype, python::object model,
+    std::size_t const batch_size, bool const stochastic)
     : p_impl_()
 {
     if (PyGILState_Check() != 1) {
@@ -120,7 +121,7 @@ DecisionMaker::DecisionMaker(
         KANACHAN_THROW<std::invalid_argument>("`batch_size` must be a positive integer.");
     }
 
-    p_impl_ = std::make_shared<Impl_>(device, dtype, model, batch_size);
+    p_impl_ = std::make_shared<Impl_>(device, dtype, model, batch_size, stochastic);
 }
 
 void DecisionMaker::shrinkBatchSizeToFitNumThreads(std::size_t const num_threads)
@@ -156,7 +157,8 @@ void DecisionMaker::join()
 }
 
 DecisionMaker::Impl_::Impl_(
-    std::string const &device, python::object dtype, python::object model, std::size_t batch_size)
+    std::string const &device, python::object dtype, python::object model,
+    std::size_t const batch_size, bool const stochastic)
 try : torch_(python::import("torch"))
     , tensor_(torch_.attr("tensor"))
     , dtype_tensor_kwargs_()
@@ -214,7 +216,7 @@ try : torch_(python::import("torch"))
         return this->tensor_(*args, **this->long_tensor_kwargs_);
     };
 
-    thread_ = std::jthread(&Impl_::threadMain_, this);
+    thread_ = std::jthread(&Impl_::threadMain_, this, stochastic);
 }
 catch (python::error_already_set const &) {
     Kanachan::translatePythonException();
@@ -259,7 +261,7 @@ void DecisionMaker::Impl_::shrinkBatchSizeToFitNumThreads(std::size_t const num_
 
 python::object DecisionMaker::Impl_::decide_(
     python::object sparse_batch, python::object numeric_batch, python::object progression_batch,
-    python::object candidates_batch)
+    python::object candidates_batch, bool const stochastic)
 try {
     KANACHAN_ASSERT((PyGILState_Check() == 0));
 
@@ -285,9 +287,28 @@ try {
             mask, weight_batch, -std::numeric_limits<double>::infinity());
     }
 
-    python::dict kwargs;
-    kwargs["dim"] = python::long_(1);
-    python::object index_batch = torch_.attr("argmax")(*python::make_tuple(weight_batch), **kwargs);
+    python::object index_batch;
+    if (stochastic) {
+        index_batch = torch_.attr("multinomial")(weight_batch, 1);
+        if (index_batch.attr("dim")() != 2) {
+            KANACHAN_THROW<std::logic_error>("A logic error.");
+        }
+        if (index_batch.attr("size")(0) != weight_batch.attr("size")(0)) {
+            KANACHAN_THROW<std::logic_error>("A logic error.");
+        }
+        if (index_batch.attr("size")(1) != 1) {
+            KANACHAN_THROW<std::logic_error>("A logic error.");
+        }
+        python::dict kwargs;
+        kwargs["dim"] = python::long_(1);
+        index_batch = torch_.attr("squeeze")(*python::make_tuple(index_batch), **kwargs);
+    }
+    else {
+        python::dict kwargs;
+        kwargs["dim"] = python::long_(1);
+        index_batch = torch_.attr("argmax")(*python::make_tuple(weight_batch), **kwargs);
+    }
+
     for (python::ssize_t i = 0u; i < python::len(index_batch); ++i) {
         python::object index = index_batch[i].attr("item")();
         python::object candidate = candidates_batch[i][index];
@@ -311,7 +332,7 @@ catch (python::error_already_set const &) {
     Kanachan::translatePythonException();
 }
 
-void DecisionMaker::Impl_::threadMain_(std::stop_token stop_token)
+void DecisionMaker::Impl_::threadMain_(std::stop_token stop_token, bool const stochastic)
 try {
     for (;;) {
         std::vector<std::vector<std::uint_fast16_t>> sparse_batch;
@@ -441,7 +462,8 @@ try {
             }();
 
             python::object decision_batch_tmp = decide_(
-                sparse_batch_tmp, numeric_batch_tmp, progression_batch_tmp, candidates_batch_tmp);
+                sparse_batch_tmp, numeric_batch_tmp, progression_batch_tmp, candidates_batch_tmp,
+                stochastic);
 
             for (std::size_t i = 0u; i < batch_index_; ++i) {
                 long const decision = [&]() {

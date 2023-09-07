@@ -20,7 +20,7 @@ private:
 public:
     DecisionMaker(
         std::string const &device, boost::python::object dtype, boost::python::object model,
-        std::size_t batch_size);
+        std::size_t batch_size, bool stochastic);
 
     DecisionMaker(DecisionMaker const &) = delete;
 
