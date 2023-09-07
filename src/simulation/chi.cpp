@@ -1,10 +1,10 @@
 #include "simulation/chi.hpp"
 
 #include "simulation/dapai.hpp"
+#include "simulation/game_log.hpp"
 #include "simulation/round_state.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
-#include <boost/python/dict.hpp>
 #include <functional>
 #include <any>
 #include <utility>
@@ -15,22 +15,19 @@
 namespace {
 
 using std::placeholders::_1;
-namespace python = boost::python;
 
 } // namespace `anonymous`
 
 namespace Kanachan{
 
-std::any chi(Kanachan::RoundState &round_state, std::uint_fast8_t const encode, python::dict result)
+std::any chi(
+  Kanachan::RoundState &round_state, std::uint_fast8_t const encode, Kanachan::GameLog &game_log)
 {
   if (encode >= 90u) {
     KANACHAN_THROW<std::invalid_argument>(_1) << static_cast<unsigned>(encode);
   }
-  if (result.is_none()) {
-    KANACHAN_THROW<std::invalid_argument>("`result` must not be a `None`.");
-  }
 
-  std::uint_fast16_t const action = round_state.onChi(encode);
+  std::uint_fast16_t const action = round_state.onChi(encode, game_log);
 
   if (action <= 147u) {
     std::uint_fast8_t const tile = action / 4u;
@@ -38,7 +35,7 @@ std::any chi(Kanachan::RoundState &round_state, std::uint_fast8_t const encode, 
     KANACHAN_ASSERT((!moqi));
     bool const lizhi = ((action - tile * 4u - moqi * 2u) == 1u);
     KANACHAN_ASSERT((!lizhi));
-    auto dapai = std::bind(&Kanachan::dapai, std::ref(round_state), tile, moqi, lizhi, result);
+    auto dapai = std::bind(&Kanachan::dapai, std::ref(round_state), tile, moqi, lizhi, std::ref(game_log));
     std::function<std::any()> next_step(std::move(dapai));
     return next_step;
   }

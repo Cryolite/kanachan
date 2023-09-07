@@ -85,6 +85,7 @@ def _main():
         raise RuntimeError(f'{config.baseline_model}: Not a file.')
     baseline_model = load_model(config.baseline_model, map_location='cpu')
     baseline_model.to(device=device, dtype=dtype)
+    baseline_model.requires_grad_(False)
     baseline_model.eval()
 
     if config.baseline_grade < 0 or 15 < config.baseline_grade:
@@ -97,6 +98,7 @@ def _main():
         raise RuntimeError(f'{config.proposed_model}: Not a file.')
     proposed_model = load_model(config.proposed_model, map_location='cpu')
     proposed_model.to(device=device, dtype=dtype)
+    proposed_model.requires_grad_(False)
     proposed_model.eval()
 
     if config.proposed_grade < 0 or 15 < config.proposed_grade:
@@ -128,10 +130,14 @@ def _main():
 
     with torch.no_grad():
         start_time = datetime.datetime.now()
-        results = simulate(
+        game_logs = simulate(
             device, dtype, config.baseline_grade, baseline_model,
             config.proposed_grade, proposed_model, mode, config.n,
             config.batch_size, config.concurrency)
+    game_results = []
+    for game_log in game_logs:
+        game_result = game_log.get_result()
+        game_results.append(game_result)
 
     elapsed_time = datetime.datetime.now() - start_time
     if config.non_duplicated:
@@ -142,7 +148,7 @@ def _main():
         assert config.mode == '1vs3'
         print(f'Elapsed time: {elapsed_time} ({elapsed_time / (config.n * 4.0)}/game)')
 
-    num_games = len(results)
+    num_games = len(game_results)
 
     def get_grading_point(ranking: int, score: int) -> int:
         return [125, 60, -5, -255][ranking] + (score - 25000) // 1000
@@ -153,19 +159,17 @@ def _main():
     Statistic = Tuple[float, float]
 
     def get_statistic(
-            results: List[object], proposed: int,
+            game_results: List[object], proposed: int,
             callback: Callable[[int, int], float]) -> Statistic:
         assert proposed in (0, 1)
         average = 0.0
         num_proposed = 0
-        for game in results:
-            assert len(game['proposed']) == 4
-            assert len(game['ranking']) == 4
+        for game_result in game_results:
+            assert len(game_result) == 4
             for i in range(4):
-                assert game['proposed'][i] in (0, 1)
-                ranking = game['ranking'][i]
-                score = game['scores'][i]
-                if game['proposed'][i] == proposed:
+                ranking = game_result[i]['ranking']
+                score = game_result[i]['score']
+                if game_result[i]['proposed'] == proposed:
                     average += callback(ranking, score)
                     num_proposed += 1
         assert num_proposed >= 1
@@ -173,11 +177,12 @@ def _main():
 
         variance = 0.0
         num_proposed = 0
-        for game in results:
+        for game_result in game_results:
+            assert len(game_result) == 4
             for i in range(4):
-                ranking = game['ranking'][i]
-                score = game['scores'][i]
-                if game['proposed'][i] == proposed:
+                ranking = game_result[i]['ranking']
+                score = game_result[i]['score']
+                if game_result[i]['proposed'] == proposed:
                     variance += (callback(ranking, score) - average) ** 2.0
                     num_proposed += 1
         assert num_proposed >= 1
@@ -188,19 +193,19 @@ def _main():
 
     Statistics = Tuple[Statistic, Statistic, Statistic, Statistic, Statistic]
 
-    def get_statistics(results: List[object], proposed: int) -> Statistics:
-        ranking_statistic = get_statistic(results, proposed, lambda r, s: r)
-        grading_point_statistic = get_statistic(
-            results, proposed, get_grading_point)
-        soul_point_statistic = get_statistic(results, proposed, get_soul_point)
+    def get_statistics(game_results: List[object], proposed: int) -> Statistics:
+        ranking_statistic = get_statistic(game_results, proposed, lambda r, s: r)
+        grading_point_statistic = get_statistic(game_results, proposed, get_grading_point)
+        soul_point_statistic = get_statistic(game_results, proposed, get_soul_point)
 
         top_rate = 0.0
         num_proposed = 0
-        for game in results:
+        for game_result in game_results:
+            assert len(game_result) == 4
             for i in range(4):
-                if game['proposed'][i] == proposed:
+                if game_result[i]['proposed'] == proposed:
                     num_proposed += 1
-                    if game['ranking'][i] == 0:
+                    if game_result[i]['ranking'] == 0:
                         top_rate += 1.0
         top_rate /= num_proposed
         # Unbiased sample variance.
@@ -208,11 +213,12 @@ def _main():
 
         quinella_rate = 0.0
         num_proposed = 0
-        for game in results:
+        for game_result in game_results:
+            assert len(game_result) == 4
             for i in range(4):
-                if game['proposed'][i] == proposed:
+                if game_result[i]['proposed'] == proposed:
                     num_proposed += 1
-                    if game['ranking'][i] <= 1:
+                    if game_result[i]['ranking'] <= 1:
                         quinella_rate += 1.0
         quinella_rate /= num_proposed
         # Unbiased sample variance.
@@ -226,22 +232,22 @@ def _main():
             (top_rate, top_rate_variance),
             (quinella_rate, quinella_rate_variance),)
 
-    baseline_statistics = get_statistics(results, 0)
-    proposed_statistics = get_statistics(results, 1)
+    baseline_statistics = get_statistics(game_results, 0)
+    proposed_statistics = get_statistics(game_results, 1)
 
     ranking_diff_average = 0.0
-    for game in results:
+    for game_result in game_results:
+        assert len(game_result) == 4
         num_baseline = 0
         baseline_ranking = 0.0
         num_proposed = 0
         proposed_ranking = 0.0
         for i in range(4):
-            ranking = game['ranking'][i]
-            if game['proposed'][i] == 0:
+            ranking = game_result[i]['ranking']
+            if game_result[i]['proposed']:
                 num_baseline += 1
                 baseline_ranking += ranking
             else:
-                assert game['proposed'][i] == 1
                 num_proposed += 1
                 proposed_ranking += ranking
         assert num_baseline >= 1
@@ -253,18 +259,18 @@ def _main():
     ranking_diff_average /= num_games
 
     ranking_diff_variance = 0.0
-    for game in results:
+    for game_result in game_results:
+        assert len(game_result) == 4
         num_baseline = 0
         baseline_ranking = 0.0
         num_proposed = 0
         proposed_ranking = 0.0
         for i in range(4):
-            ranking = game['ranking'][i]
-            if game['proposed'][i] == 0:
+            ranking = game_result[i]['ranking']
+            if game_result[i]['proposed']:
                 num_baseline += 1
                 baseline_ranking += ranking
             else:
-                assert game['proposed'][i] == 1
                 num_proposed += 1
                 proposed_ranking += ranking
         assert num_baseline >= 1
