@@ -9,10 +9,10 @@
 #include "simulation/peng.hpp"
 #include "simulation/chi.hpp"
 #include "simulation/zimo.hpp"
+#include "simulation/game_log.hpp"
 #include "simulation/round_state.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
-#include <boost/python/dict.hpp>
 #include <functional>
 #include <any>
 #include <utility>
@@ -32,37 +32,35 @@ namespace Kanachan{
 
 std::any dapai(
   Kanachan::RoundState &round_state, std::uint_fast8_t const tile, bool const moqi,
-  bool const lizhi, python::dict result)
+  bool const lizhi, Kanachan::GameLog &game_log)
 {
   if (tile >= 37u) {
     KANACHAN_THROW<std::invalid_argument>(_1) << static_cast<unsigned>(tile);
   }
-  if (result.is_none()) {
-    KANACHAN_THROW<std::invalid_argument>("`result` must not be a `None`.");
-  }
 
-  auto const [dapai_seat, action] = round_state.onDapai(tile, moqi, lizhi);
+  auto const [dapai_seat, action] = round_state.onDapai(tile, moqi, lizhi, game_log);
 
   if (action == 221u) {
     // Skip
-    KANACHAN_ASSERT((dapai_seat == std::numeric_limits<std::uint_fast8_t>::max()));
+    KANACHAN_ASSERT((dapai_seat == UINT_FAST8_MAX));
     if (round_state.getNumLeftTiles() == 0u) {
-      auto huangpai_pingju = std::bind(&Kanachan::huangpaiPingju, std::ref(round_state), result);
+      auto huangpai_pingju = std::bind(
+        &Kanachan::huangpaiPingju, std::ref(round_state), std::ref(game_log));
       std::function<std::any()> next_step(std::move(huangpai_pingju));
       return next_step;
     }
-    auto zimo = std::bind(&Kanachan::zimo, std::ref(round_state), result);
+    auto zimo = std::bind(&Kanachan::zimo, std::ref(round_state), std::ref(game_log));
     std::function<std::any()> next_step(std::move(zimo));
     return next_step;
   }
 
-  if (dapai_seat != std::numeric_limits<std::uint_fast8_t>::max() && action != std::numeric_limits<uint_fast16_t>::max()) {
+  if (dapai_seat != UINT_FAST8_MAX && action != UINT_FAST16_MAX) {
     // Chi, Peng, or Da Ming Gang (チー・ポン・大明槓)
     KANACHAN_ASSERT((dapai_seat < 4u));
     if (222u <= action && action <= 311u) {
       // Chi (チー)
       std::uint_fast8_t const encode = action - 222u;
-      auto chi = std::bind(&Kanachan::chi, std::ref(round_state), encode, result);
+      auto chi = std::bind(&Kanachan::chi, std::ref(round_state), encode, std::ref(game_log));
       std::function<std::any()> next_step(std::move(chi));
       return next_step;
     }
@@ -70,13 +68,13 @@ std::any dapai(
       // Peng (ポン)
       std::uint_fast8_t const relseat = (action - 312u) / 40u;
       std::uint_fast8_t const encode = action - 312u - relseat * 40u;
-      auto peng = std::bind(&Kanachan::peng, std::ref(round_state), encode, result);
+      auto peng = std::bind(&Kanachan::peng, std::ref(round_state), encode, std::ref(game_log));
       std::function<std::any()> next_step(std::move(peng));
       return next_step;
     }
     if (432u <= action && action <= 542u) {
       // Da Ming Gang (大明槓)
-      auto daminggang = std::bind(&Kanachan::daminggang, std::ref(round_state), result);
+      auto daminggang = std::bind(&Kanachan::daminggang, std::ref(round_state), std::ref(game_log));
       std::function<std::any()> next_step(std::move(daminggang));
       return next_step;
     }
@@ -85,30 +83,33 @@ std::any dapai(
 
   if (action == 543u) {
     // Rong (栄和)
-    KANACHAN_ASSERT((dapai_seat == std::numeric_limits<std::uint_fast8_t>::max()));
-    std::uint_fast8_t const zimo_tile = std::numeric_limits<std::uint_fast8_t>::max();
-    auto hule = std::bind(&Kanachan::hule, std::ref(round_state), zimo_tile, result);
+    KANACHAN_ASSERT((dapai_seat == UINT_FAST8_MAX));
+    std::uint_fast8_t const zimo_tile = UINT_FAST8_MAX;
+    auto hule = std::bind(&Kanachan::hule, std::ref(round_state), zimo_tile, std::ref(game_log));
     std::function<std::any()> next_step(std::move(hule));
     return next_step;
   }
 
-  if (action == std::numeric_limits<std::uint_fast16_t>::max()) {
+  if (action == UINT_FAST16_MAX) {
     // Liu Ju (流局) in the middle.
     if (round_state.checkSifengLianda()) {
       // Si Feng Lian Da (四風連打)
-      auto sifeng_lianda = std::bind(&Kanachan::sifengLianda, std::ref(round_state), result);
+      auto sifeng_lianda = std::bind(
+        &Kanachan::sifengLianda, std::ref(round_state), std::ref(game_log));
       std::function<std::any()> next_step(std::move(sifeng_lianda));
       return next_step;
     }
     if (round_state.checkSigangSanle()) {
       // Si Gang San Le (四槓散了)
-      auto sigang_sanle = std::bind(&Kanachan::sigangSanle, std::ref(round_state), result);
+      auto sigang_sanle = std::bind(
+        &Kanachan::sigangSanle, std::ref(round_state), std::ref(game_log));
       std::function<std::any()> next_step(std::move(sigang_sanle));
       return next_step;
     }
     if (round_state.checkSijiaLizhi()) {
       // Si Jia Li Zhi (四家立直)
-      auto sijia_lizhi = std::bind(&Kanachan::sijiaLizhi, std::ref(round_state), result);
+      auto sijia_lizhi = std::bind(
+        &Kanachan::sijiaLizhi, std::ref(round_state), std::ref(game_log));
       std::function<std::any()> next_step(std::move(sijia_lizhi));
       return next_step;
     }

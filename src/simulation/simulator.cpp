@@ -1,6 +1,7 @@
 #include "simulation/simulator.hpp"
 
 #include "simulation/game.hpp"
+#include "simulation/game_log.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/decision_maker.hpp"
 #include "simulation/utility.hpp"
@@ -71,7 +72,7 @@ private:
     std::vector<std::jthread> threads_;
     std::vector<std::vector<std::uint_least32_t>> seeds_;
     std::vector<Seats_> seats_list_;
-    std::vector<python::dict> results_;
+    std::vector<std::shared_ptr<Kanachan::GameLog>> game_logs_;
     std::size_t num_alive_threads_;
     std::mutex mtx_;
 }; // class Simulator::Impl_
@@ -108,7 +109,7 @@ Simulator::Impl_::Impl_(
     , threads_()
     , seeds_()
     , seats_list_()
-    , results_()
+    , game_logs_()
     , num_alive_threads_(concurrency)
     , mtx_()
 {
@@ -258,30 +259,24 @@ try {
             seats_list_.pop_back();
         }
 
-        python::dict result = [&]() {
+        std::shared_ptr<Kanachan::GameLog> p_game_log = [&]() {
             std::vector<Kanachan::Paishan> dummy_paishan_list;
-            python::dict result = Kanachan::simulateGame(
+            std::shared_ptr<Kanachan::GameLog> p_game_log = Kanachan::simulateGame(
                 seed, room_, dong_feng_zhan_, seats, dummy_paishan_list, stop_token);
-            {
-                Kanachan::GIL::RecursiveLock gil_lock;
-                result["proposed"] = python::list();
-                result["proposed"].attr("append")(
-                    seats[0u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-                result["proposed"].attr("append")(
-                    seats[1u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-                result["proposed"].attr("append")(
-                    seats[2u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-                result["proposed"].attr("append")(
-                    seats[3u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-            }
-            return result;
+            p_game_log->setWithProposedModel({
+                seats[0u].second.get() == p_proposed_decision_maker_.get(),
+                seats[1u].second.get() == p_proposed_decision_maker_.get(),
+                seats[2u].second.get() == p_proposed_decision_maker_.get(),
+                seats[3u].second.get() == p_proposed_decision_maker_.get()
+            });
+            return p_game_log;
         }();
 
         {
             std::scoped_lock lock(mtx_);
-            results_.push_back(result);
-            std::cout << results_.size() << '/'
-                      << seeds_.size() + num_alive_threads_ + results_.size() - 1u << std::endl;
+            game_logs_.push_back(p_game_log);
+            std::cout << game_logs_.size() << '/'
+                      << seeds_.size() + num_alive_threads_ + game_logs_.size() - 1u << std::endl;
         }
     }
 }
@@ -316,11 +311,11 @@ python::list Simulator::Impl_::run()
         }
     }
 
-    python::list results;
-    for (python::dict result : results_) {
-        results.append(result);
+    python::list game_logs;
+    for (std::shared_ptr<Kanachan::GameLog> p_game_log : game_logs_) {
+        game_logs.append(p_game_log);
     }
-    return results;
+    return game_logs;
 }
 
 } // namespace Kanachan

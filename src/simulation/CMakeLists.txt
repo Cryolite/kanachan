@@ -29,11 +29,13 @@ add_library(simulation SHARED
   jiagang.cpp
   angang.cpp
   zimo.cpp
+  game_log.cpp
   round_state.cpp
   shoupai.cpp
   xiangting_calculator.cpp
   paishan.cpp
   game_state.cpp
+  round_result.cpp
   decision_maker.cpp
   gil.cpp
   utility.cpp)
