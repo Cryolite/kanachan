@@ -114,7 +114,6 @@ def _main():
         mode |= 2
     if config.mode == '1vs3':
         mode |= 4
-    mode |= (1 << (room + 3))
 
     if config.n < 1:
         raise RuntimeError(f'{config.n}: An invalid value for the `-n` option.')
@@ -131,7 +130,7 @@ def _main():
     with torch.no_grad():
         start_time = datetime.datetime.now()
         game_logs = simulate(
-            device, dtype, config.baseline_grade, baseline_model,
+            device, dtype, room, config.baseline_grade, baseline_model,
             config.proposed_grade, proposed_model, mode, config.n,
             config.batch_size, config.concurrency)
     game_results = []
