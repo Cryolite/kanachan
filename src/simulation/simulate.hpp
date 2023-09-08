@@ -21,7 +21,7 @@ boost::python::list simulate(
   long baseline_grade, boost::python::object baseline_model,
   long proposed_grade, boost::python::object proposed_model,
   long simulation_mode, long num_simulation_sets,
-  long batch_size, long concurrency);
+  long batch_size, long concurrency, boost::python::object progress);
 
 std::shared_ptr<Kanachan::GameLog> test(
   boost::python::long_ simulation_mode, boost::python::tuple grades,
