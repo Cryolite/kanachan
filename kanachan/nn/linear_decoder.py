@@ -2,7 +2,8 @@ import math
 from collections import OrderedDict
 import torch
 import torch.nn as nn
-from kanachan.training.constants import NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES
+from kanachan.training.constants import (
+    NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES, ENCODER_WIDTH)
 
 
 class LinearDecoder(nn.Module):
@@ -42,7 +43,7 @@ class LinearDecoder(nn.Module):
     def forward(self, candidates: torch.Tensor, encode: torch.Tensor) -> torch.Tensor:
         assert candidates.dim() == 2
         assert encode.dim() == 3
-        assert encode.size(1) == MAX_NUM_ACTION_CANDIDATES
+        assert encode.size(1) == ENCODER_WIDTH
         assert candidates.size(0) == encode.size(0)
 
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]

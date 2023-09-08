@@ -6,6 +6,7 @@ from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from typing import Tuple, List, Callable
 import sys
+from tqdm import tqdm
 import torch
 from torch import backends
 from kanachan.model_loader import load_model
@@ -127,12 +128,21 @@ def _main():
         raise RuntimeError(
             f'{config.concurrency}: An invalid value for the `--concurrency` option.')
 
+    if mode & 1 != 0:
+        num_total_games = config.n
+    else:
+        if mode & 4 != 0:
+            num_total_games = config.n * 4
+        else:
+            num_total_games = config.n * 6
+
     with torch.no_grad():
         start_time = datetime.datetime.now()
-        game_logs = simulate(
-            device, dtype, room, config.baseline_grade, baseline_model,
-            config.proposed_grade, proposed_model, mode, config.n,
-            config.batch_size, config.concurrency)
+        with tqdm(total=num_total_games) as progress:
+            game_logs = simulate(
+                device, dtype, room, config.baseline_grade, baseline_model,
+                config.proposed_grade, proposed_model, mode, config.n,
+                config.batch_size, config.concurrency, lambda: progress.update(1))
     game_results = []
     for game_log in game_logs:
         game_result = game_log.get_result()

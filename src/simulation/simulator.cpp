@@ -52,7 +52,7 @@ public:
         std::uint_fast8_t baseline_grade, python::object baseline_model,
         std::uint_fast8_t proposed_grade, python::object proposed_model,
         unsigned long simulation_mode, std::size_t num_simulation_sets,
-        std::size_t batch_size, std::size_t concurrency);
+        std::size_t batch_size, std::size_t concurrency, python::object progress);
 
     Impl_(Impl_ const &) = delete;
 
@@ -74,6 +74,7 @@ private:
     std::vector<Seats_> seats_list_;
     std::vector<std::shared_ptr<Kanachan::GameLog>> game_logs_;
     std::size_t num_alive_threads_;
+    python::object progress_;
     std::mutex mtx_;
 }; // class Simulator::Impl_
 
@@ -82,10 +83,10 @@ Simulator::Simulator(
     std::uint_fast8_t const baseline_grade, python::object baseline_model,
     std::uint_fast8_t const proposed_grade, python::object proposed_model,
     unsigned long const simulation_mode, std::size_t const num_simulation_sets,
-    std::size_t const batch_size, std::size_t const concurrency)
+    std::size_t const batch_size, std::size_t const concurrency, python::object progress)
     : p_impl_(std::make_shared<Impl_>(
         device, dtype, room, baseline_grade, baseline_model, proposed_grade, proposed_model,
-        simulation_mode, num_simulation_sets, batch_size, concurrency))
+        simulation_mode, num_simulation_sets, batch_size, concurrency, progress))
 {}
 
 python::list Simulator::run()
@@ -99,7 +100,7 @@ Simulator::Impl_::Impl_(
     std::uint_fast8_t const baseline_grade, python::object baseline_model,
     std::uint_fast8_t const proposed_grade, python::object proposed_model,
     unsigned long const simulation_mode, std::size_t const num_simulation_sets,
-    std::size_t const batch_size, std::size_t const concurrency)
+    std::size_t const batch_size, std::size_t const concurrency, python::object progress)
     : dong_feng_zhan_(simulation_mode & 2u)
     , room_(room)
     , p_baseline_decision_maker_(
@@ -111,6 +112,7 @@ Simulator::Impl_::Impl_(
     , seats_list_()
     , game_logs_()
     , num_alive_threads_(concurrency)
+    , progress_(progress)
     , mtx_()
 {
     if (num_simulation_sets == 0u) {
@@ -244,8 +246,11 @@ try {
         {
             std::scoped_lock lock(mtx_);
             game_logs_.push_back(p_game_log);
-            std::cout << game_logs_.size() << '/'
-                      << seeds_.size() + num_alive_threads_ + game_logs_.size() - 1u << std::endl;
+        }
+
+        {
+            Kanachan::GIL::RecursiveLock gil;
+            progress_();
         }
     }
 }

@@ -48,7 +48,7 @@ python::list simulate(
   long const baseline_grade, python::object baseline_model,
   long const proposed_grade, python::object proposed_model,
   long const simulation_mode, long const num_simulation_sets,
-  long const batch_size, long const concurrency)
+  long const batch_size, long const concurrency, python::object progress)
 try {
   if (dtype.is_none()) {
     KANACHAN_THROW<std::invalid_argument>("`dtype` must not be `None`.");
@@ -73,7 +73,7 @@ try {
 
   Kanachan::Simulator simulator(
     device, dtype, room, baseline_grade, baseline_model, proposed_grade, proposed_model,
-    simulation_mode, num_simulation_sets, batch_size, concurrency);
+    simulation_mode, num_simulation_sets, batch_size, concurrency, progress);
   return simulator.run();
 }
 catch (std::exception const &) {

@@ -281,12 +281,6 @@ try {
             << size << " != " << python::extract<long>(max_num_action_candidates_)();
     }
 
-    {
-        python::object mask = (candidates_batch < num_types_of_actions_);
-        weight_batch = torch_.attr("where")(
-            mask, weight_batch, -std::numeric_limits<double>::infinity());
-    }
-
     python::object index_batch;
     if (stochastic) {
         index_batch = torch_.attr("multinomial")(weight_batch, 1);
@@ -304,6 +298,9 @@ try {
         index_batch = torch_.attr("squeeze")(*python::make_tuple(index_batch), **kwargs);
     }
     else {
+        python::object mask = (candidates_batch < num_types_of_actions_);
+        weight_batch = torch_.attr("where")(
+            mask, weight_batch, -std::numeric_limits<double>::infinity());
         python::dict kwargs;
         kwargs["dim"] = python::long_(1);
         index_batch = torch_.attr("argmax")(*python::make_tuple(weight_batch), **kwargs);
