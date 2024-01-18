@@ -63,6 +63,7 @@ if [[ -e $PREFIX ]]; then
 fi
 
 WORKDIR="$(mktemp -d)"
+push_rollback_command "rm -rf '$WORKDIR'"
 pushd "$WORKDIR"
 
 # Create Python virtual environment.
@@ -196,7 +197,9 @@ python3 -m pip install -U torch torchvision torchaudio --index-url 'https://down
 # Install Apex.
 git clone 'https://github.com/NVIDIA/apex.git'
 pushd apex
-MAX_JOBS=4 python3 -m pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings '--build-option=--cpp_ext' --config-settings '--build-option=--cuda_ext' .
+MAX_JOBS=4 python3 -m pip install -v --disable-pip-version-check --no-cache-dir \
+  --no-build-isolation --config-settings '--build-option=--cpp_ext' \
+  --config-settings '--build-option=--cuda_ext' .
 popd
 rm -rf apex
 
@@ -278,12 +281,11 @@ protoc -I. --cpp_out=. mahjongsoul.proto
 popd
 
 # Build kanachan.
-mkdir -p "$KANACHAN_ROOT/build"
-pushd "$KANACHAN_ROOT/build"
-CC="$PREFIX/bin/gcc" CXX="$PREFIX/bin/g++" cmake \
-  -DSHANTEN_NUMBER_SOURCE_PATH="$WORKDIR/shanten-number" \
-  -DCMAKE_BUILD_TYPE=Release \
-  ..
+mkdir build
+pushd build
+CC="$PREFIX/bin/gcc" CXX="$PREFIX/bin/g++" \
+  cmake -DSHANTEN_NUMBER_SOURCE_PATH="$WORKDIR/shanten-number" -DCMAKE_BUILD_TYPE=Release \
+  "$KANACHAN_ROOT"
 VERBOSE=1 make -j make_trie simulation
 mkdir -p "$PREFIX/share/kanachan"
 src/xiangting/make_trie "$WORKDIR/shanten-number" "$PREFIX/share/kanachan"
