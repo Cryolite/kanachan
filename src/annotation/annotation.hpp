@@ -5,6 +5,7 @@
 #include "annotation/player_state.hpp"
 #include "common/mahjongsoul.pb.h"
 #include <iosfwd>
+#include <array>
 #include <limits>
 #include <cstdint>
 
@@ -88,7 +89,7 @@ public:
   void printWithRoundResult(
     std::string const &uuid, std::uint_fast8_t i,
     Kanachan::RoundProgress const &round_progress,
-    std::uint_fast8_t round_result,
+    std::array<std::uint_fast8_t, 7u> round_result,
     std::array<std::int_fast32_t, 4u> const &round_delta_scores,
     std::array<std::uint_fast8_t, 4u> const &round_ranks,
     std::ostream &os) const;

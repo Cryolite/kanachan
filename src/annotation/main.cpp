@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
 #include <vector>
 #include <utility>
 #include <stdexcept>
@@ -474,132 +475,52 @@ void convert(std::filesystem::path const &ph) {
         getRoundRank_(3u, round_rank_input)
       };
 
-      for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-        std::array<std::uint_fast8_t, 3u> results{
-          std::numeric_limits<std::uint_fast8_t>::max(),
-          std::numeric_limits<std::uint_fast8_t>::max(),
-          std::numeric_limits<std::uint_fast8_t>::max()
-        };
-        for (std::uint_fast8_t j = 0u; auto const &hule : record.hules()) {
-          if (j >= 3u) {
-            KANACHAN_THROW<std::logic_error>("A logic error.");
-          }
-          if (results[j] != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::logic_error>("A logic error.");
-          }
-
-          if (hule.zimo()) {
-            if (record.hules().size() != 1u) {
-              KANACHAN_THROW<std::runtime_error>("A broken data.");
-            }
-            if (j != 0u) {
-              KANACHAN_THROW<std::runtime_error>("A broken data.");
-            }
-            if (hule.seat() == i) {
-              // 自家自摸和
-              results[j++] = 0u;
-            }
-            else {
-              // 他家自摸和:
-              //   - 1u: 下家自摸和
-              //   - 2u: 対面自摸和
-              //   - 3u: 上家自摸和
-              results[j++] = (4u + hule.seat() - i) % 4u;
-            }
-          }
-          else {
-            if (prev_dapai_seat == std::numeric_limits<std::uint_fast8_t>::max()) {
-              KANACHAN_THROW<std::logic_error>("A logic error.");
-            }
-            if (hule.seat() == i) {
-              // 自家栄和:
-              //   - 4u: 下家からの栄和
-              //   - 5u: 対面からの栄和
-              //   - 6u: 上家からの栄和
-              results[j++] = (4u + prev_dapai_seat - i) % 4u + 3u;
-            }
-            else if (prev_dapai_seat == i) {
-              // 放銃:
-              //   - 7u: 下家への放銃
-              //   - 8u: 対面への放銃
-              //   - 9u: 上家への放銃
-              results[j++] = (4u + hule.seat() - i) % 4u + 6u;
-            }
-            else {
-              // 横移動:
-              //   - 10u: 下家へ対面から横移動
-              //   - 11u: 下家へ上家から横移動
-              //   - 12u: 対面へ下家から横移動
-              //   - 13u: 対面へ上家から横移動
-              //   - 14u: 上家へ下家から横移動
-              //   - 15u: 上家へ対面から横移動
-              if (hule.seat() == (i + 1u) % 4u) {
-                // 下家の栄和．
-
-                if (prev_dapai_seat == (i + 2u) % 4u) {
-                  // 下家へ対面から横移動
-                  results[j++] = 10u;
-                }
-                else if (prev_dapai_seat == (i + 3u) % 4u) {
-                  // 下家へ上家から横移動
-                  results[j++] = 11u;
-                }
-                else {
-                  KANACHAN_THROW<std::logic_error>("A logic error.");
-                }
-              }
-              else if (hule.seat() == (i + 2u) % 4u) {
-                // 対面の栄和．
-
-                if (prev_dapai_seat == (i + 1u) % 4u) {
-                  // 対面へ下家から横移動
-                  results[j++] = 12u;
-                }
-                else if (prev_dapai_seat == (i + 3u) % 4u) {
-                  // 対面へ上家から横移動
-                  results[j++] = 13u;
-                }
-                else {
-                  KANACHAN_THROW<std::logic_error>(_1)
-                    << "i = " << static_cast<unsigned>(i)
-                    << ", hule.seat() = " << hule.seat()
-                    << ", prev_dapai_seat = " << static_cast<unsigned>(prev_dapai_seat);
-                }
-              }
-              else if (hule.seat() == (i + 3u) % 4u) {
-                // 上家の栄和．
-
-                if (prev_dapai_seat == (i + 1u) % 4u) {
-                  // 上家へ下家から横移動
-                  results[j++] = 14u;
-                }
-                else if (prev_dapai_seat == (i + 2u) % 4u) {
-                  // 上家へ対面から横移動
-                  results[j++] = 15u;
-                }
-                else {
-                  KANACHAN_THROW<std::logic_error>("A logic error.");
-                }
-              }
-              else {
-                KANACHAN_THROW<std::runtime_error>("A broken data.");
-              }
-            }
-          }
+      std::array<std::uint_fast8_t, 7u> results{
+        UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX,
+        UINT_FAST8_MAX, UINT_FAST8_MAX
+      };
+      for (std::uint_fast8_t j = 0u; auto const &hule : record.hules()) {
+        if (j >= 3u) {
+          KANACHAN_THROW<std::logic_error>("A logic error.");
+        }
+        if (results[j] != UINT_FAST8_MAX) {
+          KANACHAN_THROW<std::logic_error>("A logic error.");
         }
 
+        if (hule.zimo()) {
+          if (record.hules().size() != 1u) {
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          if (j != 0u) {
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          results[j++] = hule.seat();
+        }
+        else {
+          if (prev_dapai_seat == std::numeric_limits<std::uint_fast8_t>::max()) {
+            KANACHAN_THROW<std::logic_error>("A logic error.");
+          }
+          if (prev_dapai_seat == hule.seat()) {
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          constexpr std::array<std::array<std::uint_fast8_t, 4u>, 4u> codes{
+            std::array<std::uint_fast8_t, 4u>{ UINT_FAST8_MAX, 4u, 5u, 6u },
+            std::array<std::uint_fast8_t, 4u>{ 7u, UINT_FAST8_MAX, 8u, 9u },
+            std::array<std::uint_fast8_t, 4u>{ 10u, 11u, UINT_FAST8_MAX, 12u },
+            std::array<std::uint_fast8_t, 4u>{ 13u, 14u, 15u, UINT_FAST8_MAX },
+          };
+          results[j++] = codes[hule.seat()][prev_dapai_seat];
+        }
+      }
+      std::sort(results.begin(), results.end());
+
+      for (std::size_t i = 0u; i < player_annotations.size(); ++i) {
         for (auto const &annotation : player_annotations[i]) {
           if (results[0u] == std::numeric_limits<std::uint_fast8_t>::max()) {
             KANACHAN_THROW<std::logic_error>("A logic error.");
           }
-          for (auto const &result : results) {
-            if (result == std::numeric_limits<std::uint_fast8_t>::max()) {
-              break;
-            }
-            annotation.printWithRoundResult(
-              uuid, i, round_progress, result, round_delta_scores, round_ranks,
-              std::cout);
-          }
+          annotation.printWithRoundResult(
+            uuid, i, round_progress, results, round_delta_scores, round_ranks, std::cout);
         }
         player_annotations[i].clear();
       }
@@ -695,8 +616,12 @@ void convert(std::filesystem::path const &ph) {
 
       for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
         for (auto const &annotation : player_annotations[i]) {
+          std::array<std::uint_fast8_t, 7u> round_result{
+            28u, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX,
+            UINT_FAST8_MAX
+          };
           annotation.printWithRoundResult(
-            uuid, i, round_progress, 18u, round_delta_scores, round_ranks,
+            uuid, i, round_progress, round_result, round_delta_scores, round_ranks,
             std::cout);
         }
         player_annotations[i].clear();
@@ -838,53 +763,46 @@ void convert(std::filesystem::path const &ph) {
         getRoundRank_(3u, round_rank_input)
       };
 
-      for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-        std::array<std::uint_fast8_t, 3u> results{
-          std::numeric_limits<std::uint_fast8_t>::max(),
-          std::numeric_limits<std::uint_fast8_t>::max(),
-          std::numeric_limits<std::uint_fast8_t>::max()
-        };
-        if (record.liujumanguan()) {
-          for (std::uint_fast8_t j = 0u; auto const &score : record.scores()) {
-            if (j > 3u) {
-              KANACHAN_THROW<std::runtime_error>("A broken data.");
-            }
-            if (score.seat() == i) {
-              // 自家の流し満貫は自摸和とみなす．
-              results[j++] = 0u;
-            }
-            else {
-              // 他家の流し満貫は他家の自摸和とみなす．
-              results[j++] = (4u + score.seat() - i) % 4u;
-            }
-          }
-        }
-        else {
+      std::array<std::uint_fast8_t, 7u> results{
+        UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX, UINT_FAST8_MAX,
+        UINT_FAST8_MAX, UINT_FAST8_MAX
+      };
+      {
+        std::size_t j = 0u;
+        for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
           if (record.players().size() != 4u) {
+            KANACHAN_THROW<std::runtime_error>("A broken data.");
+          }
+          if (j >= results.size()) {
             KANACHAN_THROW<std::runtime_error>("A broken data.");
           }
           if (record.players()[i].tingpai()) {
             // 聴牌
-            results[0u] = 17u;
+            results[j++] = 17u + i * 3u;
           }
           else {
             // 不聴
-            results[0u] = 16u;
+            results[j++] = 16u + i * 3u;
+          }
+
+          if (record.liujumanguan()) {
+            for (auto const &score : record.scores()) {
+              if (score.seat() != i) {
+                continue;
+              }
+              if (j >= results.size()) {
+                KANACHAN_THROW<std::runtime_error>("A broken data.");
+              }
+              results[j++] = 18u + i * 3u;
+            }
           }
         }
+      }
 
+      for (std::size_t i = 0u; i < player_annotations.size(); ++i) {
         for (auto const &annotation : player_annotations[i]) {
-          if (results[0u] == std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::logic_error>("A logic error.");
-          }
-          for (auto const &result : results) {
-            if (result == std::numeric_limits<std::uint_fast8_t>::max()) {
-              break;
-            }
-            annotation.printWithRoundResult(
-              uuid, i, round_progress, result, round_delta_scores, round_ranks,
-              std::cout);
-          }
+          annotation.printWithRoundResult(
+            uuid, i, round_progress, results, round_delta_scores, round_ranks, std::cout);
         }
         player_annotations[i].clear();
       }

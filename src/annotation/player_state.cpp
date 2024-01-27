@@ -787,12 +787,19 @@ void PlayerState::print(
   offset += 5u;
   os << ',' << offset + num_rounds_type_;
   offset += 2u;
+  for (std::uint_fast8_t i = 0u; i < players.size(); ++i) {
+    auto const &player = players[i];
+    os << ',' << offset + player.getLevel();
+    offset += 16u;
+  }
   os << ',' << offset + seat_;
   offset += 4u;
   os << ',' << offset + chang_;
   offset += 3u;
   os << ',' << offset + ju_;
   offset += 4u;
+  os << ',' << offset + count_;
+  offset += 70u;
   os << ',' << offset + dora_indicators_[0u];
   offset += 37u;
   for (std::uint_fast8_t i = 1u; i < 5u; ++i) {
@@ -800,15 +807,6 @@ void PlayerState::print(
       os << ',' << offset + dora_indicators_[i];
     }
     offset += 37u;
-  }
-  os << ',' << offset + count_;
-  offset += 70u;
-  for (std::uint_fast8_t i = 0u; i < players.size(); ++i) {
-    auto const &player = players[(seat_ + i) % players.size()];
-    os << ',' << offset + player.getLevel();
-    offset += 16u;
-    os << ',' << offset + player.getRank(players);
-    offset += 4u;
   }
   for (auto const &h : hand_) {
     if (h == 1u) {
@@ -820,7 +818,7 @@ void PlayerState::print(
     os << ',' << offset + zimo_pai_;
   }
   offset += 37u;
-  if (offset != 526u) {
+  if (offset != 510u) {
     KANACHAN_THROW<std::logic_error>(_1) << offset;
   }
 
@@ -828,7 +826,7 @@ void PlayerState::print(
   os << static_cast<unsigned>(ben_);
   os << ',' << static_cast<unsigned>(liqibang_);
   for (std::uint_fast8_t i = 0u; i < players.size(); ++i) {
-    auto const &player = players[(seat_ + i) % players.size()];
+    auto const &player = players[i];
     os << ',' << player.getCurrentScore();
   }
 }

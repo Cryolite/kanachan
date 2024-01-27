@@ -8,6 +8,7 @@
 #include <regex>
 #include <sstream>
 #include <iostream>
+#include <array>
 #include <functional>
 #include <stdexcept>
 #include <limits>
@@ -723,12 +724,20 @@ Annotation::Annotation(
 void Annotation::printWithRoundResult(
   std::string const &uuid, std::uint_fast8_t i,
   Kanachan::RoundProgress const &round_progress,
-  std::uint_fast8_t const round_result,
+  std::array<std::uint_fast8_t, 7u> const round_result,
   std::array<std::int_fast32_t, 4u> const &round_delta_scores,
   std::array<std::uint_fast8_t, 4u> const &round_ranks, std::ostream &os) const
 {
-  if (round_result >= 19u) {
-    KANACHAN_THROW<std::invalid_argument>("An invalid argument.");
+  if (round_result[0u] == UINT_FAST8_MAX) {
+      KANACHAN_THROW<std::invalid_argument>("An invalid argument.");
+  }
+  for (std::uint_fast8_t i = 0u; i < 3u; ++i) {
+    if (round_result[i] == UINT_FAST8_MAX) {
+      continue;
+    }
+    if (round_result[i] >= 29u) {
+      KANACHAN_THROW<std::invalid_argument>("An invalid argument.");
+    }
   }
   for (auto const &round_rank : round_ranks) {
     if (round_rank >= 4u) {
@@ -752,18 +761,25 @@ void Annotation::printWithRoundResult(
   os << '\t';
   os << static_cast<unsigned>(action_index_);
   os << '\t';
-  os << static_cast<unsigned>(round_result)
-     << ',' << round_delta_scores[i]
-     << ',' << round_delta_scores[(i + 1u) % 4u]
-     << ',' << round_delta_scores[(i + 2u) % 4u]
-     << ',' << round_delta_scores[(i + 3u) % 4u]
-     << ',' << static_cast<unsigned>(round_ranks[i])
-     << ',' << static_cast<unsigned>(round_ranks[(i + 1u) % 4u])
-     << ',' << static_cast<unsigned>(round_ranks[(i + 2u) % 4u])
-     << ',' << static_cast<unsigned>(round_ranks[(i + 3u) % 4u])
-     << ',' << static_cast<unsigned>(player_states_[seat_].getGameRank())
-     << ',' << player_states_[seat_].getGameScore()
-     << ',' << player_states_[seat_].getDeltaGradingPoint()
+  os << static_cast<unsigned>(round_result[0u]);
+  for (std::uint_fast8_t i = 1u; i < round_result.size(); ++i) {
+    if (round_result[i] == UINT_FAST8_MAX) {
+      break;
+    }
+    os << ',' << static_cast<unsigned>(round_result[i]);
+  }
+  os << '\t' << round_delta_scores[0u]
+     << ',' << round_delta_scores[1u]
+     << ',' << round_delta_scores[2u]
+     << ',' << round_delta_scores[3u]
+     << ',' << player_states_[0u].getInitialScore() + round_delta_scores[0u]
+     << ',' << player_states_[1u].getInitialScore() + round_delta_scores[1u]
+     << ',' << player_states_[2u].getInitialScore() + round_delta_scores[2u]
+     << ',' << player_states_[3u].getInitialScore() + round_delta_scores[3u]
+     << ',' << player_states_[0u].getGameScore()
+     << ',' << player_states_[1u].getGameScore()
+     << ',' << player_states_[2u].getGameScore()
+     << ',' << player_states_[3u].getGameScore()
      << '\n';
 }
 
