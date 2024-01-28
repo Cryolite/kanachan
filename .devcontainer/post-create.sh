@@ -24,30 +24,31 @@ sudo apt-get -y install \
 
 sudo chown vscode:vscode /workspaces
 
-# Install CUDA 11.7.1. See https://docs.nvidia.com/cuda/wsl-user-guide/index.html#getting-started-with-cuda-on-wsl.
+# Install CUDA 12.1.1. See https://docs.nvidia.com/cuda/wsl-user-guide/index.html#getting-started-with-cuda-on-wsl.
 pushd /workspaces
 wget 'https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-wsl-ubuntu.pin'
 sudo mv cuda-wsl-ubuntu.pin /etc/apt/preferences.d/cuda-repository-pin-600
-wget 'https://developer.download.nvidia.com/compute/cuda/11.7.1/local_installers/cuda-repo-wsl-ubuntu-11-7-local_11.7.1-1_amd64.deb'
-sudo dpkg -i cuda-repo-wsl-ubuntu-11-7-local_11.7.1-1_amd64.deb
-rm -f cuda-repo-wsl-ubuntu-11-7-local_11.7.1-1_amd64.deb
+wget 'https://developer.download.nvidia.com/compute/cuda/12.1.1/local_installers/cuda-repo-wsl-ubuntu-12-1-local_12.1.1-1_amd64.deb'
+sudo dpkg -i cuda-repo-wsl-ubuntu-12-1-local_12.1.1-1_amd64.deb
+rm -f cuda-repo-wsl-ubuntu-12-1-local_12.1.1-1_amd64.deb
 popd
-sudo cp /var/cuda-repo-wsl-ubuntu-11-7-local/cuda-*-keyring.gpg /usr/share/keyrings/
+sudo cp /var/cuda-repo-wsl-ubuntu-12-1-local/cuda-*-keyring.gpg /usr/share/keyrings/
 sudo apt-get update
 sudo apt-get -y install cuda
 
 # Install prerequisite Python packages.
 python3 -m pip install -U pip
 python3 -m pip install -U \
+  packaging \
   setuptools \
-  torch \
   wheel
+python3 -m pip install -U torch --index-url 'https://download.pytorch.org/whl/cu121'
 
 # Install Apex.
 pushd /workspaces
-git clone -b '22.08-dev' 'https://github.com/NVIDIA/apex.git'
+git clone 'https://github.com/NVIDIA/apex.git'
 pushd apex
-MAX_JOBS=4 python3 -m pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+MAX_JOBS=4 python3 -m pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" ./
 popd
 rm -rf apex
 popd
