@@ -4,7 +4,7 @@
 
 ### [`kanachan.training.bc`](bc) Python submodule
 
-An implementation of training for supervised learning (a.k.a. behavioral cloning).
+An implementation of training for supervised learning to mimic actions recorded in game records (a.k.a. behavioral cloning).
 
 ### [`kanachan.training.cql`](cql) Python submodule
 
