@@ -1,60 +1,67 @@
 import re
-from pathlib import Path
-import logging
-from typing import NoReturn, Optional, Union
+import pickle
+import os
+from typing import Any
 import torch
-from torch import nn
-from torch.utils.data import IterableDataset
+from torch import Tensor, nn
+from torch.distributed import (is_initialized, get_world_size, get_rank, ProcessGroup, send, recv)
 
 
-def initialize_logging(
-        experiment_path: Path, local_rank: Optional[int]) -> None:
-    fmt = '%(asctime)s %(filename)s:%(lineno)d:%(levelname)s: %(message)s'
-    if local_rank is None:
-        path = experiment_path / 'training.log'
-    else:
-        path = experiment_path / f'training.{local_rank}.log'
-    file_handler = logging.FileHandler(path, encoding='UTF-8')
-    if local_rank is None or local_rank == 0:
-        console_handler = logging.StreamHandler()
-        handlers = (console_handler, file_handler)
-    else:
-        handlers = (file_handler,)
-    logging.basicConfig(format=fmt, level=logging.INFO, handlers=handlers)
+def get_distributed_environment() -> tuple[int, int, int]:
+    if not is_initialized():
+        return 1, 0, 0
+
+    if 'LOCAL_RANK' not in os.environ:
+        raise RuntimeError('The `LOCAL_RANK` environment variable must be defined.')
+
+    world_size = get_world_size()
+    rank = get_rank()
+    local_rank = int(os.environ['LOCAL_RANK'])
+
+    return world_size, rank, local_rank
 
 
-def load_state_dict(module: nn.Module, state_dict: dict) -> None:
-    fixed_state_dict = {}
-    for k, v in state_dict.items():
-        k = re.sub('^.*?__', '', k)
-        k = re.sub('\\..*?__', '.', k)
-        k = re.sub('^module\\.', '', k)
-        fixed_state_dict[k] = v
-    module.load_state_dict(fixed_state_dict)
+def make_noisy(state_dict: dict[str, Any]) -> dict[str, Any]:
+    result = {}
+    for key, value in state_dict.items():
+        if re.search('\\.weight$', key) is not None:
+            new_key = re.sub('\\.weight$', '.weight_mu', key)
+            result[new_key] = value
+            continue
+        if re.search('\\.bias$', key) is not None:
+            new_key = re.sub('\\.bias$', '.bias_mu', key)
+            result[new_key] = value
+            continue
+    return result
 
 
-class Dataset(IterableDataset):
-    def __init__(self, path: Union[str, Path], iterator_adaptor) -> None:
-        super(Dataset, self).__init__()
-        if isinstance(path, str):
-            path = Path(path)
-        if not path.exists():
-            raise RuntimeError(f'{path}: does not exist.')
-        self.__path = path
-        self.__iterator_adaptor = iterator_adaptor
-
-    def __iter__(self):
-        return self.__iterator_adaptor(self.__path)
-
-    def __getitem__(self, index) -> NoReturn:
-        raise NotImplementedError('Not implemented.')
-
-
-def get_gradient(model: nn.Module) -> torch.Tensor:
+def get_gradient(model: nn.Module) -> Tensor:
     gradient = [param.grad.view(-1) for param in model.parameters() if param.grad is not None]
     return torch.cat(gradient)
 
 
-def is_gradient_nan(model: nn.Module) -> torch.Tensor:
+def is_gradient_nan(model: nn.Module) -> Tensor:
     gradient = get_gradient(model)
-    return torch.any(torch.isnan(gradient))
+    return gradient.isnan().any()
+
+
+def send_object(obj, *, device: torch.device, dst: int, group: ProcessGroup | None=None) -> None:
+    data = pickle.dumps(obj)
+    buf = torch.frombuffer(bytearray(data), dtype=torch.int8).to(device=device)
+    length = torch.tensor(buf.size(0), device=device, dtype=torch.int64)
+
+    send(length, dst, group=group)
+    send(buf, dst, group=group)
+
+
+def recv_object(
+        *, device: torch.device, src: int | None=None,
+        group: ProcessGroup | None=None) -> tuple[Any, int]:
+    length = torch.tensor(-1, device=device, dtype=torch.int64)
+    src = recv(length, src, group=group)
+
+    buf = torch.empty((int(length.item()),), device=device, dtype=torch.int8)
+    recv(buf, src, group=group)
+    obj = pickle.loads(buf.cpu().numpy().tobytes())
+
+    return obj, src
