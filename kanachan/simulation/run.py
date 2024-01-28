@@ -138,10 +138,11 @@ def _main():
 
     with torch.no_grad():
         start_time = datetime.datetime.now()
-        with tqdm(total=num_total_games) as progress:
+        with tqdm(total=num_total_games, smoothing=0.0) as progress:
+            keys_to_be_deleted = ['sparse', 'numeric', 'progression', 'candidates', 'encode']
             game_logs = simulate(
-                device, dtype, room, config.baseline_grade, baseline_model,
-                config.proposed_grade, proposed_model, mode, config.n,
+                device, dtype, room, config.baseline_grade, baseline_model, keys_to_be_deleted,
+                config.proposed_grade, proposed_model, keys_to_be_deleted, mode, config.n,
                 config.batch_size, config.concurrency, lambda: progress.update(1))
     game_results = []
     for game_log in game_logs:

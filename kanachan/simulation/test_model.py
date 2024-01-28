@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
-
 import math
 from typing import List
 import torch
-from kanachan.training.constants import (
+from kanachan.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_TYPES_OF_PROGRESSION_FEATURES, MAX_LENGTH_OF_PROGRESSION_FEATURES,
     NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES)
