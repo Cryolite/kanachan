@@ -5,6 +5,7 @@
 #include "simulation/shoupai.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/game_state.hpp"
+#include <random>
 #include <vector>
 #include <array>
 #include <utility>
@@ -18,8 +19,7 @@ class RoundState
 {
 public:
   RoundState(
-    std::vector<std::uint_least32_t> const &seed, Kanachan::GameState &game_state,
-    Kanachan::Paishan const *p_test_paishan);
+    std::mt19937 &urng, Kanachan::GameState &game_state, Kanachan::Paishan const *p_test_paishan);
 
   RoundState(RoundState const &) = delete;
 

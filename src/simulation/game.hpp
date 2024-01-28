@@ -6,6 +6,7 @@
 #include "simulation/decision_maker.hpp"
 #include <boost/python/dict.hpp>
 #include <stop_token>
+#include <random>
 #include <vector>
 #include <array>
 #include <utility>
@@ -16,8 +17,8 @@
 namespace Kanachan{
 
 std::shared_ptr<Kanachan::GameLog> simulateGame(
-  std::vector<std::uint_least32_t> const &seed, std::uint_fast8_t room, bool dong_feng_zhan,
-  std::array<std::pair<std::uint_fast8_t, std::shared_ptr<Kanachan::DecisionMaker>>, 4u> const &seats,
+  std::mt19937 &urng, std::uint_fast8_t room, bool dong_feng_zhan, Kanachan::Deciders deciders,
+  std::array<std::uint_fast8_t, 4u> const &grades,
   std::vector<Kanachan::Paishan> const &test_paishan_list, std::stop_token stop_token);
 
 } // namespace Kanachan

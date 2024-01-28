@@ -15,12 +15,36 @@ using std::placeholders::_1;
 namespace Kanachan{
 
 RoundResult::RoundResult()
-  : type_(UINT_FAST8_MAX)
+  : chang_(UINT_FAST8_MAX)
+  , ju_(UINT_FAST8_MAX)
+  , benchang_(UINT_FAST8_MAX)
+  , type_(UINT_FAST8_MAX)
   , in_lizhi_(false)
   , has_fulu_(false)
   , round_delta_score_(INT_FAST32_MAX)
   , round_score_(INT_FAST32_MAX)
 {}
+
+void RoundResult::setChang(std::uint_fast8_t const chang)
+{
+  if (chang > 3u){
+    KANACHAN_THROW<std::invalid_argument>(_1) << static_cast<unsigned>(chang);
+  }
+  chang_ = chang;
+}
+
+void RoundResult::setJu(std::uint_fast8_t const ju)
+{
+  if (ju > 4u) {
+    KANACHAN_THROW<std::invalid_argument>(_1) << static_cast<unsigned>(ju);
+  }
+  ju_ = ju;
+}
+
+void RoundResult::setBenChang(std::uint_fast8_t const benchang)
+{
+  benchang_ = benchang;
+}
 
 void RoundResult::setType(std::uint_fast8_t const type)
 {
@@ -48,6 +72,21 @@ void RoundResult::setRoundDeltaScore(std::int_fast32_t const round_delta_score)
 void RoundResult::setRoundScore(std::int_fast32_t const round_score)
 {
   round_score_ = round_score;
+}
+
+std::uint_fast8_t RoundResult::getChang() const noexcept
+{
+  return chang_;
+}
+
+std::uint_fast8_t RoundResult::getJu() const noexcept
+{
+  return ju_;
+}
+
+std::uint_fast8_t RoundResult::getBenChang() const noexcept
+{
+  return benchang_;
 }
 
 std::uint_fast8_t RoundResult::getType() const noexcept

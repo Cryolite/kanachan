@@ -11,6 +11,12 @@ class RoundResult
 public:
   RoundResult();
 
+  void setChang(std::uint_fast8_t chang);
+
+  void setJu(std::uint_fast8_t ju);
+
+  void setBenChang(std::uint_fast8_t benchang);
+
   // `type ==  0`: 親の自摸和
   // `type ==  1`: 子の自摸和
   // `type ==  2`: 子⇒親の被自摸和
@@ -36,6 +42,12 @@ public:
 
   void setRoundScore(std::int_fast32_t round_score);
 
+  std::uint_fast8_t getChang() const noexcept;
+
+  std::uint_fast8_t getJu() const noexcept;
+
+  std::uint_fast8_t getBenChang() const noexcept;
+
   std::uint_fast8_t getType() const noexcept;
 
   bool getInLizhi() const noexcept;
@@ -47,6 +59,9 @@ public:
   std::int_fast32_t getRoundScore() const noexcept;
 
 private:
+  std::uint_fast8_t chang_;
+  std::uint_fast8_t ju_;
+  std::uint_fast8_t benchang_;
   std::uint_fast8_t type_;
   bool in_lizhi_;
   bool has_fulu_;

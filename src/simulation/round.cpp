@@ -6,6 +6,7 @@
 #include "simulation/game_state.hpp"
 #include "simulation/game_log.hpp"
 #include "common/throw.hpp"
+#include <random>
 #include <vector>
 #include <functional>
 #include <any>
@@ -16,10 +17,10 @@
 namespace Kanachan{
 
 bool simulateRound(
-  std::vector<std::uint_least32_t> const &seed, Kanachan::GameState &game_state,
+  std::mt19937 &urng, Kanachan::GameState &game_state,
   Kanachan::Paishan const * const p_test_paishan, Kanachan::GameLog &game_log)
 {
-  Kanachan::RoundState round_state(seed, game_state, p_test_paishan);
+  Kanachan::RoundState round_state(urng, game_state, p_test_paishan);
   game_log.onBeginningOfRound();
 
   std::function<std::any()> next_step = std::bind(

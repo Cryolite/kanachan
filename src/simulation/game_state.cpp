@@ -1,6 +1,7 @@
 #include "simulation/game_state.hpp"
 
 #include "simulation/decision_maker.hpp"
+#include "simulation/game_log.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
 #include <stop_token>
@@ -19,16 +20,19 @@ using std::placeholders::_1;
 namespace Kanachan{
 
 GameState::GameState(
-  std::uint_fast8_t const room, bool const dong_feng_zhan, std::array<Seat, 4u> const &seats,
-  std::stop_token stop_token)
+  std::uint_fast8_t const room, bool const dong_feng_zhan, Kanachan::Deciders deciders,
+  std::array<std::uint_fast8_t, 4u> const &grades, std::stop_token stop_token)
   : room_(room)
   , dong_feng_zhan_(dong_feng_zhan)
-  , seats_(seats)
+  , deciders_(deciders)
+  , grades_(grades)
   , stop_token_(stop_token)
 {
   KANACHAN_ASSERT((room_ < 5u));
-  for (auto [grade, model] : seats_) {
-    KANACHAN_ASSERT((grade < 16u));
+  for (auto const &decider : deciders) {
+    if (!decider) {
+      KANACHAN_THROW<std::invalid_argument>("One of `deciders` is empty.");
+    }
   }
 }
 
@@ -45,7 +49,7 @@ bool GameState::isDongfengZhan() const
 std::uint_fast8_t GameState::getPlayerGrade(std::uint_fast8_t const seat) const
 {
   KANACHAN_ASSERT((seat < 4u));
-  return seats_[seat].first;
+  return grades_[seat];
 }
 
 std::uint_fast8_t GameState::getChang() const
@@ -97,13 +101,12 @@ std::uint_fast8_t GameState::getPlayerRanking(std::uint_fast8_t const seat) cons
 std::uint_fast16_t GameState::selectAction(
   std::uint_fast8_t const seat, std::vector<std::uint_fast16_t> &&sparse,
   std::vector<std::uint_fast32_t> &&numeric, std::vector<std::uint_fast16_t> &&progression,
-  std::vector<std::uint_fast16_t> &&candidates) const
+  std::vector<std::uint_fast16_t> &&candidates, Kanachan::GameLog &game_log) const
 {
   KANACHAN_ASSERT((seat < 4u));
-  Kanachan::DecisionMaker &decision_maker = *(seats_[seat].second);
-  return decision_maker(
-    std::move(sparse), std::move(numeric), std::move(progression), std::move(candidates),
-    stop_token_);
+  return deciders_[seat](
+    seat, std::move(sparse), std::move(numeric), std::move(progression), std::move(candidates),
+    stop_token_, game_log);
 }
 
 void GameState::onSuccessfulLizhi(std::uint_fast8_t const seat)

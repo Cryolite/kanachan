@@ -2,6 +2,7 @@
 #define KANACHAN_SIMULATION_GAME_STATE_HPP_INCLUDE_GUARD
 
 #include "simulation/decision_maker.hpp"
+#include "simulation/game_log.hpp"
 #include <stop_token>
 #include <array>
 #include <utility>
@@ -18,8 +19,8 @@ public:
 
 public:
   GameState(
-    std::uint_fast8_t room, bool dong_feng_zhan, std::array<Seat, 4u> const &seats,
-    std::stop_token stop_token);
+    std::uint_fast8_t room, bool dong_feng_zhan, Kanachan::Deciders deciders,
+    std::array<std::uint_fast8_t, 4u> const &grades, std::stop_token stop_token);
 
   GameState(GameState const &) = delete;
 
@@ -52,7 +53,7 @@ public:
   std::uint_fast16_t selectAction(
     std::uint_fast8_t seat, std::vector<std::uint_fast16_t> &&sparse,
     std::vector<std::uint_fast32_t> &&numeric, std::vector<std::uint_fast16_t> &&progression,
-    std::vector<std::uint_fast16_t> &&candidates) const;
+    std::vector<std::uint_fast16_t> &&candidates, Kanachan::GameLog &game_log) const;
 
 public:
   void onSuccessfulLizhi(std::uint_fast8_t seat);
@@ -73,7 +74,8 @@ public:
 private:
   std::uint_fast8_t room_;
   bool dong_feng_zhan_;
-  std::array<Seat, 4u> seats_;
+  Kanachan::Deciders deciders_;
+  std::array<std::uint_fast8_t, 4u> grades_;
   std::uint_fast8_t chang_ = 0u;
   std::uint_fast8_t ju_ = 0u;
   std::uint_fast8_t ben_chang_ = 0u;

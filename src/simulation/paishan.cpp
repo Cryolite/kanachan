@@ -29,7 +29,7 @@ void swap(Paishan &lhs, Paishan &rhs) noexcept
   lhs.swap(rhs);
 }
 
-Paishan::Paishan(std::vector<std::uint_least32_t> const &seed)
+Paishan::Paishan(std::mt19937 &urng)
   : tiles_({
        0u,  1u,  1u,  1u,  1u,  2u,  2u,  2u,  2u,  3u,  3u,  3u,  3u,  4u,  4u,  4u,  4u,
        5u,  5u,  5u,  6u,  6u,  6u,  6u,  7u,  7u,  7u,  7u,  8u,  8u,  8u,  8u,  9u,  9u,  9u,  9u,
@@ -41,8 +41,6 @@ Paishan::Paishan(std::vector<std::uint_least32_t> const &seed)
       34u, 34u, 34u, 34u, 35u, 35u, 35u, 35u, 36u, 36u, 36u, 36u,
     })
 {
-  std::seed_seq sseq(seed.cbegin(), seed.cend());
-  std::mt19937 urng(sseq);
   std::shuffle(tiles_.begin(), tiles_.end(), urng);
 }
 

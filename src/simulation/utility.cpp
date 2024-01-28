@@ -61,12 +61,18 @@ void translatePythonException()
 
             python::object type{ python::handle<>(p_type) };
 
+            python::object m_builtins = python::import("builtins");
             python::object value;
-            if (p_value != nullptr) {
-                value = python::object{ python::handle<>(p_value) };
+            if (p_value == nullptr) {
+                value = python::object();
             }
             else {
-                value = python::object();
+                value = python::object{ python::handle<>(p_value) };
+                python::object isinstace = m_builtins.attr("isinstance");
+                python::object base_exception = m_builtins.attr("BaseException");
+                if (!isinstace(value, base_exception)) {
+                    value = python::object();
+                }
             }
 
             python::object traceback;

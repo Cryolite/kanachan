@@ -786,7 +786,7 @@ void Shoupai::appendToFeatures(std::vector<std::uint_fast16_t> &sparse_features)
   for (std::uint_fast8_t i = 0u; i < 37u; ++i) {
     std::uint_fast8_t const num_tiles = shoupai_[i];
     for (std::uint_fast8_t j = 0u; j < num_tiles; ++j) {
-      std::uint_fast16_t const feature = 353u + offsets_to_136_[i] + j;
+      std::uint_fast16_t const feature = 337u + offsets_to_136_[i] + j;
       sparse_features.push_back(feature);
     }
   }

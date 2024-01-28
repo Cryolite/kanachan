@@ -9,6 +9,7 @@
 #include "common/assert.hpp"
 #include "common/throw.hpp"
 #include <Python.h>
+#include <random>
 #include <algorithm>
 #include <vector>
 #include <array>
@@ -29,10 +30,9 @@ using std::placeholders::_1;
 namespace Kanachan{
 
 RoundState::RoundState(
-  std::vector<std::uint_least32_t> const &seed, Kanachan::GameState &game_state,
-  Kanachan::Paishan const *p_test_paishan)
+  std::mt19937 &urng, Kanachan::GameState &game_state, Kanachan::Paishan const *p_test_paishan)
   : game_state_(game_state),
-    paishan_(p_test_paishan == nullptr ? Kanachan::Paishan(seed) : *p_test_paishan),
+    paishan_(p_test_paishan == nullptr ? Kanachan::Paishan(urng) : *p_test_paishan),
     shoupai_list_({
         Kanachan::Shoupai((4u - getJu()) % 4u, paishan_),
         Kanachan::Shoupai((5u - getJu()) % 4u, paishan_),
@@ -320,46 +320,43 @@ RoundState::constructFeatures_(std::uint_fast8_t seat, std::uint_fast8_t const z
   std::uint_fast16_t const room = game_state_.getRoom();
   sparse_features.push_back(room);
 
-  std::uint_fast16_t const game_style = game_state_.isDongfengZhan() ? 5 : 6;
+  std::uint_fast16_t const game_style = game_state_.isDongfengZhan() ? 5u : 6u;
   sparse_features.push_back(game_style);
 
-  sparse_features.push_back(7 + seat);
+  for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+    std::uint_fast16_t const player_grade = getPlayerGrade(seat);
+    sparse_features.push_back(7 + i * 16 + player_grade);
+  }
 
-  std::uint_fast16_t const chang = 11 + getChang();
+  sparse_features.push_back(71 + seat);
+
+  std::uint_fast16_t const chang = 75 + getChang();
   sparse_features.push_back(chang);
 
-  std::uint_fast16_t const ju = 14 + getJu();
+  std::uint_fast16_t const ju = 78 + getJu();
   sparse_features.push_back(ju);
+
+  std::uint_fast16_t const num_left_tiles = getNumLeftTiles();
+  KANACHAN_ASSERT((0 <= num_left_tiles && num_left_tiles < 70));
+  sparse_features.push_back(82 + num_left_tiles);
 
   std::uint_fast16_t const dora_indicator = getDoraIndicator(0u);
   KANACHAN_ASSERT((dora_indicator != std::numeric_limits<std::uint_fast8_t>::max()));
-  sparse_features.push_back(18 + dora_indicator);
+  sparse_features.push_back(152 + dora_indicator);
 
   for (std::uint_fast8_t i = 1u; i <= 4u; ++i) {
     std::uint_fast16_t const gang_dora_indicator = getDoraIndicator(i);
     if (gang_dora_indicator == std::numeric_limits<std::uint_fast8_t>::max()) {
       break;
     }
-    sparse_features.push_back(18 + i * 37 + gang_dora_indicator);
-  }
-
-  std::uint_fast16_t const num_left_tiles = getNumLeftTiles();
-  KANACHAN_ASSERT((0 <= num_left_tiles && num_left_tiles < 70));
-  sparse_features.push_back(203 + num_left_tiles);
-
-  for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-    std::uint_fast16_t const player_grade = getPlayerGrade((seat + i) % 4u);
-    sparse_features.push_back(273 + i * 20 + player_grade);
-
-    std::uint_fast16_t const player_ranking = getPlayerRanking((seat + i) % 4u);
-    sparse_features.push_back(289 + i * 20 + player_ranking);
+    sparse_features.push_back(189 + i * 37 + gang_dora_indicator);
   }
 
   Kanachan::Shoupai const &shoupai = shoupai_list_[seat];
   shoupai.appendToFeatures(sparse_features);
 
   if (zimo_tile != std::numeric_limits<std::uint_fast8_t>::max()) {
-    sparse_features.push_back(489 + zimo_tile);
+    sparse_features.push_back(473 + zimo_tile);
   }
 
   std::vector<std::uint_fast32_t> numeric_features;
@@ -371,7 +368,7 @@ RoundState::constructFeatures_(std::uint_fast8_t seat, std::uint_fast8_t const z
   numeric_features.push_back(lizhi_deposits);
 
   for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-    std::uint_fast32_t const player_score = getPlayerScore((seat + i) % 4u);
+    std::uint_fast32_t const player_score = getPlayerScore(i);
     numeric_features.push_back(player_score);
   }
 
@@ -384,11 +381,8 @@ std::uint_fast16_t RoundState::selectAction_(
   std::vector<std::uint_fast16_t> &&candidates, Kanachan::GameLog &game_log) const
 {
   std::uint_fast16_t const action = game_state_.selectAction(
-    seat, std::vector(sparse), std::vector(numeric), std::vector(progression),
-    std::vector(candidates));
-  game_log.onDecision(
     seat, std::move(sparse), std::move(numeric), std::move(progression),
-    std::move(candidates), action);
+    std::move(candidates), game_log);
   return action;
 }
 
@@ -1447,6 +1441,17 @@ bool RoundState::onHule(std::uint_fast8_t const zimo_tile, Kanachan::GameLog &ga
 
   std::array<std::int_fast32_t, 4u> round_delta_scores;
   std::array<Kanachan::RoundResult, 4u> round_results;
+
+  {
+    std::uint_fast8_t const chang = getChang();
+    std::uint_fast8_t const ju = getJu();
+    std::uint_fast8_t const benchang = getBenChang();
+    for (std::uint_fast8_t seat = 0u; seat < 4u; ++seat) {
+      round_results[seat].setChang(chang);
+      round_results[seat].setJu(ju);
+      round_results[seat].setBenChang(benchang);
+    }
+  }
 
   if (zimo_tile != UINT_FAST8_MAX) {
     // Zi Mo Hu (自摸和)
@@ -2586,6 +2591,17 @@ bool RoundState::onHuangpaiPingju(Kanachan::GameLog &game_log)
   std::array<Kanachan::RoundResult, 4u> round_results;
   std::array<std::int_fast32_t, 4u> round_delta_scores{ 0, 0, 0, 0 };
 
+  {
+    std::uint_fast8_t const chang = getChang();
+    std::uint_fast8_t const ju = getJu();
+    std::uint_fast8_t const benchang = getBenChang();
+    for (std::uint_fast8_t seat = 0u; seat < 4u; ++seat) {
+      round_results[seat].setChang(chang);
+      round_results[seat].setJu(ju);
+      round_results[seat].setBenChang(benchang);
+    }
+  }
+
   bool liuju_manguan = false;
   for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
     if (isPlayerTingpai(i)) {
@@ -2849,12 +2865,20 @@ void RoundState::onLiuju(Kanachan::GameLog &game_log)
   }
 
   std::array<Kanachan::RoundResult, 4u> round_results;
-  for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
-    round_results[i].setType(14u);
-    round_results[i].setInLizhi(lizhi_list_[i] >= 1u);
-    round_results[i].setHasFulu(!isPlayerMenqian(i));
-    round_results[i].setRoundDeltaScore(getPlayerDeltaScore(i));
-    round_results[i].setRoundScore(getPlayerScore(i));
+  {
+    std::uint_fast8_t const chang = getChang();
+    std::uint_fast8_t const ju = getJu();
+    std::uint_fast8_t const benchang = getBenChang();
+    for (std::uint_fast8_t i = 0u; i < 4u; ++i) {
+      round_results[i].setChang(chang);
+      round_results[i].setJu(ju);
+      round_results[i].setBenChang(benchang);
+      round_results[i].setType(14u);
+      round_results[i].setInLizhi(lizhi_list_[i] >= 1u);
+      round_results[i].setHasFulu(!isPlayerMenqian(i));
+      round_results[i].setRoundDeltaScore(getPlayerDeltaScore(i));
+      round_results[i].setRoundScore(getPlayerScore(i));
+    }
   }
   game_log.onEndOfRound(round_results);
 
