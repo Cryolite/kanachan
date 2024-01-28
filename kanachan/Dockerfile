@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.12-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/cuda:12.1.1-devel-ubuntu22.04
 ARG BUILD_TYPE=Release
 FROM $BASE_IMAGE
 ARG BUILD_TYPE
@@ -10,27 +10,47 @@ RUN set -euxo pipefail; \
     apt-get -y update; \
     apt-get -y dist-upgrade; \
     apt-get -y install \
+      autoconf \
+      automake \
+      curl \
+      git-core \
       libssl-dev \
+      libtool \
       locales \
       locales-all \
+      protobuf-compiler \
       python3-dev \
       python3-venv; \
     apt-get clean && rm -rf /var/lib/apt/lists/*; \
     locale-gen en_US.UTF-8 ja_JP.UTF-8; \
     useradd -ms /bin/bash ubuntu; \
+    mkdir /workspace; \
     chown ubuntu:ubuntu /workspace
 
 USER ubuntu
 
-# Install Apex.
+# Create Python venv environment, and install prerequisite Python packages.
 RUN set -euxo pipefail; \
     python3 -m venv --system-site-packages "$HOME/.local"; \
     . "$HOME/.local/bin/activate"; \
     python3 -m pip install -U pip; \
+    python3 -m pip install -U \
+      packaging \
+      setuptools \
+      wheel
+
+# Install PyTorch.
+RUN set -euxo pipefail; \
+    . "$HOME/.local/bin/activate"; \
+    python3 -m pip install -U torch --index-url https://download.pytorch.org/whl/cu121
+
+# Install Apex.
+RUN set -euxo pipefail; \
     pushd /workspace; \
-    git clone -b 22.12-dev 'https://github.com/NVIDIA/apex.git'; \
+    git clone 'https://github.com/NVIDIA/apex.git'; \
     pushd apex; \
-    MAX_JOBS=4 python3 -m pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./; \
+    . "$HOME/.local/bin/activate"; \
+    python3 -m pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" ./; \
     popd; \
     rm -rf apex; \
     popd
@@ -59,6 +79,7 @@ dependencies = [\n\
     "tensorflow",\n\
 ]\n\
 version = "0.0.1"\n' > pyproject.toml; \
+    . "$HOME/.local/bin/activate"; \
     python3 -m pip install .; \
     popd; \
     rm -rf MTAdam; \
@@ -160,9 +181,9 @@ RUN set -euxo pipefail; \
     src/xiangting/make_trie /workspace/shanten-number /home/ubuntu/.local/share/kanachan; \
     popd; \
     rm -rf /workspace/shanten-number; \
-    . "$HOME/.local/bin/activate"; \
     pushd /workspace/kanachan; \
     cp build/src/simulation/libsimulation.so kanachan/simulation/_simulation.so; \
+    . "$HOME/.local/bin/activate"; \
     python3 -m pip install .; \
     popd; \
     rm -rf /workspace/kanachan/build
