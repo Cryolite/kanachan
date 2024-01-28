@@ -8,7 +8,7 @@ An implementation of training for supervised learning to mimic actions recorded 
 
 ### [`kanachan.training.cql`](cql) Python submodule
 
-An implementation of training for [conservative Q-learning](https://arxiv.org/abs/2006.04779).
+An implementation of training for [conservative Q-learning (CQL)](https://arxiv.org/abs/2006.04779).
 
 ### [`kanachan.training.iql`](iql) Python submodule
 
