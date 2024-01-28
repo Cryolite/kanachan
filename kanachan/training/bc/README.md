@@ -83,8 +83,8 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 | `decoder` | `decoder.dimension`         | `decoder.activation_function` | `decoder.dropout` | `decoder.num_layers` | `decoder.load_from` |
 |-----------|-----------------------------|-------------------------------|-------------------|----------------------|---------------------|
 | `single`  | (N/A)                       | (N/A)                         | (N/A)             | `1`                  | (N/A)               |
-| `double`  | (`encoder.dim_feedforward`) | `gelu`                        | `0.1`             | `2`                  | (N/A)               |
-| `triple`  | (`encoder.dim_feedforward`) | `gelu`                        | `0.1`             | `3`                  | (N/A)               |
+| `double`  | (`encoder.dim_feedforward`) | `relu`                        | `0.1`             | `2`                  | (N/A)               |
+| `triple`  | (`encoder.dim_feedforward`) | `relu`                        | `0.1`             | `3`                  | (N/A)               |
 
 `decoder.dim_feedforward=DIM_FEEDFORWARD`: Specify the dimension of the feedforward networks in each decoder layer. `DIM_FEEDFORWARD` must be a positive integer. Override the value by the `decoder` option.
 
