@@ -38,17 +38,18 @@ class ValueDecoder(nn.Module):
         assert encode.dim() == 3
         assert candidates.size(0) == encode.size(0)
 
-        mask = (candidates == NUM_TYPES_OF_ACTIONS)
-
+        mask = (candidates == NUM_TYPES_OF_ACTIONS + 1)
+        
         encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
         value: torch.Tensor = self.layers(encode)
         value = torch.squeeze(value, dim=2)
         value = value[mask]
+        value = value[:1]
         assert value.dim() == 1
         assert value.size(0) == candidates.size(0)
 
         # Set `V` of the terminal state to `0.0`.
-        value = torch.where(candidates[:, 0] != NUM_TYPES_OF_ACTIONS, value, 0.0)
+        value = torch.where(candidates[:, 0] != NUM_TYPES_OF_ACTIONS + 1, value, 0.0)
 
         return value
 
