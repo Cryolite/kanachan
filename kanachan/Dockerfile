@@ -35,6 +35,7 @@ RUN set -euxo pipefail; \
     . "$HOME/.local/bin/activate"; \
     python3 -m pip install -U pip; \
     python3 -m pip install -U \
+      ninja \
       packaging \
       setuptools \
       wheel
