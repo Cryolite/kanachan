@@ -7,929 +7,1127 @@ from pathlib import Path
 import os
 import logging
 import sys
-from typing import Optional, Callable
+from typing import Callable
 from omegaconf import DictConfig
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import torch
-from torch import backends
-from torch import nn
+from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim import Optimizer, SGD, Adam, RAdam
+from torch.optim import Optimizer
 import torch.optim.lr_scheduler as lr_scheduler
-from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
-from torch.distributed import init_process_group, all_reduce, barrier
+from torch.distributed import init_process_group, ReduceOp, all_reduce
 from torch.utils.tensorboard.writer import SummaryWriter
-from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from kanachan.training.constants import NUM_TYPES_OF_SPARSE_FEATURES, MAX_NUM_ACTION_CANDIDATES
-from kanachan.training.common import Dataset, get_gradient, is_gradient_nan
-import kanachan.training.cql.config # pylint: disable=unused-import
-from kanachan.training.iql.iterator_adaptor import IteratorAdaptor
-from kanachan.nn import Encoder
-from kanachan.training.cql.q_model import ThetaDecoder, ThetaModel, QModel
+from tensordict import TensorDict
+from tensordict.nn import TensorDictModule, TensorDictSequential
+from kanachan.constants import (
+    MAX_NUM_ACTIVE_SPARSE_FEATURES,
+    MAX_NUM_ACTION_CANDIDATES,
+)
+from kanachan.training.common import (
+    get_distributed_environment,
+    get_gradient,
+    is_gradient_nan,
+)
+import kanachan.training.core.config as _config
+
+# pylint: disable=unused-import
+import kanachan.training.cql.config  # noqa: F401
+from kanachan.training.core.offline_rl import DataLoader, EpisodeReplayBuffer
+from kanachan.nn import Encoder, QRDecoder, QDecoder, DecodeConverter
+from kanachan.nn.qr_decoder import compute_td_error
 from kanachan.model_loader import dump_object, dump_model
 
 
-SnapshotWriter = Callable[[Optional[int]], None]
+SnapshotWriter = Callable[[int | None], None]
 
 
 def _training(
-        *, is_multiprocess: bool, world_size: Optional[int], rank: Optional[int],
-        is_main_process: bool, training_data: Path, num_workers: int, device: torch.device,
-        dtype: torch.dtype, amp_dtype: torch.dtype, num_qr_intervals: int,
-        theta_source_model: ThetaModel, theta_target_model: ThetaModel, reward_plugin: Path,
-        discount_factor: float, kappa: float, alpha: float, batch_size: int,
-        gradient_accumulation_steps: int, max_gradient_norm: float, optimizer: Optimizer,
-        scheduler #: Optional[lr_scheduler.LRScheduler]
-        , target_update_interval: int, target_update_rate: float,
-        snapshot_interval: int, num_samples: int, summary_writer: SummaryWriter,
-        snapshot_writer: SnapshotWriter) -> None:
+    *,
+    training_data: Path,
+    contiguous_training_data: bool,
+    rewrite_grades: int | None,
+    num_workers: int,
+    replay_buffer_size: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    amp_dtype: torch.dtype,
+    source_network: nn.Module,
+    target_network: nn.Module | None,
+    reward_plugin: Path,
+    discount_factor: float,
+    kappa: float,
+    td_computation_batch_size: int,
+    alpha: float,
+    batch_size: int,
+    gradient_accumulation_steps: int,
+    max_gradient_norm: float,
+    optimizer: Optimizer,
+    scheduler: lr_scheduler.LRScheduler | None,
+    target_update_interval: int | None,
+    target_update_rate: int | None,
+    snapshot_interval: int,
+    num_samples: int,
+    summary_writer: SummaryWriter,
+    snapshot_writer: SnapshotWriter,
+) -> None:
     start_time = datetime.datetime.now()
 
-    is_amp_enabled = (device != 'cpu' and dtype != amp_dtype)
+    world_size, _, local_rank = get_distributed_environment()
+
+    is_amp_enabled = device.type != "cpu" and dtype != amp_dtype
+    autocast_kwargs = {
+        "device_type": device.type,
+        "dtype": amp_dtype,
+        "enabled": is_amp_enabled,
+    }
 
     # Load the reward plugin.
-    with open(reward_plugin, encoding='UTF-8') as file_pointer:
-        exec(file_pointer.read(), globals()) # pylint: disable=exec-used
+    with open(reward_plugin, encoding="UTF-8") as file_pointer:
+        exec(file_pointer.read(), globals())  # pylint: disable=exec-used
 
-    # Prepare the training data loader. Note that this data loader must iterate
-    # the training data set only once.
-    def iterator_adaptor(path: Path) -> IteratorAdaptor:
-        return IteratorAdaptor(path, get_reward) # type: ignore pylint: disable=undefined-variable
-    dataset = Dataset(training_data, iterator_adaptor)
-    data_loader = DataLoader(
-        dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=(num_workers >= 1),
-        drop_last=is_multiprocess)
+    if replay_buffer_size >= 1:
+        data_loader = EpisodeReplayBuffer(
+            training_data=training_data,
+            contiguous_training_data=contiguous_training_data,
+            num_skip_samples=num_samples,
+            # pylint: disable=undefined-variable
+            get_reward=get_reward,  # type: ignore # noqa: F821
+            max_size=replay_buffer_size,
+            batch_size=batch_size,
+            drop_last=(world_size >= 2),
+        )
+    else:
+        data_loader = DataLoader(
+            path=training_data,
+            num_skip_samples=num_samples,
+            # pylint: disable=undefined-variable
+            get_reward=get_reward,  # type: ignore # noqa: F821
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=(num_workers >= 1),
+            drop_last=(world_size >= 2),
+        )
 
     last_snapshot = None
     if snapshot_interval > 0:
         last_snapshot = num_samples
 
-    num_consumed_samples = 0
-    batch_count = 0
-
     grad_scaler = None
     if is_amp_enabled:
         grad_scaler = GradScaler()
 
-    for annotation in data_loader:
-        if num_consumed_samples < num_samples:
-            num_consumed_samples += batch_size
-            continue
+    batch_count = 0
 
-        if is_multiprocess:
-            barrier()
+    for data in data_loader:
+        if rewrite_grades is not None:
+            assert 0 <= rewrite_grades and rewrite_grades <= 15
+            sparse: Tensor = data["sparse"]
+            assert sparse.dim() == 2
+            assert sparse.size(0) == batch_size
+            assert sparse.size(1) == MAX_NUM_ACTIVE_SPARSE_FEATURES
+            assert sparse.dtype == torch.int32
+            sparse[:, 2].fill_(7 + rewrite_grades)
+            sparse[:, 3].fill_(23 + rewrite_grades)
+            sparse[:, 4].fill_(39 + rewrite_grades)
+            sparse[:, 5].fill_(55 + rewrite_grades)
+            next_sparse: Tensor = data["next", "sparse"]
+            assert next_sparse.dim() == 2
+            assert next_sparse.size(0) == batch_size
+            assert next_sparse.size(1) == MAX_NUM_ACTIVE_SPARSE_FEATURES
+            assert next_sparse.dtype == torch.int32
+            next_sparse[:, 2].fill_(7 + rewrite_grades)
+            next_sparse[:, 3].fill_(23 + rewrite_grades)
+            next_sparse[:, 4].fill_(39 + rewrite_grades)
+            next_sparse[:, 5].fill_(55 + rewrite_grades)
 
-        if is_multiprocess:
-            assert world_size is not None
-            assert rank is not None
-            assert batch_size % world_size == 0
-            first = (batch_size // world_size) * rank
-            last = (batch_size // world_size) * (rank + 1)
-            annotation = tuple(x[first:last] for x in annotation)
+        data = data.to(device=device)
+        assert isinstance(data, TensorDict)
 
-        if device != 'cpu':
-            annotation = tuple(x.cuda() for x in annotation)
+        with torch.autocast(**autocast_kwargs):
+            _chunks: list[TensorDict] = []
+            for _chunk in data.split(td_computation_batch_size):
+                assert isinstance(_chunk, TensorDict)
+                compute_td_error(
+                    source_network=source_network,
+                    target_network=target_network,
+                    data=_chunk,
+                    discount_factor=discount_factor,
+                    kappa=kappa,
+                )
+                _chunks.append(_chunk)
+            data: TensorDict = torch.cat(_chunks)  # type: ignore
+        td_error: Tensor = data["td_error"]
+        assert td_error.dim() == 1
+        assert td_error.size(0) == batch_size
+        td_error = td_error.mean()
 
-        local_batch_size = annotation[0].size(0)
-        world_batch_size = batch_size
+        q: Tensor = data["action_value"]
+        assert q.dim() == 2
+        assert q.size(0) == batch_size
+        assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
 
-        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
-            theta: torch.Tensor = theta_source_model(*(annotation[:4]))
-            assert theta.dim() == 3
-            assert theta.size(0) == local_batch_size
-            assert theta.size(1) == MAX_NUM_ACTION_CANDIDATES
-            assert theta.size(2) == num_qr_intervals
-            theta_sa = theta[torch.arange(local_batch_size), annotation[4], :]
-            assert theta_sa.dim() == 2
-            assert theta_sa.size(0) == local_batch_size
-            assert theta_sa.size(1) == num_qr_intervals
-            q = torch.sum(theta * (1.0 / num_qr_intervals), dim=2)
-            assert q.dim() == 2
-            assert q.size(0) == local_batch_size
-            assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
-            q_sa = torch.sum(theta_sa * (1.0 / num_qr_intervals), dim=1)
-            assert q_sa.dim() == 1
-            assert q_sa.size(0) == local_batch_size
+        action: Tensor = data["action"]
+        assert action.dim() == 1
+        assert action.size(0) == batch_size
 
-            theta_next: torch.Tensor = theta_source_model(*(annotation[5:9]))
-            assert theta_next.dim() == 3
-            assert theta_next.size(0) == local_batch_size
-            assert theta_next.size(1) == MAX_NUM_ACTION_CANDIDATES
-            assert theta_next.size(2) == num_qr_intervals
-            q_next = torch.sum(theta_next * (1.0 / num_qr_intervals), dim=2)
-            assert q_next.dim() == 2
-            assert q_next.size(0) == local_batch_size
-            assert q_next.size(1) == MAX_NUM_ACTION_CANDIDATES
-            a_star = torch.argmax(q_next, dim=1)
-            assert a_star.dim() == 1
-            assert a_star.size(0) == local_batch_size
+        q_sa = q[torch.arange(batch_size), action]
+        assert q_sa.dim() == 1
+        assert q_sa.size(0) == batch_size
 
         _q = q_sa.detach().clone().mean()
-        if is_multiprocess:
-            all_reduce(_q)
-            _q /= world_size
+        if world_size >= 2:
+            all_reduce(_q, ReduceOp.AVG)
         q_to_display = _q.item()
 
         # Compute the regularization term.
         log_z = torch.logsumexp(q, dim=1)
         regularizer = torch.mean(log_z - q_sa)
 
-        # Compute the TD error.
-        theta_ssaa = theta_next[torch.arange(local_batch_size), a_star, :]
-        assert theta_ssaa.dim() == 2
-        assert theta_ssaa.size(0) == local_batch_size
-        assert theta_ssaa.size(1) == num_qr_intervals
-        is_terminal_state = annotation[5][:, 0] == NUM_TYPES_OF_SPARSE_FEATURES
-        assert is_terminal_state.dim() == 1
-        assert is_terminal_state.size(0) == local_batch_size
-        is_terminal_state = torch.unsqueeze(is_terminal_state, dim=1).expand_as(theta_ssaa)
-        theta_ssaa = torch.where(is_terminal_state, torch.zeros_like(theta_ssaa), theta_ssaa)
-        theta_ssaa = torch.unsqueeze(theta_ssaa, dim=1)
-        theta_j = theta_ssaa.expand(-1, num_qr_intervals, -1)
+        loss_regularizer = alpha * regularizer
+        _loss_regularizer = loss_regularizer.detach().clone()
+        if world_size >= 2:
+            all_reduce(_loss_regularizer, ReduceOp.AVG)
+        loss_regularizer_to_display: float = _loss_regularizer.item()
 
-        theta_i = torch.unsqueeze(theta_sa, dim=2).expand(-1, -1, num_qr_intervals)
+        loss_td_error = 0.5 * td_error
+        _loss_td_error = loss_td_error.detach().clone()
+        if world_size >= 2:
+            all_reduce(_loss_td_error, ReduceOp.AVG)
+        loss_td_error_to_display: float = _loss_td_error.item()
 
-        reward = torch.unsqueeze(annotation[9], dim=1)
-        reward = torch.unsqueeze(reward, dim=2)
-        reward = reward.expand(-1, num_qr_intervals, num_qr_intervals)
-        u: torch.Tensor = reward + discount_factor * theta_j - theta_i
-        lu = torch.where(torch.abs(u) < kappa, 0.5 * (u ** 2.0), kappa * (torch.abs(u) - 0.5 * kappa))
-        factor_i = torch.arange(
-            0.5 / num_qr_intervals, 1.0, 1.0 / num_qr_intervals, device=u.device, dtype=u.dtype)
-        assert factor_i.dim() == 1
-        assert factor_i.size(0) == num_qr_intervals
-        factor_i = torch.unsqueeze(factor_i, dim=0)
-        factor_i = torch.unsqueeze(factor_i, dim=2)
-        factor_i = factor_i.expand_as(u).clone()
-        factor_i -= torch.where(u < 0.0, torch.ones_like(u), torch.zeros_like(u))
-        del u
-        rho = torch.abs(factor_i) * lu / kappa
-        del lu
-        del factor_i
-        td_error = torch.mean(torch.sum(torch.mean(rho, dim=2), dim=1))
-        del rho
-
-        loss = alpha * regularizer + td_error
-
+        loss = loss_regularizer + loss_td_error
         _loss = loss.detach().clone()
-        if is_multiprocess:
-            all_reduce(_loss)
-            _loss /= world_size
-        loss_to_display = _loss.item()
+        if world_size >= 2:
+            all_reduce(_loss, ReduceOp.AVG)
+        loss_to_display: float = _loss.item()
 
         if math.isnan(loss_to_display):
-            raise RuntimeError('Loss becomes NaN.')
+            errmsg = "Loss becomes NaN."
+            raise RuntimeError(errmsg)
 
         loss /= gradient_accumulation_steps
         if grad_scaler is None:
             loss.backward()
         else:
-            grad_scaler.scale(loss).backward()
+            grad_scaler.scale(loss).backward()  # type: ignore
 
-        num_samples += world_batch_size
-        num_consumed_samples += world_batch_size
+        num_samples += batch_size * world_size
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            is_grad_nan = is_gradient_nan(theta_source_model)
-            is_grad_nan = torch.where(
-                is_grad_nan, torch.ones_like(is_grad_nan), torch.zeros_like(is_grad_nan))
-            all_reduce(is_grad_nan)
+            is_grad_nan = is_gradient_nan(source_network)
+            if world_size >= 2:
+                all_reduce(is_grad_nan)
             if is_grad_nan.item() >= 1:
-                if is_main_process:
-                    logging.warning('Skip an optimization step because of NaN in the gradient.')
-                gradient_norm = None
+                if local_rank == 0:
+                    logging.warning(
+                        "Skip an optimization step because of NaN in the gradient."
+                    )
+                optimizer.zero_grad()
+                continue
+
+            if grad_scaler is not None:
+                grad_scaler.unscale_(optimizer)
+            gradient = get_gradient(source_network)
+            # pylint: disable=not-callable
+            gradient_norm: float = torch.linalg.vector_norm(gradient).item()
+            nn.utils.clip_grad_norm_(
+                source_network.parameters(),
+                max_gradient_norm,
+                error_if_nonfinite=False,
+            )
+            if grad_scaler is None:
+                optimizer.step()
             else:
-                if grad_scaler is not None:
-                    grad_scaler.unscale_(optimizer)
-                gradient = get_gradient(theta_source_model)
-                gradient_norm: float = torch.linalg.vector_norm(gradient).item()
-                nn.utils.clip_grad_norm_(
-                    theta_source_model.parameters(), max_gradient_norm, error_if_nonfinite=False)
-                if grad_scaler is None:
-                    optimizer.step()
-                else:
-                    grad_scaler.step(optimizer)
-                    grad_scaler.update()
-                if scheduler is not None:
-                    scheduler.step()
+                grad_scaler.step(optimizer)
+                grad_scaler.update()
+            if scheduler is not None:
+                scheduler.step()
 
             optimizer.zero_grad()
 
-            if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
+            if (
+                target_update_interval is not None
+                and batch_count
+                % (gradient_accumulation_steps * target_update_interval)
+                == 0
+            ):
+                assert target_update_rate is not None
+                assert target_network is not None
                 with torch.no_grad():
-                    param_source = nn.utils.parameters_to_vector(theta_source_model.parameters())
-                    param_target = nn.utils.parameters_to_vector(theta_target_model.parameters())
-                    param_target *= (1.0 - target_update_rate)
-                    param_target += target_update_rate * param_source.to(device='cpu')
-                    nn.utils.vector_to_parameters(param_target, theta_target_model.parameters())
+                    for source_param, target_param in zip(
+                        source_network.parameters(),
+                        target_network.parameters(),
+                    ):
+                        target_param.data *= 1.0 - target_update_rate
+                        target_param.data += (
+                            target_update_rate * source_param.data
+                        )
 
-            if is_main_process and gradient_norm is not None:
+            if local_rank == 0:
                 logging.info(
-                    'sample = %s, loss = %s, Q = %E, gradient norm = %s',
-                    num_samples, loss_to_display, q_to_display, gradient_norm)
-                summary_writer.add_scalar('Q', q_to_display, num_samples)
-                summary_writer.add_scalar('Loss', loss_to_display, num_samples)
-                summary_writer.add_scalar('Gradient Norm', gradient_norm, num_samples)
+                    "sample = %s, loss = %s, Q = %E, gradient norm = %s",
+                    num_samples,
+                    loss_to_display,
+                    q_to_display,
+                    gradient_norm,
+                )
+                summary_writer.add_scalar("Q", q_to_display, num_samples)
+                summary_writer.add_scalar(
+                    "Loss (regularizer)",
+                    loss_regularizer_to_display,
+                    num_samples,
+                )
+                summary_writer.add_scalar(
+                    "Loss (TD error)", loss_td_error_to_display, num_samples
+                )
+                summary_writer.add_scalar("Loss", loss_to_display, num_samples)
+                summary_writer.add_scalar(
+                    "Gradient Norm", gradient_norm, num_samples
+                )
                 if scheduler is not None:
-                    summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], num_samples)
+                    summary_writer.add_scalar(
+                        "LR", scheduler.get_last_lr()[0], num_samples
+                    )
         else:
-            if is_main_process:
+            if local_rank == 0:
                 logging.info(
-                    'sample = %s, loss = %s, Q = %E', num_samples, loss_to_display, q_to_display)
-                summary_writer.add_scalar('Q', q_to_display, num_samples)
-                summary_writer.add_scalar('Loss', loss_to_display, num_samples)
+                    "sample = %s, loss = %s, Q = %E",
+                    num_samples,
+                    loss_to_display,
+                    q_to_display,
+                )
+                summary_writer.add_scalar("Q", q_to_display, num_samples)
+                summary_writer.add_scalar(
+                    "Loss (regularizer)",
+                    loss_regularizer_to_display,
+                    num_samples,
+                )
+                summary_writer.add_scalar(
+                    "Loss (TD error)", loss_td_error_to_display, num_samples
+                )
+                summary_writer.add_scalar("Loss", loss_to_display, num_samples)
 
-        if is_main_process and last_snapshot is not None and num_samples - last_snapshot >= snapshot_interval:
+        if (
+            local_rank == 0
+            and last_snapshot is not None
+            and num_samples - last_snapshot >= snapshot_interval
+        ):
             snapshot_writer(num_samples)
             last_snapshot = num_samples
 
-    if is_multiprocess:
-        barrier()
-
     elapsed_time = datetime.datetime.now() - start_time
 
-    if is_main_process:
-        logging.info('A training has finished (elapsed time = %s).', elapsed_time)
-        snapshot_writer()
+    if local_rank == 0:
+        logging.info(
+            "A training has finished (elapsed time = %s).", elapsed_time
+        )
+        snapshot_writer(None)
 
 
-@hydra.main(version_base=None, config_name='config')
+@hydra.main(version_base=None, config_name="config")
 def _main(config: DictConfig) -> None:
-    if 'LOCAL_RANK' in os.environ:
-        if os.environ['WORLD_SIZE'] != os.environ['LOCAL_WORLD_SIZE']:
-            raise RuntimeError('Multi-node not supported.')
-        world_size = int(os.environ['LOCAL_WORLD_SIZE'])
-        rank = int(os.environ['LOCAL_RANK'])
-        is_multiprocess = True
-        is_main_process = (rank == 0)
-    else:
-        world_size = None
-        rank = None
-        is_multiprocess = False
-        is_main_process = True
+    (
+        world_size,
+        rank,
+        local_rank,
+        device,
+        dtype,
+        amp_dtype,
+    ) = _config.device.validate(config)
 
     if not config.training_data.exists():
-        raise RuntimeError(f'{config.training_data}: Does not exist.')
+        errmsg = f"{config.training_data}: Does not exist."
+        raise RuntimeError(errmsg)
     if not config.training_data.is_file():
-        raise RuntimeError(f'{config.training_data}: Not a file.')
+        errmsg = f"{config.training_data}: Not a file."
+        raise RuntimeError(errmsg)
 
-    if config.num_workers is None:
-        if config.device.type == 'cpu':
+    if config.rewrite_grades is not None and (
+        config.rewrite_grades < 0 or 15 < config.rewrite_grades
+    ):
+        errmsg = (
+            f"{config.rewrite_grades}: `rewrite_grades` must be an"
+            " integer within the range [0, 15]."
+        )
+        raise RuntimeError(errmsg)
+
+    if device.type == "cpu":
+        if config.num_workers is None:
             config.num_workers = 0
-        else:
-            config.num_workers = 2
-    if config.num_workers < 0:
-        raise RuntimeError(f'{config.num_workers}: `num_workers` must be a non-negative integer.')
-
-    if config.device.type is not None:
-        match = re.search('^(?:cpu|cuda(?::\\d+)?)$', config.device.type)
-        if match is None:
-            raise RuntimeError(f'{config.device.type}: An invalid device.')
-    elif backends.cuda.is_built():
-        config.device.type = 'cuda'
+        if config.num_workers < 0:
+            errmsg = f"{config.num_workers}: An invalid number of workers."
+            raise RuntimeError(errmsg)
+        if config.num_workers > 0:
+            errmsg = (
+                f"{config.num_workers}: An invalid number of workers"
+                " for CPU."
+            )
+            raise RuntimeError(errmsg)
     else:
-        config.device.type = 'cpu'
-    if config.device.type == 'cuda':
-        torch.cuda.set_device(rank)
+        assert device.type == "cuda"
+        if config.num_workers is None:
+            config.num_workers = 2
+        if config.num_workers < 0:
+            errmsg = f"{config.num_workers}: An invalid number of workers."
+            raise RuntimeError(errmsg)
+        if config.num_workers == 0:
+            errmsg = (
+                f"{config.num_workers}: An invalid number of workers for GPU."
+            )
+            raise RuntimeError(errmsg)
 
-    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
-        raise RuntimeError(f'{config.device.dtype}: An invalid dtype.')
-    dtype = {
-        'float64': torch.float64, 'double': torch.float64,
-        'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16
-    }[config.device.dtype]
+    if config.replay_buffer_size < 0:
+        errmsg = (
+            f"{config.replay_buffer_size}: `replay_buffer_size` must be"
+            " a non-negative integer."
+        )
+        raise RuntimeError(errmsg)
+    if config.contiguous_training_data and config.replay_buffer_size == 0:
+        errmsg = "Use `replay_buffer_size` for `contiguous_training_data`."
+        raise RuntimeError(errmsg)
 
-    if config.device.type == 'cpu':
-        if config.device.amp_dtype is not None:
-            raise RuntimeError('AMP is not supported on CPU.')
-        config.device.amp_dtype = config.device.dtype
-    if config.device.amp_dtype is None:
-        config.device.amp_dtype = config.device.dtype
-    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
-        raise RuntimeError(f'{config.device.amp_dtype}: An invalid AMP dtype.')
-    amp_dtype = {
-        'float64': torch.float64, 'double': torch.float64,
-        'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16
-    }[config.device.amp_dtype]
-    if amp_dtype == torch.float64 and dtype in (torch.float32, torch.float16):
-        raise RuntimeError(
-            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
-            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
-    if amp_dtype == torch.float32 and dtype == torch.float16:
-        raise RuntimeError(
-            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
-            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
+    _config.encoder.validate(config)
 
-    if backends.cudnn.is_available():
-        backends.cudnn.benchmark = True
+    _config.decoder.validate(config)
 
-    if config.encoder.position_encoder not in ('positional_encoding', 'position_embedding'):
-        raise RuntimeError(f'{config.encoder.position_encoder}: An invalid position encoder.')
-
-    if config.encoder.dimension < 1:
-        raise RuntimeError(
-            f'{config.encoder.dimension}: '
-            '`encoder.dimension` must be an integer greater than 0.')
-
-    if config.encoder.num_heads < 1:
-        raise RuntimeError(
-            f'{config.encoder.num_heads}: `encoder.num_heads` must be an integer greater than 0.')
-
-    if config.encoder.dim_feedforward is None:
-        config.encoder.dim_feedforward = 4 * config.encoder.dimension
-    if config.encoder.dim_feedforward < 1:
-        raise RuntimeError(
-            f'{config.encoder.dim_feedforward}: '
-            '`encoder.dim_feedforward` must be an integer greater than 0.')
-
-    if config.encoder.activation_function not in ('relu', 'gelu'):
-        raise RuntimeError(
-            f'{config.encoder.activation_function}: '
-            'An invalid activation function for the encoder.')
-
-    if config.encoder.dropout < 0.0 or 1.0 <= config.encoder.dropout:
-        raise RuntimeError(
-            f'{config.encoder.dropout}: '
-            '`encoder.dropout` must be a real value within the range [0.0, 1.0).')
-
-    if config.encoder.num_layers < 1:
-        raise RuntimeError(
-            f'{config.encoder.num_layers}: `encoder.num_layers` must be an integer greater than 0.')
-
-    if config.encoder.load_from is not None:
-        if not config.encoder.load_from.exists():
-            raise RuntimeError(f'{config.encoder.load_from}: Does not exist.')
-        if not config.encoder.load_from.is_file():
-            raise RuntimeError(f'{config.encoder.load_from}: Not a file.')
-
-    if config.decoder.dim_feedforward is None:
-        config.decoder.dim_feedforward = config.encoder.dim_feedforward
-    if config.decoder.dim_feedforward < 1:
-        raise RuntimeError(
-            f'{config.decoder.dim_feedforward}: '
-            '`decoder.dim_feedforward` must be an integer greater than 0.')
-
-    if config.decoder.activation_function not in ('relu', 'gelu'):
-        raise RuntimeError(
-            f'{config.decoder.activation_function}: '
-            'An invalid activation function for the decoder.')
-
-    if config.decoder.dropout < 0.0 or 1.0 <= config.decoder.dropout:
-        raise RuntimeError(
-            f'{config.decoder.dropout}: '
-            '`decoder.dropout` must be a real value within the range [0.0, 1.0).')
-
-    if config.decoder.num_layers < 1:
-        raise RuntimeError(
-            f'{config.decoder.num_layers}: `decoder.num_layers` must be an integer greater than 0.')
-
-    if config.decoder.num_qr_intervals <= 0:
-        raise RuntimeError(
-            f'{config.decoder.num_qr_intervals}: '
-            '`decoder.num_qr_intervals` must be a positive integer.')
-
-    if config.decoder.load_from is not None:
-        if not config.decoder.load_from.exists():
-            raise RuntimeError(f'{config.decoder.load_from}: Does not exist.')
-        if not config.decoder.load_from.is_file():
-            raise RuntimeError(f'{config.decoder.load_from}: Not a file.')
-
-    if config.initial_model is not None:
-        if config.encoder.load_from is not None:
-            raise RuntimeError('`initial_model` conflicts with `encoder.load_from`.')
-        if config.decoder.load_from is not None:
-            raise RuntimeError('`initial_model` conflicts with `decoder.load_from`.')
-        if not config.initial_model.exists():
-            raise RuntimeError(f'{config.initial_model}: Does not exist.')
-        if not config.initial_model.is_file():
-            raise RuntimeError(f'{config.initial_model}: Not a file.')
+    if config.num_qr_intervals <= 0:
+        errmsg = (
+            f"{config.num_qr_intervals}: `num_qr_intervals` must be a"
+            " positive integer."
+        )
+        raise RuntimeError(errmsg)
 
     if config.initial_model_prefix is not None:
         if config.encoder.load_from is not None:
-            raise RuntimeError('`initial_model_prefix` conflicts with `encoder.load_from`.')
-        if config.decoder.load_from is not None:
-            raise RuntimeError('`initial_model_prefix` conflicts with `decoder.load_from`.')
-        if config.initial_model is not None:
-            raise RuntimeError('`initial_model_prefix` conflicts with `initial_model`.')
+            errmsg = (
+                "`initial_model_prefix` conflicts with `encoder.load_from`."
+            )
+            raise RuntimeError(errmsg)
         if not config.initial_model_prefix.exists():
-            raise RuntimeError(f'{config.initial_model_prefix}: Does not exist.')
+            errmsg = f"{config.initial_model_prefix}: Does not exist."
+            raise RuntimeError(errmsg)
         if not config.initial_model_prefix.is_dir():
-            raise RuntimeError(f'{config.initial_model_prefix}: Not a directory.')
+            errmsg = f"{config.initial_model_prefix}: Not a directory."
+            raise RuntimeError(errmsg)
 
     if config.initial_model_index is not None:
         if config.initial_model_prefix is None:
-            raise RuntimeError('`initial_model_index` must be combined with `initial_model_prefix`.')
+            errmsg = (
+                "`initial_model_index` must be combined with"
+                " `initial_model_prefix`."
+            )
+            raise RuntimeError(errmsg)
         if config.initial_model_index < 0:
-            raise RuntimeError(f'{config.initial_model_index}: An invalid initial model index.')
+            errmsg = (
+                f"{config.initial_model_index}: An invalid initial model"
+                " index."
+            )
+            raise RuntimeError(errmsg)
 
+    if (config.target_update_interval is None) != (
+        config.target_update_rate is None
+    ):
+        errmsg = (
+            "`target_update_interval` must be consistent with"
+            " `target_update_rate`."
+        )
+        raise RuntimeError(errmsg)
+    enable_target_network = config.target_update_interval is not None
+
+    encoder_snapshot_path: Path | None = None
+    decoder_snapshot_path: Path | None = None
+    source_encoder_snapshot_path: Path | None = None
+    source_decoder_snapshot_path: Path | None = None
+    target_encoder_snapshot_path: Path | None = None
+    target_decoder_snapshot_path: Path | None = None
+    optimizer_snapshot_path: Path | None = None
+    scheduler_snapshot_path: Path | None = None
     num_samples = 0
 
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
-        assert config.decoder.load_from is None
-        assert config.initial_model is None
 
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
-                match = re.search(
-                    '^(?:theta-(?:source|target)-(?:encoder|decoder)|optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$',
-                    child)
+                if enable_target_network:
+                    match = re.search(
+                        "^(?:(?:source|target)-(?:encoder|decoder)|optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$",
+                        child,
+                    )
+                else:
+                    match = re.search(
+                        "^(?:encoder|decoder|optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$",
+                        child,
+                    )
                 if match is None:
                     continue
                 if match[1] is None:
                     config.initial_model_index = sys.maxsize
                     continue
-                if config.initial_model_index is None or int(match[1]) > config.initial_model_index:
+                if (
+                    config.initial_model_index is None
+                    or int(match[1]) > config.initial_model_index
+                ):
                     config.initial_model_index = int(match[1])
                     continue
         if config.initial_model_index is None:
-            raise RuntimeError(f'{config.initial_model_prefix}: No model snapshot found.')
+            errmsg = f"{config.initial_model_prefix}: No model snapshot found."
+            raise RuntimeError(errmsg)
 
         if config.initial_model_index == sys.maxsize:
             config.initial_model_index = 0
-            infix = ''
+            infix = ""
         else:
             num_samples = config.initial_model_index
-            infix = f'.{num_samples}'
+            infix = f".{num_samples}"
 
-        theta_source_encoder_snapshot_path: Path \
-            = config.initial_model_prefix / f'theta-source-encoder{infix}.pth'
-        if not theta_source_encoder_snapshot_path.exists():
-            raise RuntimeError(f'{theta_source_encoder_snapshot_path}: Does not exist.')
-        if not theta_source_encoder_snapshot_path.is_file():
-            raise RuntimeError(f'{theta_source_encoder_snapshot_path}: Not a file.')
+        if enable_target_network:
+            source_encoder_snapshot_path = (
+                config.initial_model_prefix / f"source-encoder{infix}.pth"
+            )
+            assert source_encoder_snapshot_path is not None
+            if not source_encoder_snapshot_path.exists():
+                errmsg = f"{source_encoder_snapshot_path}: Does not exist."
+                raise RuntimeError(errmsg)
+            if not source_encoder_snapshot_path.is_file():
+                errmsg = f"{source_encoder_snapshot_path}: Not a file."
+                raise RuntimeError(errmsg)
 
-        theta_source_decoder_snapshot_path: Path \
-            = config.initial_model_prefix / f'theta-source-decoder{infix}.pth'
-        if not theta_source_decoder_snapshot_path.exists():
-            raise RuntimeError(f'{theta_source_decoder_snapshot_path}: Does not exist.')
-        if not theta_source_decoder_snapshot_path.is_file():
-            raise RuntimeError(f'{theta_source_decoder_snapshot_path}: Not a file.')
+            source_decoder_snapshot_path = (
+                config.initial_model_prefix / f"source-decoder{infix}.pth"
+            )
+            assert source_decoder_snapshot_path is not None
+            if not source_decoder_snapshot_path.exists():
+                errmsg = f"{source_decoder_snapshot_path}: Does not exist."
+                raise RuntimeError(errmsg)
+            if not source_decoder_snapshot_path.is_file():
+                errmsg = f"{source_decoder_snapshot_path}: Not a file."
+                raise RuntimeError(errmsg)
 
-        theta_target_encoder_snapshot_path: Path \
-            = config.initial_model_prefix / f'theta-target-encoder{infix}.pth'
-        if not theta_target_encoder_snapshot_path.exists():
-            raise RuntimeError(f'{theta_target_encoder_snapshot_path}: Does not exist.')
-        if not theta_target_encoder_snapshot_path.is_file():
-            raise RuntimeError(f'{theta_target_encoder_snapshot_path}: Not a file.')
+            target_encoder_snapshot_path = (
+                config.initial_model_prefix / f"target-encoder{infix}.pth"
+            )
+            assert target_encoder_snapshot_path is not None
+            if not target_encoder_snapshot_path.exists():
+                errmsg = f"{target_encoder_snapshot_path}: Does not exist."
+                raise RuntimeError(errmsg)
+            if not target_encoder_snapshot_path.is_file():
+                errmsg = f"{target_encoder_snapshot_path}: Not a file."
+                raise RuntimeError(errmsg)
 
-        theta_target_decoder_snapshot_path: Path \
-            = config.initial_model_prefix / f'theta-target-decoder{infix}.pth'
-        if not theta_target_decoder_snapshot_path.exists():
-            raise RuntimeError(f'{theta_target_decoder_snapshot_path}: Does not exist.')
-        if not theta_target_decoder_snapshot_path.is_file():
-            raise RuntimeError(f'{theta_target_decoder_snapshot_path}: Not a file.')
+            target_decoder_snapshot_path = (
+                config.initial_model_prefix / f"target-decoder{infix}.pth"
+            )
+            assert target_decoder_snapshot_path is not None
+            if not target_decoder_snapshot_path.exists():
+                errmsg = f"{target_decoder_snapshot_path}: Does not exist."
+                raise RuntimeError(errmsg)
+            if not target_decoder_snapshot_path.is_file():
+                errmsg = f"{target_decoder_snapshot_path}: Not a file."
+                raise RuntimeError(errmsg)
+        else:
+            encoder_snapshot_path = (
+                config.initial_model_prefix / f"encoder{infix}.pth"
+            )
+            assert encoder_snapshot_path is not None
+            if not encoder_snapshot_path.exists():
+                errmsg = f"{encoder_snapshot_path}: Does not exist."
+                raise RuntimeError(errmsg)
+            if not encoder_snapshot_path.is_file():
+                errmsg = f"{encoder_snapshot_path}: Not a file."
+                raise RuntimeError(errmsg)
 
-        optimizer_snapshot_path: Path = config.initial_model_prefix / f'optimizer{infix}.pth'
-        if not optimizer_snapshot_path.is_file() or config.optimizer.initialize:
+            decoder_snapshot_path = (
+                config.initial_model_prefix / f"decoder{infix}.pth"
+            )
+            assert decoder_snapshot_path is not None
+            if not decoder_snapshot_path.exists():
+                errmsg = f"{decoder_snapshot_path}: Does not exist."
+                raise RuntimeError(errmsg)
+            if not decoder_snapshot_path.is_file():
+                errmsg = f"{decoder_snapshot_path}: Not a file."
+                raise RuntimeError(errmsg)
+
+        optimizer_snapshot_path = (
+            config.initial_model_prefix / f"optimizer{infix}.pth"
+        )
+        assert optimizer_snapshot_path is not None
+        if (
+            not optimizer_snapshot_path.is_file()
+            or config.optimizer.initialize
+        ):
             optimizer_snapshot_path = None
 
-        scheduler_snapshot_path: Path = config.initial_model_prefix / f'lr-scheduler{infix}.pth'
-        if not scheduler_snapshot_path.is_file() or config.optimizer.initialize:
+        scheduler_snapshot_path = (
+            config.initial_model_prefix / f"lr-scheduler{infix}.pth"
+        )
+        assert scheduler_snapshot_path is not None
+        if (
+            not scheduler_snapshot_path.is_file()
+            or config.optimizer.initialize
+        ):
             scheduler_snapshot_path = None
 
     if not config.reward_plugin.exists():
-        raise RuntimeError(f'{config.reward_plugin}: Does not exist.')
+        errmsg = f"{config.reward_plugin}: Does not exist."
+        raise RuntimeError(errmsg)
     if not config.reward_plugin.is_file():
-        raise RuntimeError(f'{config.reward_plugin}: Not a file.')
+        errmsg = f"{config.reward_plugin}: Not a file."
+        raise RuntimeError(errmsg)
 
     if config.discount_factor <= 0.0 or 1.0 < config.discount_factor:
-        raise RuntimeError(f'{config.discount_factor}: An invalid value for `discount_factor`.')
+        errmsg = (
+            f"{config.discount_factor}: An invalid value for"
+            " `discount_factor`."
+        )
+        raise RuntimeError(errmsg)
 
     if config.kappa < 0.0:
-        raise RuntimeError(f'{config.kappa}: `kappa` must be a non-negative real value.')
+        errmsg = f"{config.kappa}: `kappa` must be a non-negative real value."
+        raise RuntimeError(errmsg)
+
+    if config.td_computation_batch_size == 0:
+        config.td_computation_batch_size = config.batch_size
+    if config.td_computation_batch_size < 0:
+        errmsg = (
+            f"{config.td_computation_batch_size}: "
+            "`td_computation_batch_size` must be a non-negative integer."
+        )
+        raise RuntimeError(errmsg)
 
     if config.alpha < 0.0:
-        raise RuntimeError(f'{config.alpha}: `alpha` must be a non-negative real value.')
+        errmsg = f"{config.alpha}: `alpha` must be a non-negative real value."
+        raise RuntimeError(errmsg)
 
-    if config.batch_size < 1:
-        raise RuntimeError(f'{config.batch_size}: `batch_size` must be an integer greater than 0.')
-    if config.batch_size % world_size != 0:
-        raise RuntimeError(f'`batch_size` must be divisible by the world size ({world_size}).')
+    if config.batch_size <= 0:
+        errmsg = (
+            f"{config.batch_size}: `batch_size` must be a positive integer."
+        )
+        raise RuntimeError(errmsg)
 
-    if config.gradient_accumulation_steps < 1:
-        raise RuntimeError(
-            f'{config.gradient_accumulation_steps}: '
-            '`gradient_accumulation_steps` must be an integer greater than 0.')
+    if config.gradient_accumulation_steps <= 0:
+        errmsg = (
+            f"{config.gradient_accumulation_steps}: "
+            "`gradient_accumulation_steps` must be a positive integer."
+        )
+        raise RuntimeError(errmsg)
 
     if config.max_gradient_norm <= 0.0:
-        raise RuntimeError(
-            f'{config.max_gradient_norm}: `max_gradient_norm` must be a positive real value.')
+        errmsg = (
+            f"{config.max_gradient_norm}: `max_gradient_norm` must be a"
+            " positive real value."
+        )
+        raise RuntimeError(errmsg)
 
-    if config.optimizer.type in ('sgd',):
-        if config.optimizer.momentum is None:
-            raise RuntimeError('`optimizer.momentum` must be specified for `sgd`.')
-        if config.optimizer.momentum < 0.0 or 1.0 <= config.optimizer.momentum:
-            raise RuntimeError(
-                f'{config.optimizer.momentum}: '
-                '`optimizer.momentum` must be a real value within the range [0.0, 1.0).')
-    else:
-        if config.optimizer.momentum is not None:
-            raise RuntimeError(f'`optimizer.momentum` is useless for `{config.optimizer.type}`.')
+    _config.optimizer.validate(config)
 
-    if config.optimizer.type in ('sgd',):
-        if config.optimizer.epsilon is not None:
-            raise RuntimeError(f'`optimizer.epsilon` is useless for `{config.optimizer.type}`.')
-    else:
-        if config.optimizer.epsilon is None:
-            if config.optimizer.type in ('adam', 'radam', 'mtadam'):
-                config.optimizer.epsilon = 1.0e-8
-            elif config.optimizer in ('lamb',):
-                config.optimizer.epsilon = 1.0e-6
-            else:
-                raise NotImplementedError(config.optimizer.type)
-    if config.optimizer.epsilon is not None and config.optimizer.epsilon <= 0.0:
-        raise RuntimeError(
-            f'{config.optimizer.epsilon}: `optimizer.epsilon` must be a non-negative real value.')
+    if (
+        config.target_update_interval is not None
+        and config.target_update_interval <= 0
+    ):
+        errmsg = (
+            f"{config.target_update_interval}: "
+            "`target_update_interval` must be a positive integer."
+        )
+        raise RuntimeError(errmsg)
 
-    if config.optimizer.learning_rate <= 0.0:
-        raise RuntimeError(
-            f'{config.optimizer.learning_rate}: '
-            '`optimizer.learning_rate` must be a positive real value.')
-
-    if config.optimizer.warmup_start_factor <= 0.0 or 1.0 <= config.optimizer.warmup_start_factor:
-        raise RuntimeError(
-            f'{config.optimizer.warmup_start_factor}: '
-            '`optimizer.warmup_start_factor` must be a real value within the range (0,0, 1.0)')
-
-    if config.optimizer.warmup_steps < 0:
-        raise RuntimeError(
-            f'{config.optimizer.warmup_steps}: '
-            '`optimizer.warmup_steps` must be a non-negative integer.')
-
-    if config.optimizer.annealing_steps < 0:
-        raise RuntimeError(
-            f'{config.optimizer.annealing_steps}: '
-            '`optimizer.annealing_steps` must be a non-negative integer.')
-
-    if config.optimizer.annealing_steps_factor <= 0:
-        raise RuntimeError(
-            f'{config.optimizer.annealing_steps_factor}: '
-            '`optimizer.annealing_steps_factor` must be a positive integer.')
-
-    if config.target_update_interval <= 0:
-        raise RuntimeError(
-            f'{config.target_update_interval}: '
-            '`target_update_interval` must be a positive integer.')
-
-    if config.target_update_rate <= 0.0 or 1.0 < config.target_update_rate:
-        raise RuntimeError(
-            f'{config.target_update_rate}: '
-            '`target_update_rate` must be a real value within the range (0.0, 1.0].')
+    if config.target_update_rate is not None and (
+        config.target_update_rate <= 0.0 or config.target_update_rate > 1.0
+    ):
+        errmsg = (
+            f"{config.target_update_rate}: `target_update_rate` must be"
+            " a real value within the range (0.0, 1.0]."
+        )
+        raise RuntimeError(errmsg)
 
     if config.snapshot_interval < 0:
-        raise RuntimeError(
-            f'{config.snapshot_interval}: `snapshot_interval` must be a non-negative integer.')
+        errmsg = (
+            f"{config.snapshot_interval}: `snapshot_interval` must be a"
+            " non-negative integer."
+        )
+        raise RuntimeError(errmsg)
 
     output_prefix = Path(HydraConfig.get().runtime.output_dir)
 
-    if is_main_process:
-        if world_size is None:
-            assert rank is None
-            logging.info('World size: N/A (single process)')
-            logging.info('Process rank: N/A (single process)')
-        else:
-            assert rank is not None
-            logging.info('World size: %d', world_size)
-            logging.info('Process rank: %d', rank)
-        logging.info('Training data: %s', config.training_data)
+    if local_rank == 0:
+        _config.device.dump(
+            world_size=world_size,
+            rank=rank,
+            local_rank=local_rank,
+            device=device,
+            dtype=dtype,
+            amp_dtype=amp_dtype,
+        )
+
+        logging.info("Training data: %s", config.training_data)
         if num_samples > 0:
-            logging.info('# of training samples consumed so far: %d', num_samples)
-        logging.info('# of workers: %d', config.num_workers)
-        logging.info('Device: %s', config.device.type)
-        if backends.cudnn.is_available():
-            logging.info('cuDNN: available')
-        else:
-            logging.info('cuDNN: N/A')
-        logging.info('dtype: %s', dtype)
-        if dtype == amp_dtype:
-            logging.info('AMP dtype: (AMP is disabled)')
-        else:
-            logging.info('AMP dtype: %s', amp_dtype)
-        logging.info('Position encoder: %s', config.encoder.position_encoder)
-        logging.info('Encoder dimension: %d', config.encoder.dimension)
-        logging.info('# of heads for encoder: %d', config.encoder.num_heads)
-        logging.info(
-            'Dimension of feedforward networks for encoder: %d', config.encoder.dim_feedforward)
-        logging.info('Activation function for encoder: %s', config.encoder.activation_function)
-        logging.info('Dropout for encoder: %f', config.encoder.dropout)
-        logging.info('# of encoder layers: %d', config.encoder.num_layers)
-        if config.encoder.load_from is not None:
-            logging.info('Load encoder from: %s', config.encoder.load_from)
-        if config.decoder.num_layers >= 2:
             logging.info(
-                'Dimension of feedforward networks for decoder: %d', config.decoder.dim_feedforward)
-        logging.info('Activation function for decoder: %s', config.decoder.activation_function)
-        logging.info('Dropout for decoder: %f', config.decoder.dropout)
-        logging.info('# of decoder layers: %d', config.decoder.num_layers)
-        logging.info('# of QR intervals for decoder: %d', config.decoder.num_qr_intervals)
-        if config.decoder.load_from is not None:
-            logging.info('Load decoder from: %s', config.decoder.load_from)
-        if config.initial_model is not None:
-            logging.info('Load model from: %s', config.initial_model)
+                "# of training samples consumed so far: %d", num_samples
+            )
+        logging.info(
+            "Training data is contiguous: %s", config.contiguous_training_data
+        )
+        if config.rewrite_grades is not None:
+            logging.info(
+                "Rewrite the grades in the training data to: %d",
+                config.rewrite_grades,
+            )
+        logging.info("# of workers: %d", config.num_workers)
+        if config.replay_buffer_size > 0:
+            logging.info("Replay buffer size: %d", config.replay_buffer_size)
+
+        _config.encoder.dump(config)
+
+        _config.decoder.dump(config)
+
+        logging.info("# of QR intervals: %d", config.num_qr_intervals)
+        logging.info("Dueling architecture: %s", config.dueling_architecture)
+
         if config.initial_model_prefix is not None:
-            logging.info('Initial model prefix: %s', config.initial_model_prefix)
-            logging.info('Initlal model index: %d', config.initial_model_index)
+            logging.info(
+                "Initial model prefix: %s", config.initial_model_prefix
+            )
+            logging.info("Initlal model index: %d", config.initial_model_index)
             if config.optimizer.initialize:
-                logging.info('(Will not load optimizer)')
-        logging.info('Reward plugin: %s', config.reward_plugin)
-        logging.info('Discount factor: %f', config.discount_factor)
-        logging.info('Kappa: %f', config.kappa)
-        logging.info('Alpha: %f', config.alpha)
-        logging.info('Checkpointing: %s', config.checkpointing)
-        if world_size is None:
-            logging.info('Batch size: %d', config.batch_size)
-        else:
-            logging.info('Local batch size: %d', config.batch_size // world_size)
-            logging.info('World batch size: %d', config.batch_size)
-        logging.info('# of steps for gradient accumulation: %d', config.gradient_accumulation_steps)
+                logging.info("(Will not load optimizer)")
+
+        logging.info("Reward plugin: %s", config.reward_plugin)
+        logging.info("Discount factor: %f", config.discount_factor)
+        logging.info("Kappa: %f", config.kappa)
         logging.info(
-            'Virtual batch size: %d', config.batch_size * config.gradient_accumulation_steps)
-        logging.info('Norm threshold for gradient clipping: %E', config.max_gradient_norm)
-        logging.info('Optimizer: %s', config.optimizer.type)
-        if config.optimizer in ('sgd',):
-            logging.info('Momentum factor: %f', config.optimizer.momentum)
-        if config.optimizer in ('adam', 'radam', 'mtadam', 'lamb'):
-            logging.info('Epsilon parameter: %E', config.optimizer.epsilon)
-        logging.info('Learning rate: %E', config.optimizer.learning_rate)
-        if config.optimizer.warmup_steps == 0:
-            logging.info('LR warm-up: (disabled)')
-        else:
-            logging.info('Warm-up start factor: %E', config.optimizer.warmup_start_factor)
-            logging.info('# of steps for LR warm-up: %d', config.optimizer.warmup_steps)
-        if config.optimizer.annealing_steps == 0:
-            logging.info('Annealing: (disabled)')
-        else:
-            logging.info('# of steps for Annealing: %d', config.optimizer.annealing_steps)
-            logging.info('Step factor for Annealing: %d', config.optimizer.annealing_steps_factor)
-        logging.info('Target update interval: %d', config.target_update_interval)
-        logging.info('Target update rate: %f', config.target_update_rate)
+            "Batch size for TD computation: %d",
+            config.td_computation_batch_size,
+        )
+        logging.info("Alpha: %f", config.alpha)
+        logging.info("Checkpointing: %s", config.checkpointing)
+        logging.info("Batch size: %d", config.batch_size)
+        logging.info(
+            "# of steps for gradient accumulation: %d",
+            config.gradient_accumulation_steps,
+        )
+        logging.info(
+            "Virtual batch size: %d",
+            config.batch_size * config.gradient_accumulation_steps,
+        )
+        logging.info(
+            "Norm threshold for gradient clipping: %E",
+            config.max_gradient_norm,
+        )
+
+        _config.optimizer.dump(config)
+
+        if config.target_update_interval is not None:
+            assert config.target_update_rate is not None
+            logging.info(
+                "Target network update interval: %d",
+                config.target_update_interval,
+            )
+            logging.info(
+                "Target network update rate: %f", config.target_update_rate
+            )
+
         if config.initial_model_prefix is not None:
-            logging.info(
-                'Initial theta source encoder snapshot: %s', theta_source_encoder_snapshot_path)
-            logging.info(
-                'Initial theta source decoder snapshot: %s', theta_source_decoder_snapshot_path)
-            logging.info(
-                'Initial theta target encoder snapshot: %s', theta_target_encoder_snapshot_path)
-            logging.info(
-                'Initial theta target decoder snapshot: %s', theta_target_decoder_snapshot_path)
+            if enable_target_network:
+                logging.info(
+                    "Initial source encoder snapshot: %s",
+                    source_encoder_snapshot_path,
+                )
+                logging.info(
+                    "Initial source decoder snapshot: %s",
+                    source_decoder_snapshot_path,
+                )
+                logging.info(
+                    "Initial target encoder snapshot: %s",
+                    target_encoder_snapshot_path,
+                )
+                logging.info(
+                    "Initial target decoder snapshot: %s",
+                    target_decoder_snapshot_path,
+                )
+            else:
+                logging.info(
+                    "Initial encoder snapshot: %s", encoder_snapshot_path
+                )
+                logging.info(
+                    "Initial decoder snapshot: %s", decoder_snapshot_path
+                )
             if optimizer_snapshot_path is not None:
-                logging.info('Initial optimizer snapshot: %s', optimizer_snapshot_path)
-                logging.info('Initial LR scheduler snapshot: %s', scheduler_snapshot_path)
-        logging.info('Output prefix: %s', output_prefix)
+                logging.info(
+                    "Initial optimizer snapshot: %s", optimizer_snapshot_path
+                )
+            if scheduler_snapshot_path is not None:
+                logging.info(
+                    "Initial LR scheduler snapshot: %s",
+                    scheduler_snapshot_path,
+                )
+
+        logging.info("Output prefix: %s", output_prefix)
         if config.snapshot_interval == 0:
-            logging.info('Snapshot interval: N/A')
+            logging.info("Snapshot interval: N/A")
         else:
-            logging.info('Snapshot interval: %d', config.snapshot_interval)
+            logging.info("Snapshot interval: %d", config.snapshot_interval)
 
-    theta_source_encoder = Encoder(
-        position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
-        num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
-        activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing,
-        device=config.device.type, dtype=dtype)
-    theta_source_decoder = ThetaDecoder(
-        dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
-        activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, num_qr_intervals=config.decoder.num_qr_intervals,
-        device=config.device.type, dtype=dtype)
-    theta_source_model = ThetaModel(theta_source_encoder, theta_source_decoder)
-    theta_source_model.to(device=config.device.type, dtype=dtype)
-    q_source_model = QModel(theta_source_model)
-    q_source_model.to(device=config.device.type, dtype=dtype)
+    encoder = Encoder(
+        position_encoder=config.encoder.position_encoder,
+        dimension=config.encoder.dimension,
+        num_heads=config.encoder.num_heads,
+        dim_feedforward=config.encoder.dim_feedforward,
+        activation_function=config.encoder.activation_function,
+        dropout=config.encoder.dropout,
+        num_layers=config.encoder.num_layers,
+        checkpointing=config.checkpointing,
+        device=torch.device("cpu"),
+        dtype=dtype,
+    )
+    encoder_tdm = TensorDictModule(
+        encoder,
+        in_keys=["sparse", "numeric", "progression", "candidates"],
+        out_keys=["encode"],
+    )
+    decoder = QRDecoder(
+        input_dimension=config.encoder.dimension,
+        dimension=config.decoder.dimension,
+        activation_function=config.decoder.activation_function,
+        dropout=config.decoder.dropout,
+        num_layers=config.decoder.num_layers,
+        num_qr_intervals=config.num_qr_intervals,
+        dueling_architecture=config.dueling_architecture,
+        noise_init_std=0.0,
+        device=torch.device("cpu"),
+        dtype=dtype,
+    )
+    for _param in decoder.parameters():
+        _param.data.zero_()
+    decoder_tdm = TensorDictModule(
+        decoder, in_keys=["candidates", "encode"], out_keys=["qr_action_value"]
+    )
+    network = TensorDictSequential(encoder_tdm, decoder_tdm)
+    network = network.to(device=device, dtype=dtype)
+    if world_size >= 2:
+        init_process_group(backend="nccl")
+        network = DistributedDataParallel(network)
+        network = nn.SyncBatchNorm.convert_sync_batchnorm(network)
 
-    theta_target_encoder = Encoder(
-        position_encoder=config.encoder.position_encoder, dimension=config.encoder.dimension,
-        num_heads=config.encoder.num_heads, dim_feedforward=config.encoder.dim_feedforward,
-        activation_function=config.encoder.activation_function, dropout=config.encoder.dropout,
-        num_layers=config.encoder.num_layers, checkpointing=config.checkpointing, device='cpu',
-        dtype=dtype)
-    theta_target_encoder.requires_grad_(False)
-    theta_target_encoder.to(device='cpu', dtype=dtype)
-    theta_target_decoder = ThetaDecoder(
-        dimension=config.encoder.dimension, dim_feedforward=config.decoder.dim_feedforward,
-        activation_function=config.decoder.activation_function, dropout=config.decoder.dropout,
-        num_layers=config.decoder.num_layers, num_qr_intervals=config.decoder.num_qr_intervals,
-        device='cpu', dtype=dtype)
-    theta_target_decoder.requires_grad_(False)
-    theta_target_decoder.to(device='cpu', dtype=dtype)
-    theta_target_model = ThetaModel(theta_target_encoder, theta_target_decoder)
-    theta_target_model.requires_grad_(False)
-    theta_target_model.to(device='cpu', dtype=dtype)
-    q_target_model = QModel(theta_target_model)
-    q_target_model.requires_grad_(False)
-    q_target_model.to(device='cpu', dtype=dtype)
+    target_encoder: Encoder | None = None
+    target_encoder_tdm: TensorDictModule | None = None
+    target_decoder: QRDecoder | None = None
+    target_decoder_tdm: TensorDictModule | None = None
+    target_network: TensorDictSequential | None = None
+    if enable_target_network:
+        target_encoder = Encoder(
+            position_encoder=config.encoder.position_encoder,
+            dimension=config.encoder.dimension,
+            num_heads=config.encoder.num_heads,
+            dim_feedforward=config.encoder.dim_feedforward,
+            activation_function=config.encoder.activation_function,
+            dropout=config.encoder.dropout,
+            num_layers=config.encoder.num_layers,
+            checkpointing=config.checkpointing,
+            device=torch.device("cpu"),
+            dtype=dtype,
+        )
+        target_encoder_tdm = TensorDictModule(
+            target_encoder,
+            in_keys=["sparse", "numeric", "progression", "candidates"],
+            out_keys=["encode"],
+        )
+        target_decoder = QRDecoder(
+            input_dimension=config.encoder.dimension,
+            dimension=config.decoder.dimension,
+            activation_function=config.decoder.activation_function,
+            dropout=config.decoder.dropout,
+            num_layers=config.decoder.num_layers,
+            num_qr_intervals=config.num_qr_intervals,
+            dueling_architecture=config.dueling_architecture,
+            noise_init_std=0.0,
+            device=torch.device("cpu"),
+            dtype=dtype,
+        )
+        target_decoder_tdm = TensorDictModule(
+            target_decoder,
+            in_keys=["candidates", "encode"],
+            out_keys=["qr_action_value"],
+        )
+        target_network = TensorDictSequential(
+            target_encoder_tdm, target_decoder_tdm
+        )
+        target_network.requires_grad_(False)
+        target_network.eval()
+        target_network = target_network.to(device=device, dtype=dtype)
 
-    if config.optimizer.type == 'sgd':
-        if config.device.type == 'cpu':
-            optimizer = SGD(
-                q_source_model.parameters(), lr=config.optimizer.learning_rate,
-                momentum=config.optimizer.momentum)
-        else:
-            optimizer = FusedSGD(
-                q_source_model.parameters(), lr=config.optimizer.learning_rate,
-                momentum=config.optimizer.momentum)
-    elif config.optimizer.type == 'adam':
-        if config.device.type == 'cpu':
-            optimizer = Adam(
-                q_source_model.parameters(), lr=config.optimizer.learning_rate,
-                eps=config.optimizer.epsilon)
-        else:
-            optimizer = FusedAdam(
-                q_source_model.parameters(), lr=config.optimizer.learning_rate,
-                eps=config.optimizer.epsilon)
-    elif config.optimizer.type == 'radam':
-        optimizer = RAdam(
-            q_source_model.parameters(), lr=config.optimizer.learning_rate,
-            eps=config.optimizer.epsilon)
-    elif config.optimizer.type == 'lamb':
-        optimizer = FusedLAMB(
-            q_source_model.parameters(), lr=config.optimizer.learning_rate,
-            eps=config.optimizer.epsilon)
-    else:
-        raise NotImplementedError(config.optimizer.type)
+        with torch.no_grad():
+            for param, target_param in zip(
+                network.parameters(), target_network.parameters()
+            ):
+                target_param.data = param.data.detach().clone()
 
-    if config.optimizer.warmup_steps == 0:
-        warmup_scheduler = None
+    q_decoder = QDecoder()
+    q_decoder_tdm = TensorDictModule(
+        q_decoder, in_keys=["qr_action_value"], out_keys=["action_value"]
+    )
+    argmax_layer = DecodeConverter("argmax")
+    argmax_layer_tdm = TensorDictModule(
+        argmax_layer,
+        in_keys=["candidates", "action_value"],
+        out_keys=["action"],
+    )
+    if enable_target_network:
+        assert target_encoder_tdm is not None
+        assert target_decoder_tdm is not None
+        network_to_save = TensorDictSequential(
+            target_encoder_tdm,
+            target_decoder_tdm,
+            q_decoder_tdm,
+            argmax_layer_tdm,
+        )
+        network_to_save.requires_grad_(False)
+        network_to_save.eval()
+        network_to_save.to(device=device, dtype=dtype)
     else:
-        warmup_scheduler = lr_scheduler.LinearLR(
-            optimizer, start_factor=config.optimizer.warmup_start_factor,
-            total_iters=config.optimizer.warmup_steps)
-    if config.optimizer.annealing_steps == 0:
-        annealing_scheduler = None
-    else:
-        annealing_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
-    if warmup_scheduler is None and annealing_scheduler is None:
-        scheduler = None
-    elif warmup_scheduler is not None and annealing_scheduler is not None:
-        scheduler = lr_scheduler.SequentialLR(
-            optimizer, [warmup_scheduler, annealing_scheduler], [warmup_scheduler.total_iters])
-    elif warmup_scheduler is not None:
-        assert annealing_scheduler is None
-        scheduler = warmup_scheduler
-    else:
-        assert warmup_scheduler is None
-        assert annealing_scheduler is not None
-        scheduler = annealing_scheduler
+        network_to_save = TensorDictSequential(
+            encoder_tdm, decoder_tdm, q_decoder_tdm, argmax_layer_tdm
+        )
+        network_to_save.to(device=device, dtype=dtype)
+
+    optimizer, scheduler = _config.optimizer.create(config, network)
 
     if config.encoder.load_from is not None:
-        assert config.initial_model is None
         assert config.initial_model_prefix is None
         assert config.initial_model_index is None
 
-        encoder_state_dict = torch.load(config.encoder.load_from, map_location='cpu')
-        theta_source_encoder.load_state_dict(encoder_state_dict)
-        if config.device.type != 'cpu':
-            theta_source_encoder.cuda()
-        theta_target_encoder.load_state_dict(encoder_state_dict)
+        encoder_state_dict = torch.load(
+            config.encoder.load_from, map_location="cpu"
+        )
+        encoder.load_state_dict(encoder_state_dict)
+        network.to(device=device, dtype=dtype)
 
-    if config.decoder.load_from is not None:
-        assert config.initial_model is None
-        assert config.initial_model_prefix is None
-        assert config.initial_model_index is None
+        if enable_target_network:
+            assert target_encoder is not None
+            assert target_network is not None
+            target_encoder_state_dict = torch.load(
+                config.encoder.load_from, map_location="cpu"
+            )
+            target_encoder.load_state_dict(target_encoder_state_dict)
+            target_network.to(device=device, dtype=dtype)
 
-        decoder_state_dict = torch.load(config.decoder.load_from, map_location='cpu')
-        theta_source_decoder.load_state_dict(decoder_state_dict)
-        if config.device.type != 'cpu':
-            theta_source_decoder.cuda()
-        theta_target_decoder.load_state_dict(decoder_state_dict)
-
-    if config.initial_model is not None:
-        assert config.encoder.load_from is None
-        assert config.decoder.load_from is None
-        assert config.initial_model_prefix is None
-        assert config.initial_model_index is None
-
-        model_state_dict = torch.load(config.initial_model, map_location='cpu')
-        q_source_model.load_state_dict(model_state_dict)
-        if config.device.type != 'cpu':
-            q_source_model.cuda()
-        q_target_model.load_state_dict(model_state_dict)
+        network_to_save.to(device=device, dtype=dtype)
 
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
-        assert config.decoder.load_from is None
-        assert config.initial_model is None
+        assert encoder_snapshot_path is not None
+        assert decoder_snapshot_path is not None
 
-        theta_source_encoder_state_dict = torch.load(
-            theta_source_encoder_snapshot_path, map_location='cpu')
-        theta_source_encoder.load_state_dict(theta_source_encoder_state_dict)
-        theta_source_decoder_state_dict = torch.load(
-            theta_source_decoder_snapshot_path, map_location='cpu')
-        theta_source_decoder.load_state_dict(theta_source_decoder_state_dict)
-        if config.device.type != 'cpu':
-            q_source_model.cuda()
+        encoder_state_dict = torch.load(
+            encoder_snapshot_path, map_location="cpu"
+        )
+        encoder.load_state_dict(encoder_state_dict)
+        decoder_state_dict = torch.load(
+            decoder_snapshot_path, map_location="cpu"
+        )
+        decoder.load_state_dict(decoder_state_dict)
+        network.to(device=device, dtype=dtype)
 
-        theta_target_encoder_state_dict = torch.load(
-            theta_target_encoder_snapshot_path, map_location='cpu')
-        theta_target_encoder.load_state_dict(theta_target_encoder_state_dict)
-        theta_target_decoder_state_dict = torch.load(
-            theta_target_decoder_snapshot_path, map_location='cpu')
-        theta_target_decoder.load_state_dict(theta_target_decoder_state_dict)
+        if enable_target_network:
+            assert target_encoder_snapshot_path is not None
+            assert target_encoder is not None
+            assert target_decoder_snapshot_path is not None
+            assert target_decoder is not None
+            assert target_network is not None
+            target_encoder_state_dict = torch.load(
+                target_encoder_snapshot_path, map_location="cpu"
+            )
+            target_encoder.load_state_dict(target_encoder_state_dict)
+            target_decoder_state_dict = torch.load(
+                target_decoder_snapshot_path, map_location="cpu"
+            )
+            target_decoder.load_state_dict(target_decoder_state_dict)
+            target_network.to(device=device, dtype=dtype)
+
+        network_to_save.to(device=device, dtype=dtype)
 
         if optimizer_snapshot_path is not None:
             optimizer.load_state_dict(
-                torch.load(optimizer_snapshot_path, map_location='cpu'))
+                torch.load(optimizer_snapshot_path, map_location="cpu")
+            )
 
-    if scheduler is not None and scheduler_snapshot_path is not None:
-        scheduler.load_state_dict(
-            torch.load(scheduler_snapshot_path, map_location='cpu'))
+        if scheduler is not None and scheduler_snapshot_path is not None:
+            scheduler.load_state_dict(
+                torch.load(scheduler_snapshot_path, map_location="cpu")
+            )
 
-    if is_multiprocess:
-        init_process_group(backend='nccl')
-        q_source_model = DistributedDataParallel(q_source_model)
-        q_source_model = nn.SyncBatchNorm.convert_sync_batchnorm(q_source_model)
+    snapshots_path = output_prefix / "snapshots"
 
-    tensorboard_path = output_prefix / 'tensorboard'
-    tensorboard_path.mkdir(parents=True, exist_ok=True)
-
-    snapshots_path = output_prefix / 'snapshots'
-
-    def snapshot_writer(num_samples: Optional[int]=None) -> None:
+    def snapshot_writer(num_samples: int | None = None) -> None:
         snapshots_path.mkdir(parents=True, exist_ok=True)
 
-        infix = '' if num_samples is None else f'.{num_samples}'
+        infix = "" if num_samples is None else f".{num_samples}"
 
+        if enable_target_network:
+            assert target_encoder is not None
+            assert target_decoder is not None
+            torch.save(
+                encoder.state_dict(),
+                snapshots_path / f"source-encoder{infix}.pth",
+            )
+            torch.save(
+                decoder.state_dict(),
+                snapshots_path / f"source-decoder{infix}.pth",
+            )
+            torch.save(
+                target_encoder.state_dict(),
+                snapshots_path / f"target-encoder{infix}.pth",
+            )
+            torch.save(
+                target_decoder.state_dict(),
+                snapshots_path / f"target-decoder{infix}.pth",
+            )
+        else:
+            torch.save(
+                encoder.state_dict(), snapshots_path / f"encoder{infix}.pth"
+            )
+            torch.save(
+                decoder.state_dict(), snapshots_path / f"decoder{infix}.pth"
+            )
         torch.save(
-            theta_source_encoder.state_dict(), snapshots_path / f'theta-source-encoder{infix}.pth')
-        torch.save(
-            theta_source_decoder.state_dict(), snapshots_path / f'theta-source-decoder{infix}.pth')
-        torch.save(
-            theta_target_encoder.state_dict(), snapshots_path / f'theta-target-encoder{infix}.pth')
-        torch.save(
-            theta_target_decoder.state_dict(), snapshots_path / f'theta-target-decoder{infix}.pth')
-        torch.save(optimizer.state_dict(), snapshots_path / f'optimizer{infix}.pth')
+            optimizer.state_dict(), snapshots_path / f"optimizer{infix}.pth"
+        )
         if scheduler is not None:
-            torch.save(scheduler.state_dict(), snapshots_path / f'lr-scheduler{infix}.pth')
+            torch.save(
+                scheduler.state_dict(),
+                snapshots_path / f"lr-scheduler{infix}.pth",
+            )
 
-        q_model_state = dump_object(
-            q_target_model,
+        if enable_target_network:
+            assert target_encoder is not None
+            assert target_decoder is not None
+            encoder_to_save = target_encoder
+            encoder_tdm_to_save = target_encoder_tdm
+            decoder_to_save = target_decoder
+            decoder_tdm_to_save = target_decoder_tdm
+        else:
+            encoder_to_save = encoder
+            encoder_tdm_to_save = encoder_tdm
+            decoder_to_save = decoder
+            decoder_tdm_to_save = decoder_tdm
+        network_state = dump_object(
+            network_to_save,
             [
                 dump_object(
-                    theta_target_model,
+                    encoder_tdm_to_save,
                     [
                         dump_model(
-                            theta_target_encoder,
+                            encoder_to_save,
                             [],
                             {
-                                'position_encoder': config.encoder.position_encoder,
-                                'dimension': config.encoder.dimension,
-                                'num_heads': config.encoder.num_heads,
-                                'dim_feedforward': config.encoder.dim_feedforward,
-                                'num_layers': config.encoder.num_layers,
-                                'activation_function': config.encoder.activation_function,
-                                'dropout': config.encoder.dropout,
-                                'checkpointing': config.checkpointing,
-                                'device': config.device.type,
-                                'dtype': dtype
-                            }
-                        ),
-                        dump_model(
-                            theta_target_decoder,
-                            [],
-                            {
-                                'dimension': config.encoder.dimension,
-                                'dim_feedforward': config.decoder.dim_feedforward,
-                                'activation_function': config.decoder.activation_function,
-                                'dropout': config.decoder.dropout,
-                                'num_layers': config.decoder.num_layers,
-                                'num_qr_intervals': config.decoder.num_qr_intervals,
-                                'device': config.device.type,
-                                'dtype': dtype
-                            }
+                                "position_encoder": config.encoder.position_encoder,
+                                "dimension": config.encoder.dimension,
+                                "num_heads": config.encoder.num_heads,
+                                "dim_feedforward": config.encoder.dim_feedforward,
+                                "activation_function": config.encoder.activation_function,
+                                "dropout": config.encoder.dropout,
+                                "num_layers": config.encoder.num_layers,
+                                "checkpointing": config.checkpointing,
+                                "device": torch.device("cpu"),
+                                "dtype": dtype,
+                            },
                         )
                     ],
-                    {}
-                )
+                    {
+                        "in_keys": [
+                            "sparse",
+                            "numeric",
+                            "progression",
+                            "candidates",
+                        ],
+                        "out_keys": ["encode"],
+                    },
+                ),
+                dump_object(
+                    decoder_tdm_to_save,
+                    [
+                        dump_model(
+                            decoder_to_save,
+                            [],
+                            {
+                                "input_dimension": config.encoder.dimension,
+                                "dimension": config.decoder.dimension,
+                                "activation_function": config.decoder.activation_function,
+                                "dropout": config.decoder.dropout,
+                                "num_layers": config.decoder.num_layers,
+                                "num_qr_intervals": config.num_qr_intervals,
+                                "dueling_architecture": config.dueling_architecture,
+                                "noise_init_std": 0.0,
+                                "device": torch.device("cpu"),
+                                "dtype": dtype,
+                            },
+                        )
+                    ],
+                    {
+                        "in_keys": ["candidates", "encode"],
+                        "out_keys": ["qr_action_value"],
+                    },
+                ),
+                dump_object(
+                    q_decoder_tdm,
+                    [dump_model(q_decoder, [], {})],
+                    {
+                        "in_keys": ["qr_action_value"],
+                        "out_keys": ["action_value"],
+                    },
+                ),
+                dump_object(
+                    argmax_layer_tdm,
+                    [dump_model(argmax_layer, ["argmax"], {})],
+                    {
+                        "in_keys": ["candidates", "action_value"],
+                        "out_keys": ["action"],
+                    },
+                ),
             ],
-            {}
+            {},
         )
-        torch.save(q_model_state, snapshots_path / f'q-model{infix}.kanachan')
+        torch.save(network_state, snapshots_path / f"model{infix}.kanachan")
+
+    tensorboard_path = output_prefix / "tensorboard"
+    tensorboard_path.mkdir(parents=True, exist_ok=True)
 
     with SummaryWriter(log_dir=tensorboard_path) as summary_writer:
+        torch.autograd.set_detect_anomaly(
+            False
+        )  # `True` for debbing purpose only.
         _training(
-            is_multiprocess=is_multiprocess, world_size=world_size, rank=rank,
-            is_main_process=is_main_process, training_data=config.training_data,
-            num_workers=config.num_workers, device=config.device.type, dtype=dtype,
-            amp_dtype=amp_dtype, num_qr_intervals=config.decoder.num_qr_intervals,
-            theta_source_model=theta_source_model, theta_target_model=theta_target_model,
-            reward_plugin=config.reward_plugin, discount_factor=config.discount_factor,
-            kappa=config.kappa, alpha=config.alpha, batch_size=config.batch_size,
+            training_data=config.training_data,
+            contiguous_training_data=config.contiguous_training_data,
+            rewrite_grades=config.rewrite_grades,
+            num_workers=config.num_workers,
+            replay_buffer_size=config.replay_buffer_size,
+            device=device,
+            dtype=dtype,
+            amp_dtype=amp_dtype,
+            source_network=network,
+            target_network=target_network,
+            reward_plugin=config.reward_plugin,
+            discount_factor=config.discount_factor,
+            kappa=config.kappa,
+            td_computation_batch_size=config.td_computation_batch_size,
+            alpha=config.alpha,
+            batch_size=config.batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
-            max_gradient_norm=config.max_gradient_norm, optimizer=optimizer,
-            scheduler=scheduler, target_update_interval=config.target_update_interval,
+            max_gradient_norm=config.max_gradient_norm,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            target_update_interval=config.target_update_interval,
             target_update_rate=config.target_update_rate,
-            snapshot_interval=config.snapshot_interval, num_samples=num_samples,
+            snapshot_interval=config.snapshot_interval,
+            num_samples=num_samples,
             summary_writer=summary_writer,
-            snapshot_writer=snapshot_writer) # pylint: disable=missing-kwoa
+            snapshot_writer=snapshot_writer,
+        )  # pylint: disable=missing-kwoa
 
 
-if __name__ == '__main__':
-    _main() # pylint: disable=no-value-for-parameter
+if __name__ == "__main__":
+    _main()  # pylint: disable=no-value-for-parameter
     sys.exit(0)
