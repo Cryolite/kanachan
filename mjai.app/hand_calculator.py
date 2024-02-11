@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+import sys
 from typing import (List,)
 from mahjong.meld import Meld
 from mahjong.hand_calculating.hand_config import (OptionalRules, HandConfig,)
@@ -352,7 +351,9 @@ class HandCalculator:
                     flag = True
                     break
             if not flag:
-                raise RuntimeError('TODO: (A suitable error message)')
+                raise RuntimeError(
+                    f'hand = {hand}, fulu_list = {fulu_list}, hupai = {hupai}, tiles = {tiles}, '
+                    f'tile = {tile}')
 
         # `tiles` には和了牌も含めなければならない．
         flag = False
@@ -383,12 +384,11 @@ class HandCalculator:
                 if response.error == 'There are no yaku in the hand':
                     return False
                 raise RuntimeError(response.error)
-        except Exception as e:
-            import sys
+        except Exception as exc:
             print(f'tiles = {tiles}', file=sys.stderr)
             for meld in melds:
                 print(f'meld = {meld.tiles}', file=sys.stderr)
             print(f'hupai = {hupai}', file=sys.stderr)
-            raise e
+            raise exc
 
         return response.han >= 1

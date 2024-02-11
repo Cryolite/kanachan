@@ -19,11 +19,11 @@ private:
 
 public:
     Simulator(
-        std::string const &device, boost::python::object dtype,
+        std::string const &device, boost::python::object dtype, std::uint_fast8_t room,
         std::uint_fast8_t baseline_grade, boost::python::object baseline_model,
         std::uint_fast8_t proposed_grade, boost::python::object proposed_model,
         unsigned long simulation_mode, std::size_t num_simulation_sets,
-        std::size_t batch_size, std::size_t concurrency);
+        std::size_t batch_size, std::size_t concurrency, boost::python::object progress);
 
     Simulator(Simulator const &) = delete;
 

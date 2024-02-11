@@ -1,10 +1,10 @@
 #if !defined(KANACHAN_SIMULATION_ROUND_STATE_HPP_INCLUDE_GUARD)
 #define KANACHAN_SIMULATION_ROUND_STATE_HPP_INCLUDE_GUARD
 
+#include "simulation/game_log.hpp"
 #include "simulation/shoupai.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/game_state.hpp"
-#include <boost/python/dict.hpp>
 #include <vector>
 #include <array>
 #include <utility>
@@ -73,7 +73,7 @@ private:
   std::uint_fast16_t selectAction_(
     std::uint_fast8_t seat, std::vector<std::uint_fast16_t> &&sparse,
     std::vector<std::uint_fast32_t> &&numeric, std::vector<uint_fast16_t> &&progression,
-    std::vector<std::uint_fast16_t> &&candidates) const;
+    std::vector<std::uint_fast16_t> &&candidates, Kanachan::GameLog &game_log) const;
 
   long encodeToolConfig_(std::uint_fast8_t seat, bool rong) const;
 
@@ -89,28 +89,28 @@ private:
   void settleLizhiDeposits_();
 
 public:
-  std::pair<std::uint_fast16_t, std::uint_fast8_t> onZimo();
+  std::pair<std::uint_fast16_t, std::uint_fast8_t> onZimo(Kanachan::GameLog &game_log);
 
   std::pair<std::uint_fast8_t, std::uint_fast16_t>
-  onDapai(std::uint_fast8_t tile, bool moqi, bool lizhi);
+  onDapai(std::uint_fast8_t tile, bool moqi, bool lizhi, Kanachan::GameLog &game_log);
 
-  std::uint_fast16_t onChi(std::uint_fast8_t encode);
+  std::uint_fast16_t onChi(std::uint_fast8_t encode, Kanachan::GameLog &game_log);
 
-  std::uint_fast16_t onPeng(std::uint_fast8_t encode);
+  std::uint_fast16_t onPeng(std::uint_fast8_t encode, Kanachan::GameLog &game_log);
 
-  void onDaminggang();
+  void onDaminggang(Kanachan::GameLog &game_log);
 
   std::uint_fast16_t onAngang(
-    std::uint_fast8_t zimo_tile, std::uint_fast8_t encode);
+    std::uint_fast8_t zimo_tile, std::uint_fast8_t encode, Kanachan::GameLog &game_log);
 
   std::uint_fast16_t onJiagang(
-    std::uint_fast8_t zimo_tile, std::uint_fast8_t encode);
+    std::uint_fast8_t zimo_tile, std::uint_fast8_t encode, Kanachan::GameLog &game_log);
 
-  bool onHule(std::uint_fast8_t zimo_tile, boost::python::dict result);
+  bool onHule(std::uint_fast8_t zimo_tile, Kanachan::GameLog &game_log);
 
-  bool onHuangpaiPingju(boost::python::dict result);
+  bool onHuangpaiPingju(Kanachan::GameLog &game_log);
 
-  void onLiuju(boost::python::dict result);
+  void onLiuju(Kanachan::GameLog &game_log);
 
 private:
   Kanachan::GameState &game_state_;

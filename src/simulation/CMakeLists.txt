@@ -1,5 +1,16 @@
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
 
+add_library(xiangting_calculator SHARED
+  xiangting_calculator.cpp)
+target_link_libraries(xiangting_calculator
+  PRIVATE common
+  PRIVATE marisa
+  PRIVATE Boost::python
+  PRIVATE Boost::headers
+  PRIVATE "python${PYTHON_VERSION}"
+  PRIVATE util
+  PRIVATE dl)
+
 add_library(simulation SHARED
   simulate.cpp
   simulator.cpp
@@ -18,11 +29,13 @@ add_library(simulation SHARED
   jiagang.cpp
   angang.cpp
   zimo.cpp
+  game_log.cpp
   round_state.cpp
   shoupai.cpp
   xiangting_calculator.cpp
   paishan.cpp
   game_state.cpp
+  round_result.cpp
   decision_maker.cpp
   gil.cpp
   utility.cpp)

@@ -16,6 +16,7 @@ from torch import backends
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import (Optimizer, SGD, Adam, RAdam)
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
 from torch.distributed import (init_process_group, barrier, all_reduce)
@@ -23,7 +24,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import (FusedAdam, FusedSGD, FusedLAMB)
 import kanachan.training.iql.config # pylint: disable=unused-import
 from kanachan.training.constants import MAX_NUM_ACTION_CANDIDATES
-from kanachan.training.common import Dataset
+from kanachan.training.common import Dataset, is_gradient_nan, get_gradient
 from kanachan.training.bert.encoder import Encoder
 from kanachan.training.iql.value_model import (ValueDecoder, ValueModel)
 from kanachan.training.iql.q_model import (QDecoder, QModel)
@@ -46,10 +47,12 @@ def _training(
         q2_target_model: nn.Module, reward_plugin: Path, discount_factor: float, expectile: float,
         batch_size: int, gradient_accumulation_steps: int, v_max_gradient_norm: float,
         q_max_gradient_norm: float, value_optimizer: Optimizer, q1_optimizer: Optimizer,
-        q2_optimizer: Optimizer, target_update_interval: int, target_update_rate: float,
-        snapshot_interval: int, num_samples: int, summary_writer: SummaryWriter,
-        snapshot_writer: SnapshotWriter) -> None:
+        q2_optimizer: Optimizer, v_lr_scheduler, q1_lr_scheduler, q2_lr_scheduler,
+        target_update_interval: int, target_update_rate: float, snapshot_interval: int,
+        num_samples: int, summary_writer: SummaryWriter, snapshot_writer: SnapshotWriter) -> None:
     start_time = datetime.datetime.now()
+
+    is_amp_enabled = (device != 'cpu' and dtype != amp_dtype)
 
     # Load the reward plugin.
     with open(reward_plugin, encoding='UTF-8') as file_pointer:
@@ -72,7 +75,7 @@ def _training(
     batch_count = 0
 
     grad_scaler = None
-    if device != 'cpu':
+    if is_amp_enabled:
         grad_scaler = GradScaler()
 
     batch_count = 0
@@ -99,7 +102,7 @@ def _training(
         # Get the Q target value to compute the loss of the V model.
         with torch.no_grad():
             def _compute_q_target(q_target_model: nn.Module) -> Tuple[torch.Tensor, float]:
-                with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+                with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
                     q: torch.Tensor = q_target_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
                 assert q.dim() == 2
                 assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
@@ -125,7 +128,7 @@ def _training(
             assert(q.size(0) == local_batch_size)
 
         # Backprop for the V model.
-        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+        with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
             value: torch.Tensor = value_model(*(annotation[:4]))
         assert(value.dim() == 1)
         assert(value.size(0) == local_batch_size)
@@ -162,7 +165,7 @@ def _training(
 
         # Get V to compute the loss of the Q source models.
         with torch.no_grad():
-            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
                 value = value_model(*(annotation[5:9]))
             assert(value.dim() == 1)
             assert(value.size(0) == local_batch_size)
@@ -170,7 +173,7 @@ def _training(
             value = value.detach()
 
         def _backprop(q_source_model: nn.Module) -> float:
-            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=(device != 'cpu' and dtype != amp_dtype)):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=is_amp_enabled):
                 q: torch.Tensor = q_source_model(*(annotation[:4])) # pylint: disable=cell-var-from-loop
             assert q.dim() == 2
             assert q.size(0) == local_batch_size # pylint: disable=cell-var-from-loop
@@ -208,25 +211,43 @@ def _training(
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            def _step(model: nn.Module, max_gradient_norm: float, optimizer: Optimizer) -> float:
+            def _step(
+                    model: nn.Module, max_gradient_norm: float, optimizer: Optimizer,
+                    scheduler) -> float:
                 if grad_scaler is not None:
                     grad_scaler.unscale_(optimizer)
-                gradient = nn.utils.parameters_to_vector(model.parameters())
-                _gradient_norm: torch.Tensor = torch.linalg.vector_norm(gradient)
-                gradient_norm: float = _gradient_norm.item()
+                gradient = get_gradient(model)
+                gradient_norm: torch.Tensor = torch.linalg.vector_norm(gradient).item()
                 nn.utils.clip_grad_norm_(
                     model.parameters(), max_gradient_norm, error_if_nonfinite=False)
                 if grad_scaler is None:
                     optimizer.step()
                 else:
                     grad_scaler.step(optimizer)
-                    grad_scaler.update()
-                optimizer.zero_grad()
+                if scheduler is not None:
+                    scheduler.step()
+
                 return gradient_norm
 
-            v_gradient_norm = _step(value_model, v_max_gradient_norm, value_optimizer)
-            q1_gradient_norm = _step(q1_source_model, q_max_gradient_norm, q1_optimizer)
-            q2_gradient_norm = _step(q2_source_model, q_max_gradient_norm, q2_optimizer)
+            is_grad_nan = is_gradient_nan(value_model) or is_gradient_nan(q1_source_model) or is_gradient_nan(q2_source_model)
+            is_grad_nan = torch.where(
+                is_grad_nan, torch.ones_like(is_grad_nan), torch.zeros_like(is_grad_nan))
+            all_reduce(is_grad_nan)
+            if is_grad_nan.item() >= 1:
+                logging.warning('Skip an optimization step because of a NaN in the gradient.')
+            else:
+                v_gradient_norm = _step(
+                    value_model, v_max_gradient_norm, value_optimizer, v_lr_scheduler)
+                q1_gradient_norm = _step(
+                    q1_source_model, q_max_gradient_norm, q1_optimizer, q1_lr_scheduler)
+                q2_gradient_norm = _step(
+                    q2_source_model, q_max_gradient_norm, q2_optimizer, q2_lr_scheduler)
+                if grad_scaler is not None:
+                    grad_scaler.update()
+
+            value_optimizer.zero_grad()
+            q1_optimizer.zero_grad()
+            q2_optimizer.zero_grad()
 
             if batch_count % (gradient_accumulation_steps * target_update_interval) == 0:
                 with torch.no_grad():
@@ -235,16 +256,12 @@ def _training(
                     q1_target_params *= (1.0 - target_update_rate)
                     q1_target_params += target_update_rate * q1_source_params
                     nn.utils.vector_to_parameters(q1_target_params, q1_target_model.parameters())
-                    del q1_source_params
-                    del q1_target_params
 
                     q2_source_params = nn.utils.parameters_to_vector(q2_source_model.parameters())
                     q2_target_params = nn.utils.parameters_to_vector(q2_target_model.parameters())
                     q2_target_params *= (1.0 - target_update_rate)
                     q2_target_params += target_update_rate * q2_source_params
                     nn.utils.vector_to_parameters(q2_target_params, q2_target_model.parameters())
-                    del q2_source_params
-                    del q2_target_params
 
             if is_main_process:
                 logging.info(
@@ -336,27 +353,35 @@ def _main(config: DictConfig) -> None:
     if config.device.type == 'cuda':
         torch.cuda.set_device(rank)
 
-    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+    if config.device.dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.dtype}: An invalid dtype.')
     dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.dtype]
 
     if config.device.type == 'cpu':
         if config.device.amp_dtype is not None:
             raise RuntimeError('AMP is not supported on CPU.')
-        config.device.amp_dtype = 'bfloat16'
-    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half', 'bfloat16'):
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype is None:
+        config.device.amp_dtype = config.device.dtype
+    if config.device.amp_dtype not in ('float64', 'double', 'float32', 'float', 'float16', 'half'):
         raise RuntimeError(f'{config.device.amp_dtype}: An invalid AMP dtype.')
     amp_dtype = {
         'float64': torch.float64, 'double': torch.float64,
         'float32': torch.float32, 'float': torch.float32,
-        'float16': torch.float16, 'half': torch.float16,
-        'bfloat16': torch.bfloat16
+        'float16': torch.float16, 'half': torch.float16
     }[config.device.amp_dtype]
+    if dtype == torch.float32 and amp_dtype == torch.float64:
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
+    if dtype == torch.float16 and amp_dtype in (torch.float64, torch.float32):
+        raise RuntimeError(
+            f'An invalid combination of `device.dtype` (`{config.device.dtype}`) and '
+            f'`device.amp_dtype` (`{config.device.amp_dtype}`).')
 
     if backends.cudnn.is_available():
         backends.cudnn.benchmark = True
@@ -419,23 +444,35 @@ def _main(config: DictConfig) -> None:
         if not config.decoder.load_from.is_file():
             raise RuntimeError(f'{config.decoder.load_from}: Not a file.')
 
-    if config.initial_model is not None:
+    if config.initial_q_encoder is not None:
         if config.encoder.load_from is not None:
-            raise RuntimeError('`initial_model` conflicts with `encoder.load_from`.')
+            raise RuntimeError('`initial_q_encoder` conflicts with `encoder.load_from`.')
         if config.decoder.load_from is not None:
-            raise RuntimeError('`initial_model` conflicts with `decoder.load_from`.')
-        if not config.initial_model.exists():
-            raise RuntimeError(f'{config.initial_model}: Does not exist.')
-        if not config.initial_model.is_file():
-            raise RuntimeError(f'{config.initial_model}: Not a file.')
+            raise RuntimeError('`initial_q_encoder` conflicts with `decoder.load_from`.')
+        if not config.initial_q_encoder.exists():
+            raise RuntimeError(f'{config.initial_q_encoder}: Does not exist.')
+        if not config.initial_q_encoder.is_file():
+            raise RuntimeError(f'{config.initial_q_encoder}: Not a file.')
+
+    if config.initial_q_decoder is not None:
+        if config.encoder.load_from is not None:
+            raise RuntimeError('`initial_q_decoder` conflicts with `encoder.load_from`.')
+        if config.decoder.load_from is not None:
+            raise RuntimeError('`initial_q_decoder` conflicts with `decoder.load_from`.')
+        if not config.initial_q_decoder.exists():
+            raise RuntimeError(f'{config.initial_q_decoder}: Does not exist.')
+        if not config.initial_q_decoder.is_file():
+            raise RuntimeError(f'{config.initial_q_decoder}: Not a file.')
 
     if config.initial_model_prefix is not None:
         if config.encoder.load_from is not None:
             raise RuntimeError('`initial_model_prefix` conflicts with `encoder.load_from`.')
         if config.decoder.load_from is not None:
             raise RuntimeError('`initial_model_prefix` conflicts with `decoder.load_from`.')
-        if config.initial_model is not None:
-            raise RuntimeError('`initial_model_prefix` conflicts with `initial_model`.')
+        if config.initial_q_encoder is not None:
+            raise RuntimeError('`initial_model_prefix` conflicts with `initial_q_encoder`.')
+        if config.initial_q_decoder is not None:
+            raise RuntimeError('`initial_model_prefix` conflicts with `initial_q_decoder`.')
         if not config.initial_model_prefix.exists():
             raise RuntimeError(f'{config.initial_model_prefix}: Does not exist.')
         if not config.initial_model_prefix.is_dir():
@@ -452,7 +489,8 @@ def _main(config: DictConfig) -> None:
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
         assert config.decoder.load_from is None
-        assert config.initial_model is None
+        assert config.initial_q_encoder is None
+        assert config.initial_q_decoder is None
 
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
@@ -578,6 +616,26 @@ def _main(config: DictConfig) -> None:
         raise RuntimeError(
             f'{config.optimizer.learning_rate}: An invalid value for `optimizer.learning_rate`.')
 
+    if config.optimizer.warmup_start_factor <= 0.0 or 1.0 <= config.optimizer.warmup_start_factor:
+        raise RuntimeError(
+            f'{config.optimizer.warmup_start_factor}: '
+            '`optimizer.warmup_start_factor` must be a real number with the range (0.0, 1.0).')
+
+    if config.optimizer.warmup_steps < 0:
+        raise RuntimeError(
+            f'{config.optimizer.warmup_steps}: '
+            '`optimizer.warmup_steps` must be a non-negative integer.')
+
+    if config.optimizer.annealing_steps <= 0:
+        raise RuntimeError(
+            f'{config.optimizer.annealing_steps}: '
+            '`optimizer.annealing_steps` must be a positive integer.')
+
+    if config.optimizer.annealing_steps_factor <= 0:
+        raise RuntimeError(
+            f'{config.optimizer.annealing_steps_factor}: '
+            '`optimizer.annealing_steps_factor` must be a positive integer.')
+
     if config.target_update_interval <= 0:
         raise RuntimeError(
             f'{config.target_update_interval}: An invalid value for `target_update_interval`.')
@@ -616,7 +674,10 @@ def _main(config: DictConfig) -> None:
         else:
             logging.info('cuDNN: N/A')
         logging.info('dtype: %s', dtype)
-        logging.info('AMP dtype: %s', amp_dtype)
+        if dtype == amp_dtype:
+            logging.info('AMP dtype: (AMP is disabled)')
+        else:
+            logging.info('AMP dtype: %s', amp_dtype)
         logging.info('Position encoder: %s', config.encoder.position_encoder)
         logging.info('Encoder dimension: %d', config.encoder.dimension)
         logging.info('# of heads for encoder: %d', config.encoder.num_heads)
@@ -635,8 +696,10 @@ def _main(config: DictConfig) -> None:
         logging.info('# of decoder layers: %d', config.decoder.num_layers)
         if config.decoder.load_from is not None:
             logging.info('Load decoder from: %s', config.decoder.load_from)
-        if config.initial_model is not None:
-            logging.info('Load model from: %s', config.initial_model)
+        if config.initial_q_encoder is not None:
+            logging.info('Load Q encoder from: %s', config.initial_q_encoder)
+        if config.initial_q_decoder is not None:
+            logging.info('Load Q decoder from: %s', config.initial_q_decoder)
         if config.initial_model_prefix is not None:
             logging.info('Initial model prefix: %s', config.initial_model_prefix)
             logging.info('Initlal model index: %d', config.initial_model_index)
@@ -662,6 +725,17 @@ def _main(config: DictConfig) -> None:
         if config.optimizer in ('adam', 'radam', 'mtadam', 'lamb'):
             logging.info('Epsilon parameter: %E', config.optimizer.epsilon)
         logging.info('Learning rate: %E', config.optimizer.learning_rate)
+        if config.optimizer.warmup_steps == 0:
+            logging.info('LR warm-up: (disabled)')
+        else:
+            logging.info('LR warm-up start factor: %E', config.optimizer.warmup_start_factor)
+            logging.info('# of steps for LR warm-up: %d', config.optimizer.warmup_steps)
+        if config.optimizer.annealing_steps is None:
+            logging.info('LR annealing: (disabled)')
+        else:
+            logging.info('# of steps for LR annealing: %d', config.optimizer.annealing_steps)
+            logging.info(
+                'Step factor for LR annealing: %d', config.optimizer.annealing_steps_factor)
         logging.info('Target update interval: %d', config.target_update_interval)
         logging.info('Target update rate: %f', config.target_update_rate)
         if config.initial_model_prefix is not None:
@@ -749,7 +823,6 @@ def _main(config: DictConfig) -> None:
     q2_target_model.requires_grad_(False)
     q2_target_model.to(device=config.device.type, dtype=dtype)
 
-
     if config.optimizer.type == 'sgd':
         def construct_optimizer(model: nn.Module) -> Optimizer:
             if config.device.type == 'cpu':
@@ -781,8 +854,36 @@ def _main(config: DictConfig) -> None:
     q1_optimizer = construct_optimizer(q1_source_model)
     q2_optimizer = construct_optimizer(q2_source_model)
 
+    v_warmup_lr_scheduler = lr_scheduler.LinearLR(
+        value_optimizer, start_factor=config.optimizer.warmup_start_factor,
+        total_iters=config.optimizer.warmup_steps)
+    v_annealing_lr_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+        value_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    v_lr_scheduler = lr_scheduler.SequentialLR(
+        value_optimizer, [v_warmup_lr_scheduler, v_annealing_lr_scheduler],
+        [v_warmup_lr_scheduler.total_iters])
+
+    q1_warmup_lr_scheduler = lr_scheduler.LinearLR(
+        q1_optimizer, start_factor=config.optimizer.warmup_start_factor,
+        total_iters=config.optimizer.warmup_steps)
+    q1_annealing_lr_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+        q1_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    q1_lr_scheduler = lr_scheduler.SequentialLR(
+        q1_optimizer, [q1_warmup_lr_scheduler, q1_annealing_lr_scheduler],
+        [q1_warmup_lr_scheduler.total_iters])
+
+    q2_warmup_lr_scheduler = lr_scheduler.LinearLR(
+        q2_optimizer, start_factor=config.optimizer.warmup_start_factor,
+        total_iters=config.optimizer.warmup_steps)
+    q2_annealing_lr_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+        q2_optimizer, config.optimizer.annealing_steps, config.optimizer.annealing_steps_factor)
+    q2_lr_scheduler = lr_scheduler.SequentialLR(
+        q2_optimizer, [q2_warmup_lr_scheduler, q2_annealing_lr_scheduler],
+        [q2_warmup_lr_scheduler.total_iters])
+
     if config.encoder.load_from is not None:
-        assert config.initial_model is None
+        assert config.initial_q_encoder is None
+        assert config.initial_q_decoder is None
         assert config.initial_model_prefix is None
         assert config.initial_model_index is None
 
@@ -800,7 +901,8 @@ def _main(config: DictConfig) -> None:
             q2_target_encoder.cuda()
 
     if config.decoder.load_from is not None:
-        assert config.initial_model is None
+        assert config.initial_q_encoder is None
+        assert config.initial_q_decoder is None
         assert config.initial_model_prefix is None
         assert config.initial_model_index is None
 
@@ -817,20 +919,24 @@ def _main(config: DictConfig) -> None:
             q1_target_decoder.cuda()
             q2_target_decoder.cuda()
 
-    if config.initial_model is not None:
+    if config.initial_q_encoder is not None:
+        assert config.initial_q_decoder is not None
         assert config.encoder.load_from is None
         assert config.decoder.load_from is None
         assert config.initial_model_prefix is None
         assert config.initial_model_index is None
 
-        model_state_dict = torch.load(config.initial_model, map_location='cpu')
-        value_model.load_state_dict(model_state_dict)
-        q1_source_model.load_state_dict(model_state_dict)
-        q2_source_model.load_state_dict(model_state_dict)
-        q1_target_model.load_state_dict(model_state_dict)
-        q2_target_model.load_state_dict(model_state_dict)
+        q_encoder_state_dict = torch.load(config.initial_q_encoder, map_location='cpu')
+        q_decoder_state_dict = torch.load(config.initial_q_decoder, map_location='cpu')
+        q1_source_encoder.load_state_dict(q_encoder_state_dict)
+        q1_source_decoder.load_state_dict(q_decoder_state_dict)
+        q2_source_encoder.load_state_dict(q_encoder_state_dict)
+        q2_source_decoder.load_state_dict(q_decoder_state_dict)
+        q1_target_encoder.load_state_dict(q_encoder_state_dict)
+        q1_target_decoder.load_state_dict(q_decoder_state_dict)
+        q2_target_encoder.load_state_dict(q_encoder_state_dict)
+        q2_target_decoder.load_state_dict(q_decoder_state_dict)
         if config.device.type != 'cpu':
-            value_model.cuda()
             q1_source_model.cuda()
             q2_source_model.cuda()
             q1_target_model.cuda()
@@ -839,7 +945,7 @@ def _main(config: DictConfig) -> None:
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
         assert config.decoder.load_from is None
-        assert config.initial_model is None
+        assert config.initial_q_model is None
 
         value_state_dict = torch.load(value_snapshot_path, map_location='cpu')
         value_model.load_state_dict(value_state_dict)
@@ -909,6 +1015,9 @@ def _main(config: DictConfig) -> None:
         torch.save(value_optimizer.state_dict(), snapshots_path / f'value-optimizer{infix}.pth')
         torch.save(q1_optimizer.state_dict(), snapshots_path / f'q1-optimizer{infix}.pth')
         torch.save(q2_optimizer.state_dict(), snapshots_path / f'q2-optimizer{infix}.pth')
+        torch.save(v_lr_scheduler.state_dict(), snapshots_path / f'v_lr_scheduler{infix}.pth')
+        torch.save(q1_lr_scheduler.state_dict(), snapshots_path / f'q1_lr_scheduler{infix}.pth')
+        torch.save(q2_lr_scheduler.state_dict(), snapshots_path / f'q2_lr_scheduler{infix}.pth')
 
         q_model = QQModel(q1_model=q1_target_model, q2_model=q2_target_model)
         state = dump_object(
@@ -1002,7 +1111,8 @@ def _main(config: DictConfig) -> None:
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             v_max_gradient_norm=config.v_max_gradient_norm,
             q_max_gradient_norm=config.q_max_gradient_norm, value_optimizer=value_optimizer,
-            q1_optimizer=q1_optimizer, q2_optimizer=q2_optimizer,
+            q1_optimizer=q1_optimizer, q2_optimizer=q2_optimizer, v_lr_scheduler=v_lr_scheduler,
+            q1_lr_scheduler=q1_lr_scheduler, q2_lr_scheduler=q2_lr_scheduler,
             target_update_interval=config.target_update_interval,
             target_update_rate=config.target_update_rate,
             snapshot_interval=config.snapshot_interval, num_samples=num_samples,

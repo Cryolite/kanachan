@@ -3,12 +3,19 @@
 {
 	"name": "Ubuntu",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/base:jammy",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"runArgs": ["--gpus", "all"],
 	"features": {
 		"ghcr.io/devcontainers-contrib/features/wget-apt-get:1": {},
 		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
 		"ghcr.io/devcontainers/features/python:1": {}
+	},
+
+	"containerEnv": {
+		"C_INCLUDE_PATH": "/home/vscode/.local/include",
+		"CPLUS_INCLUDE_PATH": "/home/vscode/.local/include",
+		"LIBRARY_PATH": "/home/vscode/.local/lib64:/home/vscode/.local/lib",
+		"LD_LIBRARY_PATH": "/home/vscode/.local/lib64:/home/vscode/.local/lib"
 	},
 
 	// Features to add to the dev container. More info: https://containers.dev/features.

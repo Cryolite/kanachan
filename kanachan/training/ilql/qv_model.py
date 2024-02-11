@@ -56,7 +56,7 @@ class QVDecoder(nn.Module):
         assert encode.dim() == 3
         assert encode.size(1) == ENCODER_WIDTH
         assert candidates.size(0) == encode.size(0)
-        
+
         value: torch.Tensor = self.value_decoder(candidates, encode)
         assert value.dim() == 1
         assert value.size(0) == candidates.size(0)

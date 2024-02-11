@@ -1,6 +1,7 @@
 #include "simulation/simulator.hpp"
 
 #include "simulation/game.hpp"
+#include "simulation/game_log.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/decision_maker.hpp"
 #include "simulation/utility.hpp"
@@ -47,11 +48,11 @@ private:
 
 public:
     Impl_(
-        std::string const &device, python::object dtype,
+        std::string const &device, python::object dtype, std::uint_fast8_t room,
         std::uint_fast8_t baseline_grade, python::object baseline_model,
         std::uint_fast8_t proposed_grade, python::object proposed_model,
         unsigned long simulation_mode, std::size_t num_simulation_sets,
-        std::size_t batch_size, std::size_t concurrency);
+        std::size_t batch_size, std::size_t concurrency, python::object progress);
 
     Impl_(Impl_ const &) = delete;
 
@@ -71,20 +72,21 @@ private:
     std::vector<std::jthread> threads_;
     std::vector<std::vector<std::uint_least32_t>> seeds_;
     std::vector<Seats_> seats_list_;
-    std::vector<python::dict> results_;
+    std::vector<std::shared_ptr<Kanachan::GameLog>> game_logs_;
     std::size_t num_alive_threads_;
+    python::object progress_;
     std::mutex mtx_;
 }; // class Simulator::Impl_
 
 Simulator::Simulator(
-    std::string const &device, python::object dtype,
-    std::uint_fast8_t baseline_grade, python::object baseline_model,
-    std::uint_fast8_t proposed_grade, python::object proposed_model,
-    unsigned long simulation_mode, std::size_t num_simulation_sets,
-    std::size_t batch_size, std::size_t concurrency)
+    std::string const &device, python::object dtype, std::uint_fast8_t const room,
+    std::uint_fast8_t const baseline_grade, python::object baseline_model,
+    std::uint_fast8_t const proposed_grade, python::object proposed_model,
+    unsigned long const simulation_mode, std::size_t const num_simulation_sets,
+    std::size_t const batch_size, std::size_t const concurrency, python::object progress)
     : p_impl_(std::make_shared<Impl_>(
-        device, dtype, baseline_grade, baseline_model, proposed_grade, proposed_model,
-        simulation_mode, num_simulation_sets, batch_size, concurrency))
+        device, dtype, room, baseline_grade, baseline_model, proposed_grade, proposed_model,
+        simulation_mode, num_simulation_sets, batch_size, concurrency, progress))
 {}
 
 python::list Simulator::run()
@@ -94,22 +96,23 @@ python::list Simulator::run()
 }
 
 Simulator::Impl_::Impl_(
-    std::string const &device, python::object dtype,
-    std::uint_fast8_t baseline_grade, python::object baseline_model,
-    std::uint_fast8_t proposed_grade, python::object proposed_model,
-    unsigned long simulation_mode, std::size_t num_simulation_sets,
-    std::size_t batch_size, std::size_t concurrency)
+    std::string const &device, python::object dtype, std::uint_fast8_t const room,
+    std::uint_fast8_t const baseline_grade, python::object baseline_model,
+    std::uint_fast8_t const proposed_grade, python::object proposed_model,
+    unsigned long const simulation_mode, std::size_t const num_simulation_sets,
+    std::size_t const batch_size, std::size_t const concurrency, python::object progress)
     : dong_feng_zhan_(simulation_mode & 2u)
-    , room_(std::numeric_limits<std::uint_fast8_t>::max())
+    , room_(room)
     , p_baseline_decision_maker_(
-          std::make_shared<Kanachan::DecisionMaker>(device, dtype, baseline_model, batch_size))
+          std::make_shared<Kanachan::DecisionMaker>(device, dtype, baseline_model, batch_size, simulation_mode & 8u))
     , p_proposed_decision_maker_(
-          std::make_shared<Kanachan::DecisionMaker>(device, dtype, proposed_model, batch_size))
+          std::make_shared<Kanachan::DecisionMaker>(device, dtype, proposed_model, batch_size, simulation_mode & 8u))
     , threads_()
     , seeds_()
     , seats_list_()
-    , results_()
+    , game_logs_()
     , num_alive_threads_(concurrency)
+    , progress_(progress)
     , mtx_()
 {
     if (num_simulation_sets == 0u) {
@@ -118,37 +121,6 @@ Simulator::Impl_::Impl_(
 
     bool const no_duplicate = (simulation_mode & 1u);
     bool const one_versus_three = (simulation_mode & 4u);
-
-    if ((simulation_mode & 8u) != 0u) {
-        room_ = 0u;
-    }
-    if ((simulation_mode & 16u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 1u;
-    }
-    if ((simulation_mode & 32u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 2u;
-    }
-    if ((simulation_mode & 64u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 3u;
-    }
-    if ((simulation_mode & 128u) != 0u) {
-        if (room_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-            KANACHAN_THROW<std::invalid_argument>("simulation_mode: Multiple rooms specified.");
-        }
-        room_ = 4u;
-    }
-    if (room_ == std::numeric_limits<std::uint_fast8_t>::max()) {
-        KANACHAN_THROW<std::invalid_argument>("simulation_mode: Room not specified.");
-    }
 
     if (baseline_grade < 0 || 16 <= baseline_grade) {
         KANACHAN_THROW<std::invalid_argument>(_1)
@@ -258,30 +230,27 @@ try {
             seats_list_.pop_back();
         }
 
-        python::dict result = [&]() {
+        std::shared_ptr<Kanachan::GameLog> p_game_log = [&]() {
             std::vector<Kanachan::Paishan> dummy_paishan_list;
-            python::dict result = Kanachan::simulateGame(
+            std::shared_ptr<Kanachan::GameLog> p_game_log = Kanachan::simulateGame(
                 seed, room_, dong_feng_zhan_, seats, dummy_paishan_list, stop_token);
-            {
-                Kanachan::GIL::RecursiveLock gil_lock;
-                result["proposed"] = python::list();
-                result["proposed"].attr("append")(
-                    seats[0u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-                result["proposed"].attr("append")(
-                    seats[1u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-                result["proposed"].attr("append")(
-                    seats[2u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-                result["proposed"].attr("append")(
-                    seats[3u].second.get() == p_proposed_decision_maker_.get() ? 1 : 0);
-            }
-            return result;
+            p_game_log->setWithProposedModel({
+                seats[0u].second.get() == p_proposed_decision_maker_.get(),
+                seats[1u].second.get() == p_proposed_decision_maker_.get(),
+                seats[2u].second.get() == p_proposed_decision_maker_.get(),
+                seats[3u].second.get() == p_proposed_decision_maker_.get()
+            });
+            return p_game_log;
         }();
 
         {
             std::scoped_lock lock(mtx_);
-            results_.push_back(result);
-            std::cout << results_.size() << '/'
-                      << seeds_.size() + num_alive_threads_ + results_.size() - 1u << std::endl;
+            game_logs_.push_back(p_game_log);
+        }
+
+        {
+            Kanachan::GIL::RecursiveLock gil;
+            progress_();
         }
     }
 }
@@ -316,11 +285,11 @@ python::list Simulator::Impl_::run()
         }
     }
 
-    python::list results;
-    for (python::dict result : results_) {
-        results.append(result);
+    python::list game_logs;
+    for (std::shared_ptr<Kanachan::GameLog> p_game_log : game_logs_) {
+        game_logs.append(p_game_log);
     }
-    return results;
+    return game_logs;
 }
 
 } // namespace Kanachan

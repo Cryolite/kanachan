@@ -72,6 +72,10 @@ class SgdOptimizerConfig:
     momentum: Optional[float] = 0.0
     epsilon: Optional[float] = None
     learning_rate: float = MISSING
+    warmup_start_factor: float = 0.00001
+    warmup_steps: int = 0
+    annealing_steps: int = 0
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 @dataclass
@@ -80,6 +84,10 @@ class AdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
+    warmup_start_factor: float = 0.00001
+    warmup_steps: int = 0
+    annealing_steps: int = 0
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 @dataclass
@@ -88,6 +96,10 @@ class RAdamOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
+    warmup_start_factor: float = 0.00001
+    warmup_steps: int = 0
+    annealing_steps: int = 0
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 @dataclass
@@ -96,6 +108,10 @@ class LambOptimizerConfig:
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-6
     learning_rate: float = 0.001
+    warmup_start_factor: float = 0.00001
+    warmup_steps: int = 0
+    annealing_steps: int = 0
+    annealing_steps_factor: int = 1
     initialize: bool = False
 
 
@@ -113,7 +129,8 @@ class Config:
     defaults: List[Any] = field(default_factory=lambda: _defaults)
     training_data: Path = MISSING
     num_workers: Optional[int] = None
-    initial_model: Optional[Path] = None
+    initial_q_encoder: Optional[Path] = None
+    initial_q_decoder: Optional[Path] = None
     initial_model_prefix: Optional[Path] = None
     initial_model_index: Optional[int] = None
     reward_plugin: Path = MISSING

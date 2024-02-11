@@ -39,16 +39,15 @@ sudo apt-get -y install cuda
 # Install prerequisite Python packages.
 python3 -m pip install -U pip
 python3 -m pip install -U \
-  packaging \
   setuptools \
   torch \
   wheel
 
 # Install Apex.
 pushd /workspaces
-git clone 'https://github.com/NVIDIA/apex.git'
+git clone -b '22.08-dev' 'https://github.com/NVIDIA/apex.git'
 pushd apex
-MAX_JOBS=$(nproc) python3 -m pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+MAX_JOBS=4 python3 -m pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 popd
 rm -rf apex
 popd
@@ -88,31 +87,6 @@ popd
 
 # Install GCC.
 /workspaces/prerequisites/gcc/install --debug --prefix "$HOME/.local"
-
-if [[ -v C_INCLUDE_PATH ]]; then
-  OLD_C_INCLUDE_PATH="$C_INCLUDE_PATH"
-fi
-export C_INCLUDE_PATH="$HOME/.local/include${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
-
-if [[ -v CPLUS_INCLUDE_PATH ]]; then
-  OLD_CPLUS_INCLUDE_PATH="$CPLUS_INCLUDE_PATH"
-fi
-export CPLUS_INCLUDE_PATH="$HOME/.local/include${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
-
-if [[ -v LIBRARY_PATH ]]; then
-  OLD_LIBRARY_PATH="$LIBRARY_PATH"
-fi
-export LIBRARY_PATH="$HOME/.local/lib64:$HOME/.local/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-
-if [[ -v LD_LIBRARY_PATH ]]; then
-  OLD_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
-fi
-export LD_LIBRARY_PATH="$HOME/.local/lib64:$HOME/.local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-if [[ -v PATH ]]; then
-  OLD_PATH="$PATH"
-fi
-export PATH="$HOME/.local/bin${PATH:+:$PATH}"
 
 # Install CMake.
 /workspaces/prerequisites/cmake/install --debug --prefix "$HOME/.local"
