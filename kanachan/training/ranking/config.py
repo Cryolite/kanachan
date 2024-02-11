@@ -6,11 +6,11 @@ from hydra.core.config_store import ConfigStore
 
 
 _defaults = [
-    { 'device': 'cuda' },
-    { 'encoder': 'bert_base' },
-    { 'decoder': 'single' },
-    { 'optimizer': 'adam' },
-    '_self_'
+    {"device": "cuda"},
+    {"encoder": "bert_base"},
+    {"decoder": "single"},
+    {"optimizer": "adam"},
+    "_self_",
 ]
 
 
@@ -19,6 +19,7 @@ class Config:
     defaults: list[Any] = field(default_factory=lambda: _defaults)
     training_data: Path = MISSING
     num_workers: int | None = None
+    rewrite_grades: int | None = None
     initial_model_prefix: Path | None = None
     initial_model_index: int | None = None
     checkpointing: bool = False
@@ -29,4 +30,4 @@ class Config:
 
 
 config_store = ConfigStore.instance()
-config_store.store(name='config', node=Config)
+config_store.store(name="config", node=Config)

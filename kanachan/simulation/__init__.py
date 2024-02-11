@@ -2,4 +2,6 @@
 
 from .tool import Tool
 from .test_model import TestModel
-from ._simulation import simulate, test # pylint: disable=import-error
+
+# pylint: disable=no-name-in-module
+from ._simulation import simulate, test

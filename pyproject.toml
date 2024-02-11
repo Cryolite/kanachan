@@ -1,3 +1,15 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+ignore = ["F401"] # imported but unused
+
+[tool.ruff.pycodestyle]
+max-doc-length = 72
+
+[tool.ruff.pydocstyle]
+convention = "google"

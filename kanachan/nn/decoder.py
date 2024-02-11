@@ -3,20 +3,35 @@ import torch
 from torch import Tensor, nn
 from torchrl.modules import NoisyLinear
 from kanachan.constants import (
-    MAX_NUM_ACTIVE_SPARSE_FEATURES, NUM_NUMERIC_FEATURES, MAX_NUM_ACTION_CANDIDATES, ENCODER_WIDTH,
-    ROUND_NUM_SPARSE_FEATURES, ROUND_NUM_NUMERIC_FEATURES, ROUND_ENCODER_WIDTH)
+    MAX_NUM_ACTIVE_SPARSE_FEATURES,
+    NUM_NUMERIC_FEATURES,
+    MAX_NUM_ACTION_CANDIDATES,
+    ENCODER_WIDTH,
+    ROUND_NUM_SPARSE_FEATURES,
+    ROUND_NUM_NUMERIC_FEATURES,
+    ROUND_ENCODER_WIDTH,
+)
 
 
 class Decoder(nn.Module):
     def __init__(
-            self, *, input_dimension: int, dimension: int | None, activation_function: str | None,
-            dropout: float | None, num_layers: int, output_mode: str, noise_init_std: float,
-            device: torch.device, dtype: torch.dtype) -> None:
+        self,
+        *,
+        input_dimension: int,
+        dimension: int | None,
+        activation_function: str | None,
+        dropout: float | None,
+        num_layers: int,
+        output_mode: str,
+        noise_init_std: float,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> None:
         if input_dimension <= 0:
             raise ValueError(input_dimension)
         if dimension is not None and dimension <= 0:
             raise ValueError(dimension)
-        if activation_function not in (None, 'relu', 'gelu'):
+        if activation_function not in (None, "relu", "gelu"):
             raise ValueError(activation_function)
         if dropout is not None and (dropout < 0.0 or 1.0 <= dropout):
             raise ValueError(dropout)
@@ -29,7 +44,7 @@ class Decoder(nn.Module):
                 raise ValueError(activation_function)
             if dropout is not None:
                 raise ValueError(dropout)
-        if output_mode not in ('state', 'scores', 'candidates', 'ranking'):
+        if output_mode not in ("state", "scores", "candidates", "ranking"):
             raise ValueError(output_mode)
         if noise_init_std < 0.0:
             raise ValueError(noise_init_std)
@@ -39,7 +54,7 @@ class Decoder(nn.Module):
         self.__output_mode = output_mode
 
         self.__output_width = 1
-        if self.__output_mode == 'ranking':
+        if self.__output_mode == "ranking":
             self.__output_width = 4
 
         layers = OrderedDict()
@@ -50,37 +65,45 @@ class Decoder(nn.Module):
             linear_layer = NoisyLinear
 
         if num_layers == 1:
-            layers['linear'] = linear_layer(
-                input_dimension, self.__output_width, device=device, dtype=dtype)
+            layers["linear"] = linear_layer(
+                input_dimension,
+                self.__output_width,
+                device=device,
+                dtype=dtype,
+            )
         else:
             assert dimension is not None
-            layers['linear0'] = linear_layer(
-                input_dimension, dimension, device=device, dtype=dtype)
+            layers["linear0"] = linear_layer(
+                input_dimension, dimension, device=device, dtype=dtype
+            )
         if num_layers >= 2:
-            if activation_function == 'relu':
-                layers['activation0'] = nn.ReLU()
-            elif activation_function == 'gelu':
-                layers['activation0'] = nn.GELU()
+            if activation_function == "relu":
+                layers["activation0"] = nn.ReLU()
+            elif activation_function == "gelu":
+                layers["activation0"] = nn.GELU()
             else:
                 raise AssertionError(activation_function)
             assert dropout is not None
-            layers['dropout0'] = nn.Dropout(p=dropout)
+            layers["dropout0"] = nn.Dropout(p=dropout)
 
         for i in range(1, num_layers):
             assert dimension is not None
             assert dropout is not None
             final_layer = i == num_layers - 1
-            layers[f'linear{i}'] = linear_layer(
-                dimension, self.__output_width if final_layer else dimension, device=device,
-                dtype=dtype)
+            layers[f"linear{i}"] = linear_layer(
+                dimension,
+                self.__output_width if final_layer else dimension,
+                device=device,
+                dtype=dtype,
+            )
             if not final_layer:
-                if activation_function == 'relu':
-                    layers[f'activation{i}'] = nn.ReLU()
-                elif activation_function == 'gelu':
-                    layers[f'activation{i}'] = nn.GELU()
+                if activation_function == "relu":
+                    layers[f"activation{i}"] = nn.ReLU()
+                elif activation_function == "gelu":
+                    layers[f"activation{i}"] = nn.GELU()
                 else:
                     raise AssertionError(activation_function)
-                layers[f'dropout{i}'] = nn.Dropout(p=dropout)
+                layers[f"dropout{i}"] = nn.Dropout(p=dropout)
 
         self.layers = nn.Sequential(layers)
 
@@ -91,13 +114,13 @@ class Decoder(nn.Module):
 
         original_dtype = encode.dtype
 
-        if self.__output_mode == 'state':
+        if self.__output_mode == "state":
             decode: Tensor = self.layers(encode)
             decode = decode.squeeze(2)
             decode = decode.sum(1)
             assert decode.dim() == 1
             assert decode.size(0) == batch_size
-        elif self.__output_mode == 'scores':
+        elif self.__output_mode == "scores":
             first: int = -1
             last: int = -1
             if input_width == ENCODER_WIDTH:
@@ -115,7 +138,7 @@ class Decoder(nn.Module):
             assert decode.dim() == 2
             assert decode.size(0) == batch_size
             assert decode.size(1) == 4
-        elif self.__output_mode == 'ranking':
+        elif self.__output_mode == "ranking":
             first: int = -1
             last: int = -1
             if input_width == ENCODER_WIDTH:
@@ -133,9 +156,10 @@ class Decoder(nn.Module):
             assert decode.size(0) == batch_size
             assert decode.size(1) == 4
             assert decode.size(2) == 4
-        elif self.__output_mode == 'candidates':
+        elif self.__output_mode == "candidates":
             if input_width != ENCODER_WIDTH:
-                raise RuntimeError('An invalid output mode.')
+                msg = "An invalid output mode."
+                raise RuntimeError(msg)
             candidates_encode = encode[:, -MAX_NUM_ACTION_CANDIDATES:]
             decode: Tensor = self.layers(candidates_encode)
             decode = decode.squeeze(2)

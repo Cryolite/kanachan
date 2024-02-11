@@ -6,11 +6,11 @@ from hydra.core.config_store import ConfigStore
 
 
 _defaults = [
-    { 'device': 'cuda' },
-    { 'encoder': 'bert_base' },
-    { 'decoder': 'single' },
-    { 'optimizer': 'adam' },
-    '_self_'
+    {"device": "cuda"},
+    {"encoder": "bert_base"},
+    {"decoder": "single"},
+    {"optimizer": "adam"},
+    "_self_",
 ]
 
 
@@ -29,4 +29,4 @@ class Config:
 
 
 config_store = ConfigStore.instance()
-config_store.store(name='config', node=Config)
+config_store.store(name="config", node=Config)

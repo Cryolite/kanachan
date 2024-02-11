@@ -22,13 +22,13 @@ from torch.cuda.amp import GradScaler
 from torch.distributed import init_process_group, all_reduce
 from torch.utils.tensorboard.writer import SummaryWriter
 from apex.optimizers import FusedAdam, FusedSGD, FusedLAMB
-from kanachan.training.constants import NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES
+from kanachan.constants import NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import Dataset, get_gradient, is_gradient_nan
 import kanachan.training.awr.config # pylint: disable=unused-import
 from kanachan.nn import Encoder
 from kanachan.model_loader import load_model, dump_object, dump_model
 from kanachan.training.awr.policy_model import PolicyDecoder, PolicyModel
-from kanachan.training._core.offline_rl import IteratorAdaptor
+from kanachan.training.core.offline_rl import DataIterator
 
 
 SnapshotWriter = Callable[[Optional[int]], None]
@@ -48,7 +48,7 @@ def _training(
 
     # Prepare the training data loader. Note that this data loader must iterate
     # the training data set only once.
-    dataset = Dataset(training_data, IteratorAdaptor)
+    dataset = Dataset(training_data, DataIterator)
     data_loader = DataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=(num_workers >= 1),
         drop_last=is_multiprocess)

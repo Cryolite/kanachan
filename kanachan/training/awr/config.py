@@ -7,35 +7,37 @@ from omegaconf import MISSING
 
 @dataclass
 class CpuConfig:
-    type: Optional[str] = 'cpu'
-    dtype: str = 'float64'
+    type: Optional[str] = "cpu"
+    dtype: str = "float64"
     amp_dtype: Optional[str] = None
+
 
 @dataclass
 class CudaConfig:
-    type: Optional[str] = 'cuda'
-    dtype: str = 'float32'
-    amp_dtype: str = 'float16'
+    type: Optional[str] = "cuda"
+    dtype: str = "float32"
+    amp_dtype: str = "float16"
 
 
 @dataclass
 class BertBaseEncoderConfig:
-    position_encoder: str = 'position_embedding'
+    position_encoder: str = "position_embedding"
     dimension: int = 768
     num_heads: int = 12
     dim_feedforward: Optional[int] = None
-    activation_function: str = 'gelu'
+    activation_function: str = "gelu"
     dropout: float = 0.1
     num_layers: int = 12
     load_from: Optional[Path] = None
 
+
 @dataclass
 class BertLargeEncoderConfig:
-    position_encoder: str = 'position_embedding'
+    position_encoder: str = "position_embedding"
     dimension: int = 1024
     num_heads: int = 16
     dim_feedforward: Optional[int] = None
-    activation_function: str = 'gelu'
+    activation_function: str = "gelu"
     dropout: float = 0.1
     num_layers: int = 24
     load_from: Optional[Path] = None
@@ -44,23 +46,25 @@ class BertLargeEncoderConfig:
 @dataclass
 class SingleDecoderConfig:
     dim_feedforward: Optional[int] = None
-    activation_function: str = 'gelu'
+    activation_function: str = "gelu"
     dropout: float = 0.1
     num_layers: int = 1
     load_from: Optional[Path] = None
 
+
 @dataclass
 class DoubleDecoderConfig:
     dim_feedforward: Optional[int] = None
-    activation_function: str = 'gelu'
+    activation_function: str = "gelu"
     dropout: float = 0.1
     num_layers: int = 2
     load_from: Optional[Path] = None
 
+
 @dataclass
 class TripleDecoderConfig:
     dim_feedforward: Optional[int] = None
-    activation_function: str = 'gelu'
+    activation_function: str = "gelu"
     dropout: float = 0.1
     num_layers: int = 3
     load_from: Optional[Path] = None
@@ -68,7 +72,7 @@ class TripleDecoderConfig:
 
 @dataclass
 class SgdOptimizerConfig:
-    type: str = 'sgd'
+    type: str = "sgd"
     momentum: Optional[float] = 0.0
     epsilon: Optional[float] = None
     learning_rate: float = MISSING
@@ -78,9 +82,10 @@ class SgdOptimizerConfig:
     annealing_steps_factor: int = 1
     initialize: bool = False
 
+
 @dataclass
 class AdamOptimizerConfig:
-    type: str = 'adam'
+    type: str = "adam"
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
@@ -89,10 +94,11 @@ class AdamOptimizerConfig:
     annealing_steps: int = 0
     annealing_steps_factor: int = 1
     initialize: bool = False
+
 
 @dataclass
 class RAdamOptimizerConfig:
-    type: str = 'radam'
+    type: str = "radam"
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-8
     learning_rate: float = 0.001
@@ -102,9 +108,10 @@ class RAdamOptimizerConfig:
     annealing_steps_factor: int = 1
     initialize: bool = False
 
+
 @dataclass
 class LambOptimizerConfig:
-    type: str = 'lamb'
+    type: str = "lamb"
     momentum: Optional[float] = None
     epsilon: Optional[float] = 1.0e-6
     learning_rate: float = 0.001
@@ -116,11 +123,11 @@ class LambOptimizerConfig:
 
 
 _defaults = [
-    { 'device': 'cuda' },
-    { 'encoder': 'bert_base' },
-    { 'decoder': 'double' },
-    { 'optimizer': 'lamb' },
-    '_self_'
+    {"device": "cuda"},
+    {"encoder": "bert_base"},
+    {"decoder": "double"},
+    {"optimizer": "lamb"},
+    "_self_",
 ]
 
 
@@ -144,15 +151,19 @@ class Config:
 
 
 config_store = ConfigStore.instance()
-config_store.store(name='cpu', node=CpuConfig, group='device')
-config_store.store(name='cuda', node=CudaConfig, group='device')
-config_store.store(name='bert_base', node=BertBaseEncoderConfig, group='encoder')
-config_store.store(name='bert_large', node=BertLargeEncoderConfig, group='encoder')
-config_store.store(name='single', node=SingleDecoderConfig, group='decoder')
-config_store.store(name='double', node=DoubleDecoderConfig, group='decoder')
-config_store.store(name='triple', node=TripleDecoderConfig, group='decoder')
-config_store.store(name='sgd', node=SgdOptimizerConfig, group='optimizer')
-config_store.store(name='adam', node=AdamOptimizerConfig, group='optimizer')
-config_store.store(name='radam', node=RAdamOptimizerConfig, group='optimizer')
-config_store.store(name='lamb', node=LambOptimizerConfig, group='optimizer')
-config_store.store(name='config', node=Config)
+config_store.store(name="cpu", node=CpuConfig, group="device")
+config_store.store(name="cuda", node=CudaConfig, group="device")
+config_store.store(
+    name="bert_base", node=BertBaseEncoderConfig, group="encoder"
+)
+config_store.store(
+    name="bert_large", node=BertLargeEncoderConfig, group="encoder"
+)
+config_store.store(name="single", node=SingleDecoderConfig, group="decoder")
+config_store.store(name="double", node=DoubleDecoderConfig, group="decoder")
+config_store.store(name="triple", node=TripleDecoderConfig, group="decoder")
+config_store.store(name="sgd", node=SgdOptimizerConfig, group="optimizer")
+config_store.store(name="adam", node=AdamOptimizerConfig, group="optimizer")
+config_store.store(name="radam", node=RAdamOptimizerConfig, group="optimizer")
+config_store.store(name="lamb", node=LambOptimizerConfig, group="optimizer")
+config_store.store(name="config", node=Config)

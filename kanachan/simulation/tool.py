@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-
-from typing import (Tuple, List,)
 import sys
 from traceback import print_exc
 from mahjong.shanten import Shanten
 from mahjong.meld import Meld
-from mahjong.hand_calculating.hand_config import (OptionalRules, HandConfig)
+from mahjong.hand_calculating.hand_config import OptionalRules, HandConfig
 from mahjong.hand_calculating.hand import HandCalculator
 
 
@@ -39,20 +37,20 @@ class Tool(object):
         elif hupai == 25:
             return 89
         else:
-            assert(26 <= hupai and hupai < 37)
+            assert 26 <= hupai and hupai < 37
             return (hupai - 3) * 4
 
     def _decode_tool_config(self, tool_config: int) -> HandConfig:
-        is_tsumo         = (tool_config & (1 << 0)) != 0
-        is_riichi        = (tool_config & (1 << 1)) != 0
-        is_ippatsu       = (tool_config & (1 << 2)) != 0
-        is_rinshan       = (tool_config & (1 << 3)) != 0
-        is_chankan       = (tool_config & (1 << 4)) != 0
-        is_haitei        = (tool_config & (1 << 5)) != 0
-        is_houtei        = (tool_config & (1 << 6)) != 0
+        is_tsumo = (tool_config & (1 << 0)) != 0
+        is_riichi = (tool_config & (1 << 1)) != 0
+        is_ippatsu = (tool_config & (1 << 2)) != 0
+        is_rinshan = (tool_config & (1 << 3)) != 0
+        is_chankan = (tool_config & (1 << 4)) != 0
+        is_haitei = (tool_config & (1 << 5)) != 0
+        is_houtei = (tool_config & (1 << 6)) != 0
         is_daburu_riichi = (tool_config & (1 << 7)) != 0
-        is_tenhou        = (tool_config & (1 << 8)) != 0
-        is_chiihou       = (tool_config & (1 << 9)) != 0
+        is_tenhou = (tool_config & (1 << 8)) != 0
+        is_chiihou = (tool_config & (1 << 9)) != 0
         if (tool_config & (1 << 10)) != 0:
             player_wind = 27
         elif (tool_config & (1 << 11)) != 0:
@@ -71,13 +69,22 @@ class Tool(object):
             round_wind = 30
 
         return HandConfig(
-            is_tsumo=is_tsumo, is_riichi=is_riichi, is_ippatsu=is_ippatsu,
-            is_rinshan=is_rinshan, is_chankan=is_chankan, is_haitei=is_haitei,
-            is_houtei=is_houtei, is_daburu_riichi=is_daburu_riichi,
-            is_tenhou=is_tenhou, is_chiihou=is_chiihou, player_wind=player_wind,
-            round_wind=round_wind, options=self.__options)
+            is_tsumo=is_tsumo,
+            is_riichi=is_riichi,
+            is_ippatsu=is_ippatsu,
+            is_rinshan=is_rinshan,
+            is_chankan=is_chankan,
+            is_haitei=is_haitei,
+            is_houtei=is_houtei,
+            is_daburu_riichi=is_daburu_riichi,
+            is_tenhou=is_tenhou,
+            is_chiihou=is_chiihou,
+            player_wind=player_wind,
+            round_wind=round_wind,
+            options=self.__options,
+        )
 
-    def calculate_xiangting(self, hand: List[int]) -> int:
+    def calculate_xiangting(self, hand: list[int]) -> int:
         try:
             assert isinstance(hand, list)
             assert sum(hand) in (1, 2, 4, 5, 7, 8, 10, 11, 13, 14)
@@ -86,11 +93,16 @@ class Tool(object):
             print_exc(file=sys.stderr)
             raise
 
-    _Meld = Tuple[str, List[int], int]
+    _Meld = tuple[str, list[int], int]
 
     def __append_zimohu_candidate(
-            self, hand: List[int], melds: List[_Meld], zimo_tile: int,
-            tool_config: int, candidates: List[int]) -> None:
+        self,
+        hand: list[int],
+        melds: list[_Meld],
+        zimo_tile: int,
+        tool_config: int,
+        candidates: list[int],
+    ) -> None:
         assert isinstance(hand, list)
         assert isinstance(melds, list)
         assert isinstance(zimo_tile, int)
@@ -99,19 +111,28 @@ class Tool(object):
         assert tool_config >= 0
         assert isinstance(candidates, list)
 
-        melds = [
-                Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
-                for meld_type, tiles, opened in melds]
+        _melds = [
+            Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
+            for meld_type, tiles, opened in melds
+        ]
         win_tile = self._convert_to_win_tile(zimo_tile)
         hand_config = self._decode_tool_config(tool_config)
 
         response = self.__hand_calculator.estimate_hand_value(
-            tiles=hand, win_tile=win_tile, melds=melds, dora_indicators=[],
-            config=hand_config)
+            tiles=hand,
+            win_tile=win_tile,
+            melds=_melds,
+            dora_indicators=[],
+            config=hand_config,
+        )
 
-        if response.error == 'Hand is not winning': #HandCalculator.ERR_HAND_NOT_WINNING:
+        if (
+            response.error == "Hand is not winning"
+        ):  # HandCalculator.ERR_HAND_NOT_WINNING:
             return
-        if response.error == 'There are no yaku in the hand': #HandCalculator.ERR_NO_YAKU:
+        if (
+            response.error == "There are no yaku in the hand"
+        ):  # HandCalculator.ERR_NO_YAKU:
             return
         if response.error is None:
             candidates.append(219)
@@ -120,18 +141,30 @@ class Tool(object):
         raise RuntimeError(response.error)
 
     def append_zimohu_candidate(
-            self, hand: List[int], melds: List[_Meld], zimo_tile: int,
-            tool_config: int, candidates: List[int]) -> None:
+        self,
+        hand: list[int],
+        melds: list[_Meld],
+        zimo_tile: int,
+        tool_config: int,
+        candidates: list[int],
+    ) -> None:
         try:
             self.__append_zimohu_candidate(
-                hand, melds, zimo_tile, tool_config, candidates)
+                hand, melds, zimo_tile, tool_config, candidates
+            )
         except Exception:
             print_exc(file=sys.stderr)
             raise
 
     def __append_rong_candidate(
-            self, relseat: int, hand: List[int], melds: List[_Meld],
-            zimo_tile: int, tool_config: int, candidates: List[int]) -> None:
+        self,
+        relseat: int,
+        hand: list[int],
+        melds: list[_Meld],
+        zimo_tile: int,
+        tool_config: int,
+        candidates: list[int],
+    ) -> None:
         assert isinstance(relseat, int)
         assert 0 <= relseat and relseat < 3
         assert isinstance(hand, list)
@@ -143,19 +176,28 @@ class Tool(object):
         assert tool_config >= 0
         assert isinstance(candidates, list)
 
-        melds = [
-                Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
-                for meld_type, tiles, opened in melds]
+        _melds = [
+            Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
+            for meld_type, tiles, opened in melds
+        ]
         win_tile = self._convert_to_win_tile(zimo_tile)
         hand_config = self._decode_tool_config(tool_config)
 
         response = self.__hand_calculator.estimate_hand_value(
-            tiles=hand, win_tile=win_tile, melds=melds, dora_indicators=[],
-            config=hand_config)
+            tiles=hand,
+            win_tile=win_tile,
+            melds=_melds,
+            dora_indicators=[],
+            config=hand_config,
+        )
 
-        if response.error == 'Hand is not winning': # HandCalculator.ERR_HAND_NOT_WINNING:
+        if (
+            response.error == "Hand is not winning"
+        ):  # HandCalculator.ERR_HAND_NOT_WINNING:
             return
-        if response.error == 'There are no yaku in the hand': # HandCalculator.ERR_NO_YAKU:
+        if (
+            response.error == "There are no yaku in the hand"
+        ):  # HandCalculator.ERR_NO_YAKU:
             return
         if response.error is None:
             candidates.append(543 + relseat)
@@ -164,18 +206,30 @@ class Tool(object):
         raise RuntimeError(response.error)
 
     def append_rong_candidate(
-            self, relseat: int, hand: List[int], melds: List[_Meld],
-            zimo_tile: int, tool_config: int, candidates: List[int]) -> None:
+        self,
+        relseat: int,
+        hand: list[int],
+        melds: list[_Meld],
+        zimo_tile: int,
+        tool_config: int,
+        candidates: list[int],
+    ) -> None:
         try:
             self.__append_rong_candidate(
-                    relseat, hand, melds, zimo_tile, tool_config, candidates)
+                relseat, hand, melds, zimo_tile, tool_config, candidates
+            )
         except Exception:
             print_exc(file=sys.stderr)
             raise
 
     def __calculate_hand(
-            self, hand: List[int], melds: List[_Meld], hupai: int,
-            dora_indicators: List[int], tool_config: int) -> Tuple[int, int]:
+        self,
+        hand: list[int],
+        melds: list[_Meld],
+        hupai: int,
+        dora_indicators: list[int],
+        tool_config: int,
+    ) -> tuple[int, int]:
         assert isinstance(hand, list)
         assert len(hand) in (2, 5, 8, 11, 14)
         assert isinstance(melds, list)
@@ -186,14 +240,19 @@ class Tool(object):
         assert tool_config >= 0
 
         win_tile = self._convert_to_win_tile(hupai)
-        melds = [
-                Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
-                for meld_type, tiles, opened in melds]
+        _melds = [
+            Meld(meld_type=meld_type, tiles=tiles, opened=(opened == 1))
+            for meld_type, tiles, opened in melds
+        ]
         hand_config = self._decode_tool_config(tool_config)
 
         response = self.__hand_calculator.estimate_hand_value(
-                tiles=hand, win_tile=win_tile, melds=melds,
-                dora_indicators=dora_indicators, config=hand_config)
+            tiles=hand,
+            win_tile=win_tile,
+            melds=_melds,
+            dora_indicators=dora_indicators,
+            config=hand_config,
+        )
 
         if response.error is None:
             if 13 <= response.han and response.han < 26:
@@ -204,12 +263,18 @@ class Tool(object):
 
         raise RuntimeError(response.error)
 
-
     def calculate_hand(
-            self, hand: List[int], melds: List[_Meld], hupai: int,
-            dora_indicators: List[int], tool_config: int) -> Tuple[int, int]:
+        self,
+        hand: list[int],
+        melds: list[_Meld],
+        hupai: int,
+        dora_indicators: list[int],
+        tool_config: int,
+    ) -> tuple[int, int]:
         try:
-            return self.__calculate_hand(hand, melds, hupai, dora_indicators, tool_config)
+            return self.__calculate_hand(
+                hand, melds, hupai, dora_indicators, tool_config
+            )
         except Exception:
             print_exc(file=sys.stderr)
             raise

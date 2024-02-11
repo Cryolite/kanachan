@@ -8,8 +8,9 @@ class DecodeConverter(nn.Module):
     def __init__(self, mode: str) -> None:
         super().__init__()
 
-        if mode not in ('scores', 'probs', 'log_probs', 'argmax'):
-            raise RuntimeError(f'{mode}: An invalid mode.')
+        if mode not in ("scores", "probs", "log_probs", "argmax"):
+            msg = f"{mode}: An invalid mode."
+            raise RuntimeError(msg)
         self.__mode = mode
 
     def forward(self, candidates: Tensor, decode: Tensor) -> Tensor:
@@ -20,21 +21,21 @@ class DecodeConverter(nn.Module):
         assert decode.size(0) == batch_size
         assert decode.size(1) == MAX_NUM_ACTION_CANDIDATES
 
-        if self.__mode in ('probabilities', 'log_probabilities'):
+        if self.__mode in ("probabilities", "log_probabilities"):
             mask = candidates >= NUM_TYPES_OF_ACTIONS
             decode = decode.masked_fill(mask, -math.inf)
-            if self.__mode == 'probabilities':
+            if self.__mode == "probabilities":
                 result = torch.softmax(decode, 1)
                 result = result.masked_fill(mask, 0.0)
             else:
-                assert self.__mode == 'log_probabilities'
+                assert self.__mode == "log_probabilities"
                 result = torch.log_softmax(decode, 1)
                 result = result.masked_fill(mask, -math.inf)
             return result
 
-        assert self.__mode in ('scores', 'argmax')
+        assert self.__mode in ("scores", "argmax")
         mask = candidates >= NUM_TYPES_OF_ACTIONS
         score = decode.masked_fill(mask, -math.inf)
-        if self.__mode == 'scores':
+        if self.__mode == "scores":
             return score
         return score.argmax(1)
