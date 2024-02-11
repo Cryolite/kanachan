@@ -3,17 +3,19 @@ from dataclasses import dataclass, field
 from typing import Any
 from omegaconf import MISSING
 from hydra.core.config_store import ConfigStore
-import kanachan.training.core.config.device # pylint: disable=unused-import
-import kanachan.training.core.config.encoder # pylint: disable=unused-import
-import kanachan.training.core.config.optimizer # pylint: disable=unused-import
+
+# pylint: disable=unused-import
+import kanachan.training.core.config.device
+import kanachan.training.core.config.encoder
+import kanachan.training.core.config.optimizer
 
 
 _defaults = [
-    { 'device': 'cuda' },
-    { 'encoder': 'bert_base' },
-    { 'decoder': 'single' },
-    { 'optimizer': 'adam' },
-    '_self_'
+    {"device": "cuda"},
+    {"encoder": "bert_base"},
+    {"decoder": "single"},
+    {"optimizer": "adam"},
+    "_self_",
 ]
 
 
@@ -27,11 +29,11 @@ class Config:
     initial_model_index: int | None = None
     checkpointing: bool = False
     batch_size: int = MISSING
-    loss_function: str = 'symlog'
+    loss_function: str = "symlog"
     gradient_accumulation_steps: int = 1
     max_gradient_norm: float = 1.0
     snapshot_interval: int = 0
 
 
 config_store = ConfigStore.instance()
-config_store.store(name='config', node=Config)
+config_store.store(name="config", node=Config)
