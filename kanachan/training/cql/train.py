@@ -24,8 +24,8 @@ from torch.distributed import (
     all_reduce,
 )
 from torch.utils.tensorboard.writer import SummaryWriter
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict import TensorDict  # type: ignore
+from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
 from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import (
     get_distributed_environment,
@@ -346,7 +346,7 @@ def _main(config: DictConfig) -> None:
     ):
         errmsg = (
             f"{config.rewrite_rooms}: "
-            "`rewrite_rooms` must be an integer within the range [0, 4]."
+            "`rewrite_rooms` must be an integer within the range `[0, 4]`."
         )
         raise RuntimeError(errmsg)
 
@@ -374,7 +374,7 @@ def _main(config: DictConfig) -> None:
     ):
         errmsg = (
             f"{config.rewrite_grades}: "
-            "`rewrite_grades` must be an integer within the range [0, 15]."
+            "`rewrite_grades` must be an integer within the range `[0, 15]`."
         )
         raise RuntimeError(errmsg)
 
@@ -390,8 +390,7 @@ def _main(config: DictConfig) -> None:
                 "for CPU."
             )
             raise RuntimeError(errmsg)
-    else:
-        assert device.type == "cuda"
+    elif device.type == "cuda":
         if config.num_workers is None:
             config.num_workers = 2
         if config.num_workers < 0:
@@ -402,6 +401,9 @@ def _main(config: DictConfig) -> None:
                 f"{config.num_workers}: An invalid number of workers for GPU."
             )
             raise RuntimeError(errmsg)
+    else:
+        errmsg = f"{device.type}: An unsupported device type."
+        raise ValueError(errmsg)
 
     if config.replay_buffer_size < 0:
         errmsg = (
@@ -451,20 +453,10 @@ def _main(config: DictConfig) -> None:
             )
             raise RuntimeError(errmsg)
 
-    if (config.target_update_interval == 0) != (
-        config.target_update_rate == 0.0
-    ):
+    if not config.double_q_learning or config.target_update_interval == 0:
         errmsg = (
-            "`target_update_interval` and `target_update_rate` "
-            "must be zero simultaneously."
-        )
-        raise RuntimeError(errmsg)
-    enable_target_network = config.target_update_interval > 0
-
-    if not enable_target_network and config.double_q_learning:
-        errmsg = (
-            "`double_q_learning` must be disabled "
-            "if target network is not enabled."
+            "`target_update_interval` must be a positive integer "
+            "for double Q-learning."
         )
         raise RuntimeError(errmsg)
 
@@ -483,7 +475,7 @@ def _main(config: DictConfig) -> None:
 
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
-                if enable_target_network:
+                if config.double_q_learning:
                     match = re.search(
                         "^(?:(?:source|target)-(?:encoder|decoder)|optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$",
                         child,
@@ -515,11 +507,10 @@ def _main(config: DictConfig) -> None:
             num_samples = config.initial_model_index
             infix = f".{num_samples}"
 
-        if enable_target_network:
-            source_encoder_snapshot_path = (
+        if config.double_q_learning:
+            source_encoder_snapshot_path = Path(
                 config.initial_model_prefix / f"source-encoder{infix}.pth"
             )
-            assert source_encoder_snapshot_path is not None
             if not source_encoder_snapshot_path.exists():
                 errmsg = f"{source_encoder_snapshot_path}: Does not exist."
                 raise RuntimeError(errmsg)
@@ -527,10 +518,9 @@ def _main(config: DictConfig) -> None:
                 errmsg = f"{source_encoder_snapshot_path}: Not a file."
                 raise RuntimeError(errmsg)
 
-            source_decoder_snapshot_path = (
+            source_decoder_snapshot_path = Path(
                 config.initial_model_prefix / f"source-decoder{infix}.pth"
             )
-            assert source_decoder_snapshot_path is not None
             if not source_decoder_snapshot_path.exists():
                 errmsg = f"{source_decoder_snapshot_path}: Does not exist."
                 raise RuntimeError(errmsg)
@@ -538,10 +528,9 @@ def _main(config: DictConfig) -> None:
                 errmsg = f"{source_decoder_snapshot_path}: Not a file."
                 raise RuntimeError(errmsg)
 
-            target_encoder_snapshot_path = (
+            target_encoder_snapshot_path = Path(
                 config.initial_model_prefix / f"target-encoder{infix}.pth"
             )
-            assert target_encoder_snapshot_path is not None
             if not target_encoder_snapshot_path.exists():
                 errmsg = f"{target_encoder_snapshot_path}: Does not exist."
                 raise RuntimeError(errmsg)
@@ -549,10 +538,9 @@ def _main(config: DictConfig) -> None:
                 errmsg = f"{target_encoder_snapshot_path}: Not a file."
                 raise RuntimeError(errmsg)
 
-            target_decoder_snapshot_path = (
+            target_decoder_snapshot_path = Path(
                 config.initial_model_prefix / f"target-decoder{infix}.pth"
             )
-            assert target_decoder_snapshot_path is not None
             if not target_decoder_snapshot_path.exists():
                 errmsg = f"{target_decoder_snapshot_path}: Does not exist."
                 raise RuntimeError(errmsg)
@@ -560,10 +548,9 @@ def _main(config: DictConfig) -> None:
                 errmsg = f"{target_decoder_snapshot_path}: Not a file."
                 raise RuntimeError(errmsg)
         else:
-            encoder_snapshot_path = (
+            encoder_snapshot_path = Path(
                 config.initial_model_prefix / f"encoder{infix}.pth"
             )
-            assert encoder_snapshot_path is not None
             if not encoder_snapshot_path.exists():
                 errmsg = f"{encoder_snapshot_path}: Does not exist."
                 raise RuntimeError(errmsg)
@@ -571,10 +558,9 @@ def _main(config: DictConfig) -> None:
                 errmsg = f"{encoder_snapshot_path}: Not a file."
                 raise RuntimeError(errmsg)
 
-            decoder_snapshot_path = (
+            decoder_snapshot_path = Path(
                 config.initial_model_prefix / f"decoder{infix}.pth"
             )
-            assert decoder_snapshot_path is not None
             if not decoder_snapshot_path.exists():
                 errmsg = f"{decoder_snapshot_path}: Does not exist."
                 raise RuntimeError(errmsg)
@@ -582,20 +568,18 @@ def _main(config: DictConfig) -> None:
                 errmsg = f"{decoder_snapshot_path}: Not a file."
                 raise RuntimeError(errmsg)
 
-        optimizer_snapshot_path = (
+        optimizer_snapshot_path = Path(
             config.initial_model_prefix / f"optimizer{infix}.pth"
         )
-        assert optimizer_snapshot_path is not None
         if (
             not optimizer_snapshot_path.is_file()
             or config.optimizer.initialize
         ):
             optimizer_snapshot_path = None
 
-        scheduler_snapshot_path = (
+        scheduler_snapshot_path = Path(
             config.initial_model_prefix / f"lr-scheduler{infix}.pth"
         )
-        assert scheduler_snapshot_path is not None
         if (
             not scheduler_snapshot_path.is_file()
             or config.optimizer.initialize
@@ -609,7 +593,7 @@ def _main(config: DictConfig) -> None:
         errmsg = f"{config.reward_plugin}: Not a file."
         raise RuntimeError(errmsg)
 
-    if config.discount_factor <= 0.0 or 1.0 < config.discount_factor:
+    if config.discount_factor < 0.0 or 1.0 < config.discount_factor:
         errmsg = (
             f"{config.discount_factor}: "
             "An invalid value for `discount_factor`."
@@ -656,7 +640,7 @@ def _main(config: DictConfig) -> None:
     if config.target_update_rate < 0.0 or config.target_update_rate > 1.0:
         errmsg = (
             f"{config.target_update_rate}: `target_update_rate` must be "
-            "a real value within the range [0.0, 1.0]."
+            "a real value within the range `[0.0, 1.0]`."
         )
         raise RuntimeError(errmsg)
 
@@ -740,8 +724,7 @@ def _main(config: DictConfig) -> None:
 
         _config.optimizer.dump(config)
 
-        if config.target_update_interval > 0:
-            assert config.target_update_rate > 0.0
+        if config.double_q_learning:
             logging.info(
                 "Target network update interval: %d",
                 config.target_update_interval,
@@ -749,9 +732,18 @@ def _main(config: DictConfig) -> None:
             logging.info(
                 "Target network update rate: %f", config.target_update_rate
             )
+        else:
+            logging.info(
+                "Target network update interval: "
+                "(ignored since double Q-learning is disabled)"
+            )
+            logging.info(
+                "Target network update rate: "
+                "(ignored since double Q-learning is disabled)"
+            )
 
         if config.initial_model_prefix is not None:
-            if enable_target_network:
+            if config.double_q_learning:
                 logging.info(
                     "Initial source encoder snapshot: %s",
                     source_encoder_snapshot_path,
@@ -809,8 +801,8 @@ def _main(config: DictConfig) -> None:
     )
     encoder_tdm = TensorDictModule(
         encoder,
-        in_keys=["sparse", "numeric", "progression", "candidates"],
-        out_keys=["encode"],
+        in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+        out_keys=["encode"],  # type: ignore
     )
     decoder = QRDecoder(
         input_dimension=config.encoder.dimension,
@@ -830,22 +822,22 @@ def _main(config: DictConfig) -> None:
             _param.zero_()
     decoder_tdm = TensorDictModule(
         decoder,
-        in_keys=["candidates", "encode"],
-        out_keys=["qr_action_value"],
+        in_keys=["candidates", "encode"],  # type: ignore
+        out_keys=["qr_action_value"],  # type: ignore
     )
     network = TensorDictSequential(encoder_tdm, decoder_tdm)
     if world_size >= 2:
         network.to(device=device)
         for _param in network.parameters():
             broadcast(_param.data, src=0)
-        network.to(device="cpu")
+        network.to(device=torch.device("cpu"))
 
     target_encoder: Encoder | None = None
     target_encoder_tdm: TensorDictModule | None = None
     target_decoder: QRDecoder | None = None
     target_decoder_tdm: TensorDictModule | None = None
     target_network: TensorDictSequential | None = None
-    if enable_target_network:
+    if config.double_q_learning:
         target_encoder = Encoder(
             position_encoder=config.encoder.position_encoder,
             dimension=config.encoder.dimension,
@@ -861,8 +853,8 @@ def _main(config: DictConfig) -> None:
         )
         target_encoder_tdm = TensorDictModule(
             target_encoder,
-            in_keys=["sparse", "numeric", "progression", "candidates"],
-            out_keys=["encode"],
+            in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+            out_keys=["encode"],  # type: ignore
         )
         target_decoder = QRDecoder(
             input_dimension=config.encoder.dimension,
@@ -879,8 +871,8 @@ def _main(config: DictConfig) -> None:
         )
         target_decoder_tdm = TensorDictModule(
             target_decoder,
-            in_keys=["candidates", "encode"],
-            out_keys=["qr_action_value"],
+            in_keys=["candidates", "encode"],  # type: ignore
+            out_keys=["qr_action_value"],  # type: ignore
         )
         target_network = TensorDictSequential(
             target_encoder_tdm, target_decoder_tdm
@@ -894,16 +886,16 @@ def _main(config: DictConfig) -> None:
     q_decoder = QDecoder()
     q_decoder_tdm = TensorDictModule(
         q_decoder,
-        in_keys=["qr_action_value"],
-        out_keys=["action_value"],
+        in_keys=["qr_action_value"],  # type: ignore
+        out_keys=["action_value"],  # type: ignore
     )
     argmax_layer = DecodeConverter("argmax")
     argmax_layer_tdm = TensorDictModule(
         argmax_layer,
-        in_keys=["candidates", "action_value"],
-        out_keys=["action"],
+        in_keys=["candidates", "action_value"],  # type: ignore
+        out_keys=["action"],  # type: ignore
     )
-    if enable_target_network:
+    if config.double_q_learning:
         assert target_encoder_tdm is not None
         assert target_decoder_tdm is not None
         network_to_save = TensorDictSequential(
@@ -924,7 +916,7 @@ def _main(config: DictConfig) -> None:
         network = DistributedDataParallel(network)
         network = nn.SyncBatchNorm.convert_sync_batchnorm(network)
 
-    if enable_target_network:
+    if config.double_q_learning:
         assert target_network is not None
         target_network.requires_grad_(False)
         target_network.eval()
@@ -948,13 +940,13 @@ def _main(config: DictConfig) -> None:
         )
         encoder.load_state_dict(encoder_state_dict)
 
-        if enable_target_network:
+        if config.double_q_learning:
             assert target_encoder is not None
             target_encoder.load_state_dict(encoder_state_dict)
 
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
-        if enable_target_network:
+        if config.double_q_learning:
             assert source_encoder_snapshot_path is not None
             assert source_decoder_snapshot_path is not None
             assert target_encoder_snapshot_path is not None
@@ -1017,7 +1009,7 @@ def _main(config: DictConfig) -> None:
 
         infix = "" if num_samples is None else f".{num_samples}"
 
-        if enable_target_network:
+        if config.double_q_learning:
             assert target_encoder is not None
             assert target_decoder is not None
             torch.save(
@@ -1052,7 +1044,7 @@ def _main(config: DictConfig) -> None:
                 snapshots_path / f"lr-scheduler{infix}.pth",
             )
 
-        if enable_target_network:
+        if config.double_q_learning:
             assert target_encoder is not None
             assert target_decoder is not None
             encoder_to_save = target_encoder

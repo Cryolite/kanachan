@@ -131,10 +131,16 @@ class QRDecoder(nn.Module):
 def _get_a_star(source_network: nn.Module, data: TensorDict) -> Tensor:
     batch_size = int(data.batch_size[0])
 
-    copy: TensorDict = data["next"]
-    assert isinstance(copy, TensorDict)
-    copy = copy.detach()
-    copy = copy.clone()
+    copy = TensorDict(
+        {
+            "sparse": data["next", "sparse"],
+            "numeric": data["next", "numeric"],
+            "progression": data["next", "progression"],
+            "candidates": data["next", "candidates"],
+        },
+        batch_size=data.batch_size,
+        device=data.device,
+    )
     with torch.no_grad():
         source_network(copy)
 
@@ -169,17 +175,25 @@ def compute_td_error(
 
     a_star = _get_a_star(source_network, data)
 
-    copy: TensorDict = data.detach()
-    copy = copy.clone()
+    copy = TensorDict(
+        {
+            "sparse": data["sparse"],
+            "numeric": data["numeric"],
+            "progression": data["progression"],
+            "candidates": data["candidates"],
+        },
+        batch_size=data.batch_size,
+        device=data.device,
+    )
     source_network(copy)
     data["qr_action_value"] = copy["qr_action_value"]
 
     _copy = TensorDict(
         {
-            "sparse": data["next", "sparse"].detach().clone(),
-            "numeric": data["next", "numeric"].detach().clone(),
-            "progression": data["next", "progression"].detach().clone(),
-            "candidates": data["next", "candidates"].detach().clone(),
+            "sparse": data["next", "sparse"],
+            "numeric": data["next", "numeric"],
+            "progression": data["next", "progression"],
+            "candidates": data["next", "candidates"],
         },
         batch_size=data.batch_size,
         device=data.device,

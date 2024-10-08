@@ -28,7 +28,7 @@ class Config:
     initial_model_prefix: Path | None = None
     initial_model_index: int | None = None
     reward_plugin: Path = MISSING
-    double_q_learning: bool = False
+    double_q_learning: bool = True
     discount_factor: float = 0.99
     kappa: float = 1.0
     alpha: float = 1.0
