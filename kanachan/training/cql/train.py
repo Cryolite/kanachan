@@ -237,22 +237,25 @@ def _training(
             optimizer.zero_grad()
 
             if (
-                target_update_interval != 0
+                target_network is not None
                 and batch_count
                 % (gradient_accumulation_steps * target_update_interval)
                 == 0
             ):
+                assert target_update_interval >= 1
                 assert target_update_rate > 0.0
-                assert target_network is not None
                 with torch.no_grad():
-                    for _param, _target_param in zip(
-                        source_network.parameters(),
-                        target_network.parameters(),
-                    ):
-                        _target_param.data *= 1.0 - target_update_rate
-                        _target_param.data += (
-                            target_update_rate * _param.data.detach().clone()
-                        )
+                    _u = torch.nn.utils.parameters_to_vector(
+                        source_network.parameters()
+                    )
+                    _v = torch.nn.utils.parameters_to_vector(
+                        target_network.parameters()
+                    )
+                    _v *= 1.0 - target_update_rate
+                    _v += target_update_rate * _u
+                    torch.nn.utils.vector_to_parameters(
+                        _v, target_network.parameters()
+                    )
 
             if local_rank == 0:
                 logging.info(
@@ -453,13 +456,6 @@ def _main(config: DictConfig) -> None:
             )
             raise RuntimeError(errmsg)
 
-    if not config.double_q_learning or config.target_update_interval == 0:
-        errmsg = (
-            "`target_update_interval` must be a positive integer "
-            "for double Q-learning."
-        )
-        raise RuntimeError(errmsg)
-
     num_samples = 0
     encoder_snapshot_path: Path | None = None
     decoder_snapshot_path: Path | None = None
@@ -636,11 +632,23 @@ def _main(config: DictConfig) -> None:
             "`target_update_interval` must be a non-negative integer."
         )
         raise RuntimeError(errmsg)
+    if config.double_q_learning and config.target_update_interval == 0:
+        errmsg = (
+            "`target_update_interval` must be a positive integer "
+            "for double Q-learning."
+        )
+        raise RuntimeError(errmsg)
 
     if config.target_update_rate < 0.0 or config.target_update_rate > 1.0:
         errmsg = (
             f"{config.target_update_rate}: `target_update_rate` must be "
             "a real value within the range `[0.0, 1.0]`."
+        )
+        raise RuntimeError(errmsg)
+    if config.double_q_learning and config.target_update_rate == 0.0:
+        errmsg = (
+            "`target_update_rate` must be a positive real value "
+            "for double Q-learning."
         )
         raise RuntimeError(errmsg)
 
