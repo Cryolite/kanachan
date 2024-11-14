@@ -127,6 +127,12 @@ class QRDecoder(nn.Module):
 
         return theta
 
+    def reset_parameters(self) -> None:
+        for state_value_decoder in self.state_value_decoder_list:
+            state_value_decoder.reset_parameters()
+        for advantage_decoder in self.advantage_decoder_list:
+            advantage_decoder.reset_parameters()
+
 
 def _get_a_star(source_network: nn.Module, data: TensorDict) -> Tensor:
     batch_size = int(data.batch_size[0])

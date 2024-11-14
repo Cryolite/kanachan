@@ -192,3 +192,8 @@ class Decoder(nn.Module):
             raise ValueError(self.__output_mode)
 
         return decode.to(dtype=original_dtype)
+
+    def reset_parameters(self) -> None:
+        for layer in self.layers:
+            if isinstance(layer, (nn.Linear, NoisyLinear)):
+                layer.reset_parameters()
