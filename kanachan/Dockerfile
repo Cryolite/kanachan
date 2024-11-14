@@ -1,5 +1,5 @@
-ARG BASE_IMAGE=nvcr.io/nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
-ARG PYTHON_VERSION=latest
+ARG BASE_IMAGE=nvcr.io/nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+ARG PYTHON_VERSION=3.12.7
 ARG BUILD_TYPE=Release
 FROM $BASE_IMAGE
 ARG PYTHON_VERSION
@@ -67,7 +67,7 @@ RUN set -euxo pipefail; \
 # Install PyTorch.
 RUN set -euxo pipefail; \
     eval "$(pyenv init -)"; \
-    python3 -m pip install -U torch
+    python3 -m pip install -U torch --index-url https://download.pytorch.org/whl/cu121
 
 # Install Apex.
 RUN set -euxo pipefail; \
