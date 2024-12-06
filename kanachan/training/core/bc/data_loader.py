@@ -1,7 +1,7 @@
 from pathlib import Path
 from torch import Tensor
 import torch.utils.data
-from tensordict import TensorDict
+from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
     MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_NUMERIC_FEATURES,

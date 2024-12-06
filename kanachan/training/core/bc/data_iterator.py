@@ -82,28 +82,28 @@ class DataIterator(object):
         line = line.rstrip("\n")
         (
             uuid,
-            sparse,
-            numeric,
-            progression,
-            candidates,
-            action,
-            round_summary,
-            results,
+            sparse_str,
+            numeric_str,
+            progression_str,
+            candidates_str,
+            action_str,
+            round_summary_str,
+            results_str,
         ) = line.split("\t")
 
-        sparse = [int(x) for x in sparse.split(",")]
-        if len(sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
-            errmsg = f"{uuid}: {len(sparse)}"
+        _sparse = [int(x) for x in sparse_str.split(",")]
+        if len(_sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
+            errmsg = f"{uuid}: {len(_sparse)}"
             raise RuntimeError(errmsg)
-        for x in sparse:
+        for x in _sparse:
             if x >= NUM_TYPES_OF_SPARSE_FEATURES:
                 errmsg = f"{uuid}: {x}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
+        for _ in range(len(_sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
             # padding
-            sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
+            _sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
         sparse = torch.tensor(
-            sparse, device=torch.device("cpu"), dtype=torch.int32
+            _sparse, device=torch.device("cpu"), dtype=torch.int32
         )
         if self.__rewrite_rooms is not None:
             sparse[0] = self.__rewrite_rooms
@@ -113,69 +113,69 @@ class DataIterator(object):
             sparse[4] = 39 + self.__rewrite_grades
             sparse[5] = 55 + self.__rewrite_grades
 
-        numeric = [int(x) for x in numeric.split(",")]
-        if len(numeric) != NUM_NUMERIC_FEATURES:
+        _numeric = [int(x) for x in numeric_str.split(",")]
+        if len(_numeric) != NUM_NUMERIC_FEATURES:
             raise RuntimeError(uuid)
         numeric = torch.tensor(
-            numeric, device=torch.device("cpu"), dtype=torch.int32
+            _numeric, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        progression = [int(x) for x in progression.split(",")]
-        if len(progression) > MAX_LENGTH_OF_PROGRESSION_FEATURES:
-            errmsg = f"{uuid}: {len(progression)}"
+        _progression = [int(x) for x in progression_str.split(",")]
+        if len(_progression) > MAX_LENGTH_OF_PROGRESSION_FEATURES:
+            errmsg = f"{uuid}: {len(_progression)}"
             raise RuntimeError(errmsg)
-        for x in progression:
+        for x in _progression:
             if x >= NUM_TYPES_OF_PROGRESSION_FEATURES:
                 errmsg = f"{uuid}: {x}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(progression), MAX_LENGTH_OF_PROGRESSION_FEATURES):
+        for _ in range(len(_progression), MAX_LENGTH_OF_PROGRESSION_FEATURES):
             # padding
-            progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
+            _progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
         progression = torch.tensor(
-            progression, device=torch.device("cpu"), dtype=torch.int32
+            _progression, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        candidates = [int(x) for x in candidates.split(",")]
-        if len(candidates) > MAX_NUM_ACTION_CANDIDATES:
-            errmsg = f"{uuid}: {len(candidates)}"
+        _candidates = [int(x) for x in candidates_str.split(",")]
+        if len(_candidates) > MAX_NUM_ACTION_CANDIDATES:
+            errmsg = f"{uuid}: {len(_candidates)}"
             raise RuntimeError(errmsg)
-        for x in candidates:
+        for x in _candidates:
             if x >= NUM_TYPES_OF_ACTIONS:
                 errmsg = f"{uuid}: {x}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(candidates), MAX_NUM_ACTION_CANDIDATES):
+        for _ in range(len(_candidates), MAX_NUM_ACTION_CANDIDATES):
             # padding
-            candidates.append(NUM_TYPES_OF_ACTIONS)
+            _candidates.append(NUM_TYPES_OF_ACTIONS)
         candidates = torch.tensor(
-            candidates, device=torch.device("cpu"), dtype=torch.int32
+            _candidates, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        action = int(action)
+        _action = int(action_str)
         action = torch.tensor(
-            action, device=torch.device("cpu"), dtype=torch.int32
+            _action, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        round_summary = [int(x) for x in round_summary.split(",")]
-        if len(round_summary) > MAX_NUM_ROUND_SUMMARY:
-            errmsg = f"{uuid}: {len(round_summary)}"
+        _round_summary = [int(x) for x in round_summary_str.split(",")]
+        if len(_round_summary) > MAX_NUM_ROUND_SUMMARY:
+            errmsg = f"{uuid}: {len(_round_summary)}"
             raise RuntimeError(errmsg)
-        for x in round_summary:
+        for x in _round_summary:
             if x >= NUM_TYPES_OF_ROUND_SUMMARY:
                 errmsg = f"{uuid}: {x}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(round_summary), MAX_NUM_ROUND_SUMMARY):
+        for _ in range(len(_round_summary), MAX_NUM_ROUND_SUMMARY):
             # padding
-            round_summary.append(NUM_TYPES_OF_ROUND_SUMMARY)
+            _round_summary.append(NUM_TYPES_OF_ROUND_SUMMARY)
         round_summary = torch.tensor(
-            round_summary, device=torch.device("cpu"), dtype=torch.int32
+            _round_summary, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        results = [int(x) for x in results.split(",")]
-        if len(results) != NUM_RESULTS:
-            errmsg = f"{uuid}: {len(results)}"
+        _results = [int(x) for x in results_str.split(",")]
+        if len(_results) != NUM_RESULTS:
+            errmsg = f"{uuid}: {len(_results)}"
             raise RuntimeError(errmsg)
         results = torch.tensor(
-            results, device=torch.device("cpu"), dtype=torch.int32
+            _results, device=torch.device("cpu"), dtype=torch.int32
         )
 
         return (

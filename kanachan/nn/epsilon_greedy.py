@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModuleBase
+from tensordict import TensorDict  # type: ignore
+from tensordict.nn import TensorDictModuleBase  # type: ignore
 from kanachan.constants import NUM_TYPES_OF_ACTIONS, MAX_NUM_ACTION_CANDIDATES
 
 

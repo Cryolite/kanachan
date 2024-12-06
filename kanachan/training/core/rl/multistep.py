@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from tensordict import TensorDict
+from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES,
     MAX_NUM_ACTIVE_SPARSE_FEATURES,

@@ -23,13 +23,21 @@ class DataIterator:
         local_rank: int,
     ) -> None:
         if num_skip_samples < 0:
-            errmsg = f"{num_skip_samples}: An invalid value for `num_skip_samples`."
+            errmsg = (
+                f"{num_skip_samples}: An invalid value for `num_skip_samples`."
+            )
             raise ValueError(errmsg)
-        if rewrite_rooms is not None and (rewrite_rooms < 0 or rewrite_rooms > 4):
+        if rewrite_rooms is not None and (
+            rewrite_rooms < 0 or rewrite_rooms > 4
+        ):
             errmsg = f"{rewrite_rooms}: An invalid value for `rewrite_rooms`."
             raise ValueError(errmsg)
-        if rewrite_grades is not None and (rewrite_grades < 0 or rewrite_grades > 14):
-            errmsg = f"{rewrite_grades}: An invalid value for `rewrite_grades`."
+        if rewrite_grades is not None and (
+            rewrite_grades < 0 or rewrite_grades > 14
+        ):
+            errmsg = (
+                f"{rewrite_grades}: An invalid value for `rewrite_grades`."
+            )
             raise ValueError(errmsg)
 
         if path.suffix == ".gz":
@@ -70,17 +78,17 @@ class DataIterator:
 
     def __parse_line(self, line: str) -> tuple[Tensor, Tensor, Tensor]:
         line = line.rstrip("\n")
-        uuid, sparse, numeric, game_result = line.split("\t")
+        uuid, sparse_str, numeric_str, game_result_str = line.split("\t")
 
-        sparse = [int(x) for x in sparse.split(",")]
-        if len(sparse) != EOR_NUM_SPARSE_FEATURES:
-            errmsg = f"{uuid}: {len(sparse)}"
+        _sparse = [int(x) for x in sparse_str.split(",")]
+        if len(_sparse) != EOR_NUM_SPARSE_FEATURES:
+            errmsg = f"{uuid}: {len(_sparse)}"
             raise RuntimeError(errmsg)
-        for x in sparse:
+        for x in _sparse:
             if x >= EOR_NUM_TYPES_OF_SPARSE_FEATURES:
                 errmsg = f"{uuid}: {x}"
                 raise RuntimeError(errmsg)
-        sparse = torch.tensor(sparse, device="cpu", dtype=torch.int32)
+        sparse = torch.tensor(_sparse, device="cpu", dtype=torch.int32)
         if self.__rewrite_rooms is not None:
             sparse[0] = self.__rewrite_rooms
         if self.__rewrite_grades is not None:
@@ -89,16 +97,16 @@ class DataIterator:
             sparse[4] = 39 + self.__rewrite_grades
             sparse[5] = 55 + self.__rewrite_grades
 
-        numeric = [int(x) for x in numeric.split(",")]
-        if len(numeric) != EOR_NUM_NUMERIC_FEATURES:
+        _numeric = [int(x) for x in numeric_str.split(",")]
+        if len(_numeric) != EOR_NUM_NUMERIC_FEATURES:
             raise RuntimeError(uuid)
-        numeric = torch.tensor(numeric, device="cpu", dtype=torch.int32)
+        numeric = torch.tensor(_numeric, device="cpu", dtype=torch.int32)
 
-        game_result = [int(x) for x in game_result.split(",")]
-        if len(game_result) != EOR_NUM_GAME_RESULT:
+        _game_result = [int(x) for x in game_result_str.split(",")]
+        if len(_game_result) != EOR_NUM_GAME_RESULT:
             raise RuntimeError(uuid)
         game_result = torch.tensor(
-            game_result, device="cpu", dtype=torch.int32
+            _game_result, device="cpu", dtype=torch.int32
         )
 
         return sparse, numeric, game_result

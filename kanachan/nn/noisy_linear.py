@@ -3,7 +3,7 @@ from typing import Sequence
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
-from torchrl.data.utils import DEVICE_TYPING
+from torchrl.data.utils import DEVICE_TYPING  # type: ignore
 
 
 class NoisyLinear(nn.Module):
@@ -137,4 +137,4 @@ class NoisyLinear(nn.Module):
         else:
             bias = torch.zeros_like(x)
 
-        return F.linear(x, weight, bias)
+        return F.linear(x, weight, bias)  # pylint: disable=not-callable

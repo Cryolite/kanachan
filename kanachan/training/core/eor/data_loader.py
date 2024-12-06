@@ -1,7 +1,7 @@
 from pathlib import Path
 from torch import Tensor
 import torch.utils.data
-from tensordict import TensorDict
+from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
     EOR_NUM_SPARSE_FEATURES,
     EOR_NUM_NUMERIC_FEATURES,

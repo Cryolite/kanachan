@@ -1,7 +1,7 @@
 from pathlib import Path
 from torch import Tensor
 import torch.utils.data
-from tensordict import TensorDict
+from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
     MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_NUMERIC_FEATURES,
@@ -147,7 +147,7 @@ class DataLoader:
 
         with torch.no_grad():
             self.__get_reward(data, False)
-        if data.get(("next", "reward"), None) is None:
+        if data.get(("next", "reward"), None) is None:  # type: ignore
             errmsg = "`get_reward` did not set the `reward` tensor."
             raise RuntimeError(errmsg)
         reward: Tensor = data["next", "reward"]

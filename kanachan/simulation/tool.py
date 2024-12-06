@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import sys
 from traceback import print_exc
-from mahjong.shanten import Shanten
-from mahjong.meld import Meld
-from mahjong.hand_calculating.hand_config import OptionalRules, HandConfig
-from mahjong.hand_calculating.hand import HandCalculator
+from mahjong.shanten import Shanten  # type: ignore
+from mahjong.meld import Meld  # type: ignore
+from mahjong.hand_calculating.hand_config import OptionalRules, HandConfig  # type: ignore
+from mahjong.hand_calculating.hand import HandCalculator  # type: ignore
 
 
 class Tool(object):
@@ -51,6 +51,7 @@ class Tool(object):
         is_daburu_riichi = (tool_config & (1 << 7)) != 0
         is_tenhou = (tool_config & (1 << 8)) != 0
         is_chiihou = (tool_config & (1 << 9)) != 0
+        player_wind = 27
         if (tool_config & (1 << 10)) != 0:
             player_wind = 27
         elif (tool_config & (1 << 11)) != 0:
@@ -59,6 +60,7 @@ class Tool(object):
             player_wind = 29
         elif (tool_config & (1 << 13)) != 0:
             player_wind = 30
+        round_wind = 27
         if (tool_config & (1 << 14)) != 0:
             round_wind = 27
         elif (tool_config & (1 << 15)) != 0:

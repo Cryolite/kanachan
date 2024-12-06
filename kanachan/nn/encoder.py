@@ -75,6 +75,7 @@ class Encoder(nn.Module):
             device=device,
             dtype=dtype,
         )
+        self.position_encoder: nn.Module
         if position_encoder == "positional_encoding":
             self.position_encoder = PositionalEncoding(
                 max_length=MAX_LENGTH_OF_PROGRESSION_FEATURES,
@@ -202,13 +203,14 @@ class Encoder(nn.Module):
 
         embedding = torch.cat((sparse, numeric, progression, candidates), 1)
 
+        encode: Tensor
         if self.checkpointing:
             encoder_layers = self.encoder.layers
             encode = checkpoint_sequential(
                 encoder_layers, len(encoder_layers), embedding
             )  # type: ignore
         else:
-            encode: Tensor = self.encoder(embedding)
+            encode = self.encoder(embedding)
         assert encode.size() == (batch_size, ENCODER_WIDTH, self.__dimension)
 
         return encode

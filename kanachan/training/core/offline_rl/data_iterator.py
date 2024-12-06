@@ -91,21 +91,28 @@ class DataIterator:
             errmsg = f"An invalid line: {line}"
             raise RuntimeError(errmsg)
 
-        _, sparse, numeric, progression, candidates, action = columns[:6]
+        (
+            _,
+            sparse_str,
+            numeric_str,
+            progression_str,
+            candidates_str,
+            action_str,
+        ) = columns[:6]
 
-        sparse = [int(x) for x in sparse.split(",")]
-        if len(sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
-            errmsg = f"{len(sparse)} > {MAX_NUM_ACTIVE_SPARSE_FEATURES}"
+        _sparse = [int(x) for x in sparse_str.split(",")]
+        if len(_sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
+            errmsg = f"{len(_sparse)} > {MAX_NUM_ACTIVE_SPARSE_FEATURES}"
             raise RuntimeError(errmsg)
-        for x in sparse:
+        for x in _sparse:
             if x >= NUM_TYPES_OF_SPARSE_FEATURES:
                 errmsg = f"{x} >= {NUM_TYPES_OF_SPARSE_FEATURES}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
+        for _ in range(len(_sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
             # padding
-            sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
+            _sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
         sparse = torch.tensor(
-            sparse, device=torch.device("cpu"), dtype=torch.int32
+            _sparse, device=torch.device("cpu"), dtype=torch.int32
         )
         if self.__rewrite_rooms is not None:
             sparse[0] = self.__rewrite_rooms
@@ -115,77 +122,77 @@ class DataIterator:
             sparse[4] = 39 + self.__rewrite_grades
             sparse[5] = 55 + self.__rewrite_grades
 
-        numeric = [int(x) for x in numeric.split(",")]
-        if len(numeric) != NUM_NUMERIC_FEATURES:
-            errmsg = f"{len(numeric)} != {NUM_NUMERIC_FEATURES}"
+        _numeric = [int(x) for x in numeric_str.split(",")]
+        if len(_numeric) != NUM_NUMERIC_FEATURES:
+            errmsg = f"{len(_numeric)} != {NUM_NUMERIC_FEATURES}"
             raise RuntimeError(errmsg)
         numeric = torch.tensor(
-            numeric, device=torch.device("cpu"), dtype=torch.int32
+            _numeric, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        progression = [int(x) for x in progression.split(",")]
-        if len(progression) > MAX_LENGTH_OF_PROGRESSION_FEATURES:
+        _progression = [int(x) for x in progression_str.split(",")]
+        if len(_progression) > MAX_LENGTH_OF_PROGRESSION_FEATURES:
             errmsg = (
-                f"{len(progression)}"
+                f"{len(_progression)}"
                 f" > {MAX_LENGTH_OF_PROGRESSION_FEATURES}"
             )
             raise RuntimeError(errmsg)
-        for x in progression:
+        for x in _progression:
             if x >= NUM_TYPES_OF_PROGRESSION_FEATURES:
                 errmsg = f"{x} >= {NUM_TYPES_OF_PROGRESSION_FEATURES}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(progression), MAX_LENGTH_OF_PROGRESSION_FEATURES):
+        for _ in range(len(_progression), MAX_LENGTH_OF_PROGRESSION_FEATURES):
             # padding
-            progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
+            _progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
         progression = torch.tensor(
-            progression, device=torch.device("cpu"), dtype=torch.int32
+            _progression, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        candidates = [int(x) for x in candidates.split(",")]
-        if len(candidates) > MAX_NUM_ACTION_CANDIDATES:
-            errmsg = f"{len(candidates)} >= {MAX_NUM_ACTION_CANDIDATES}"
+        _candidates = [int(x) for x in candidates_str.split(",")]
+        if len(_candidates) > MAX_NUM_ACTION_CANDIDATES:
+            errmsg = f"{len(_candidates)} >= {MAX_NUM_ACTION_CANDIDATES}"
             raise RuntimeError(errmsg)
-        for x in candidates:
+        for x in _candidates:
             if x >= NUM_TYPES_OF_ACTIONS:
                 errmsg = f"{x} >= {NUM_TYPES_OF_ACTIONS}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(candidates), MAX_NUM_ACTION_CANDIDATES):
+        for _ in range(len(_candidates), MAX_NUM_ACTION_CANDIDATES):
             # padding
-            candidates.append(NUM_TYPES_OF_ACTIONS)
+            _candidates.append(NUM_TYPES_OF_ACTIONS)
         candidates = torch.tensor(
-            candidates, device=torch.device("cpu"), dtype=torch.int32
+            _candidates, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        action = int(action)
+        _action = int(action_str)
         action = torch.tensor(
-            action, device=torch.device("cpu"), dtype=torch.int32
+            _action, device=torch.device("cpu"), dtype=torch.int32
         )
 
         if len(columns) in (10, 12):
             # Not end-of-game.
             (
-                next_sparse,
-                next_numeric,
-                next_progression,
-                next_candidates,
+                next_sparse_str,
+                next_numeric_str,
+                next_progression_str,
+                next_candidates_str,
             ) = columns[6:10]
 
-            next_sparse = [int(x) for x in next_sparse.split(",")]
-            if len(next_sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
+            _next_sparse = [int(x) for x in next_sparse_str.split(",")]
+            if len(_next_sparse) > MAX_NUM_ACTIVE_SPARSE_FEATURES:
                 errmsg = (
-                    f"{len(next_sparse)}"
+                    f"{len(_next_sparse)}"
                     f" > {MAX_NUM_ACTIVE_SPARSE_FEATURES}"
                 )
                 raise RuntimeError(errmsg)
-            for x in next_sparse:
+            for x in _next_sparse:
                 if x >= NUM_TYPES_OF_SPARSE_FEATURES:
                     errmsg = f"{x} >= {NUM_TYPES_OF_SPARSE_FEATURES}"
                     raise RuntimeError(errmsg)
-            for _ in range(len(next_sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
+            for _ in range(len(_next_sparse), MAX_NUM_ACTIVE_SPARSE_FEATURES):
                 # padding
-                next_sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
+                _next_sparse.append(NUM_TYPES_OF_SPARSE_FEATURES)
             next_sparse = torch.tensor(
-                next_sparse, device=torch.device("cpu"), dtype=torch.int32
+                _next_sparse, device=torch.device("cpu"), dtype=torch.int32
             )
             if self.__rewrite_rooms is not None:
                 next_sparse[0] = self.__rewrite_rooms
@@ -195,49 +202,54 @@ class DataIterator:
                 next_sparse[4] = 39 + self.__rewrite_grades
                 next_sparse[5] = 55 + self.__rewrite_grades
 
-            next_numeric = [int(x) for x in next_numeric.split(",")]
-            if len(next_numeric) != NUM_NUMERIC_FEATURES:
-                errmsg = f"{len(next_numeric)} != {NUM_NUMERIC_FEATURES}"
+            _next_numeric = [int(x) for x in next_numeric_str.split(",")]
+            if len(_next_numeric) != NUM_NUMERIC_FEATURES:
+                errmsg = f"{len(_next_numeric)} != {NUM_NUMERIC_FEATURES}"
                 raise RuntimeError(errmsg)
             next_numeric = torch.tensor(
-                next_numeric, device=torch.device("cpu"), dtype=torch.int32
+                _next_numeric, device=torch.device("cpu"), dtype=torch.int32
             )
 
-            next_progression = [int(x) for x in next_progression.split(",")]
-            if len(next_progression) > MAX_LENGTH_OF_PROGRESSION_FEATURES:
+            _next_progression = [
+                int(x) for x in next_progression_str.split(",")
+            ]
+            if len(_next_progression) > MAX_LENGTH_OF_PROGRESSION_FEATURES:
                 errmsg = (
-                    f"{len(next_progression)}"
+                    f"{len(_next_progression)}"
                     f" > {MAX_LENGTH_OF_PROGRESSION_FEATURES}"
                 )
                 raise RuntimeError(errmsg)
-            for x in next_progression:
+            for x in _next_progression:
                 if x >= NUM_TYPES_OF_PROGRESSION_FEATURES:
                     errmsg = f"{x} >= {NUM_TYPES_OF_PROGRESSION_FEATURES}"
                     raise RuntimeError(errmsg)
             for _ in range(
-                len(next_progression), MAX_LENGTH_OF_PROGRESSION_FEATURES
+                len(_next_progression), MAX_LENGTH_OF_PROGRESSION_FEATURES
             ):
                 # padding
-                next_progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
+                _next_progression.append(NUM_TYPES_OF_PROGRESSION_FEATURES)
             next_progression = torch.tensor(
-                next_progression, device=torch.device("cpu"), dtype=torch.int32
+                _next_progression,
+                device=torch.device("cpu"),
+                dtype=torch.int32,
             )
 
-            next_candidates = [int(x) for x in next_candidates.split(",")]
-            if len(next_candidates) > MAX_NUM_ACTION_CANDIDATES:
+            _next_candidates = [int(x) for x in next_candidates_str.split(",")]
+            if len(_next_candidates) > MAX_NUM_ACTION_CANDIDATES:
                 errmsg = (
-                    f"{len(next_candidates)}" f" > {MAX_NUM_ACTION_CANDIDATES}"
+                    f"{len(_next_candidates)}"
+                    f" > {MAX_NUM_ACTION_CANDIDATES}"
                 )
                 raise RuntimeError(errmsg)
-            for x in next_candidates:
+            for x in _next_candidates:
                 if x >= NUM_TYPES_OF_ACTIONS:
                     errmsg = f"{x} >= {NUM_TYPES_OF_ACTIONS}"
                     raise RuntimeError(errmsg)
-            for _ in range(len(next_candidates), MAX_NUM_ACTION_CANDIDATES):
+            for _ in range(len(_next_candidates), MAX_NUM_ACTION_CANDIDATES):
                 # padding
-                next_candidates.append(NUM_TYPES_OF_ACTIONS)
+                _next_candidates.append(NUM_TYPES_OF_ACTIONS)
             next_candidates = torch.tensor(
-                next_candidates, device=torch.device("cpu"), dtype=torch.int32
+                _next_candidates, device=torch.device("cpu"), dtype=torch.int32
             )
 
             if len(columns) == 10:
@@ -259,37 +271,35 @@ class DataIterator:
             else:
                 # End-of-round but not End-of-game
                 assert len(columns) == 12
-                round_summary, results = columns[10:]
+                round_summary_str, results_str = columns[10:]
 
-                round_summary = [int(x) for x in round_summary.split(",")]
-                if len(round_summary) == 0:
+                _round_summary = [int(x) for x in round_summary_str.split(",")]
+                if len(_round_summary) == 0:
                     errmsg = f"An invalid line: {line}"
                     raise RuntimeError(errmsg)
-                if len(round_summary) > MAX_NUM_ROUND_SUMMARY:
-                    errmsg = (
-                        f"{len(round_summary)}" f" > {MAX_NUM_ROUND_SUMMARY}"
-                    )
+                if len(_round_summary) > MAX_NUM_ROUND_SUMMARY:
+                    errmsg = f"{len(_round_summary)} > {MAX_NUM_ROUND_SUMMARY}"
                     raise RuntimeError(errmsg)
-                for x in round_summary:
+                for x in _round_summary:
                     if x >= NUM_TYPES_OF_ROUND_SUMMARY:
                         errmsg = f"{x} >= {NUM_TYPES_OF_ROUND_SUMMARY}"
                         raise RuntimeError(errmsg)
-                for _ in range(len(round_summary), MAX_NUM_ROUND_SUMMARY):
+                for _ in range(len(_round_summary), MAX_NUM_ROUND_SUMMARY):
                     # Padding
-                    round_summary.append(NUM_TYPES_OF_ROUND_SUMMARY)
+                    _round_summary.append(NUM_TYPES_OF_ROUND_SUMMARY)
                 round_summary = torch.tensor(
-                    round_summary,
+                    _round_summary,
                     device=torch.device("cpu"),
                     dtype=torch.int32,
                 )
 
-                results = [int(x) for x in results.split(",")]
-                if len(results) != NUM_RESULTS - 4:
-                    errmsg = f"{len(results)} != {NUM_RESULTS - 4}"
+                _results = [int(x) for x in results_str.split(",")]
+                if len(_results) != NUM_RESULTS - 4:
+                    errmsg = f"{len(_results)} != {NUM_RESULTS - 4}"
                     raise RuntimeError(errmsg)
-                results.extend([0, 0, 0, 0])
+                _results.extend([0, 0, 0, 0])
                 results = torch.tensor(
-                    results, device=torch.device("cpu"), dtype=torch.int32
+                    _results, device=torch.device("cpu"), dtype=torch.int32
                 )
 
                 end_of_round = torch.tensor(
@@ -319,55 +329,55 @@ class DataIterator:
         # End-of-game
         assert len(columns) == 8
 
-        dummy_sparse = [
+        _dummy_sparse = [
             NUM_TYPES_OF_SPARSE_FEATURES
         ] * MAX_NUM_ACTIVE_SPARSE_FEATURES
         dummy_sparse = torch.tensor(
-            dummy_sparse, device=torch.device("cpu"), dtype=torch.int32
+            _dummy_sparse, device=torch.device("cpu"), dtype=torch.int32
         )
 
         dummy_numeric = torch.zeros(
             NUM_NUMERIC_FEATURES, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        dummy_progression = [
+        _dummy_progression = [
             NUM_TYPES_OF_PROGRESSION_FEATURES
         ] * MAX_LENGTH_OF_PROGRESSION_FEATURES
         dummy_progression = torch.tensor(
-            dummy_progression, device=torch.device("cpu"), dtype=torch.int32
+            _dummy_progression, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        dummy_candidates = [NUM_TYPES_OF_ACTIONS] * MAX_NUM_ACTION_CANDIDATES
+        _dummy_candidates = [NUM_TYPES_OF_ACTIONS] * MAX_NUM_ACTION_CANDIDATES
         dummy_candidates = torch.tensor(
-            dummy_candidates, device=torch.device("cpu"), dtype=torch.int32
+            _dummy_candidates, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        round_summary, results = columns[6:]
+        round_summary_str, results_str = columns[6:]
 
-        round_summary = [int(x) for x in round_summary.split(",")]
-        if len(round_summary) == 0:
+        _round_summary = [int(x) for x in round_summary_str.split(",")]
+        if len(_round_summary) == 0:
             errmsg = f"An invalid line: {line}"
             raise RuntimeError(errmsg)
-        if len(round_summary) > MAX_NUM_ROUND_SUMMARY:
-            errmsg = f"{len(round_summary)} > {MAX_NUM_ROUND_SUMMARY}"
+        if len(_round_summary) > MAX_NUM_ROUND_SUMMARY:
+            errmsg = f"{len(_round_summary)} > {MAX_NUM_ROUND_SUMMARY}"
             raise RuntimeError(errmsg)
-        for x in round_summary:
+        for x in _round_summary:
             if x >= NUM_TYPES_OF_ROUND_SUMMARY:
                 errmsg = f"{x} >= {NUM_TYPES_OF_ROUND_SUMMARY}"
                 raise RuntimeError(errmsg)
-        for _ in range(len(round_summary), MAX_NUM_ROUND_SUMMARY):
+        for _ in range(len(_round_summary), MAX_NUM_ROUND_SUMMARY):
             # Padding
-            round_summary.append(NUM_TYPES_OF_ROUND_SUMMARY)
+            _round_summary.append(NUM_TYPES_OF_ROUND_SUMMARY)
         round_summary = torch.tensor(
-            round_summary, device=torch.device("cpu"), dtype=torch.int32
+            _round_summary, device=torch.device("cpu"), dtype=torch.int32
         )
 
-        results = [int(x) for x in results.split(",")]
-        if len(results) != NUM_RESULTS:
-            errmsg = f"{len(results)} != {NUM_RESULTS}"
+        _results = [int(x) for x in results_str.split(",")]
+        if len(_results) != NUM_RESULTS:
+            errmsg = f"{len(_results)} != {NUM_RESULTS}"
             raise RuntimeError(errmsg)
         results = torch.tensor(
-            results, device=torch.device("cpu"), dtype=torch.int32
+            _results, device=torch.device("cpu"), dtype=torch.int32
         )
 
         end_of_round = torch.tensor(

@@ -5,14 +5,14 @@ import datetime
 import os
 import logging
 import sys
-from typing import Optional, Callable
+from typing import Callable, Any
 from omegaconf import DictConfig
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import torch
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.optim import Optimizer
+from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.cuda.amp import GradScaler
 from torch.distributed import (
@@ -21,8 +21,7 @@ from torch.distributed import (
     all_reduce,
 )
 from torch.utils.tensorboard.writer import SummaryWriter
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
 from kanachan.constants import EOR_NUM_SPARSE_FEATURES, EOR_NUM_GAME_RESULT
 import kanachan.training.core.config as _config
 import kanachan.training.eor2ranking.config  # pylint: disable=unused-import
@@ -65,7 +64,7 @@ def _train(
     world_size, _, local_rank = get_distributed_environment()
 
     is_amp_enabled = device.type != "cpu" and dtype != amp_dtype
-    autocast_kwargs = {
+    autocast_kwargs: dict[str, Any] = {
         "device_type": device.type,
         "dtype": amp_dtype,
         "enabled": is_amp_enabled,
@@ -110,7 +109,7 @@ def _train(
         assert seat.dim() == 1
         assert seat.size(0) == batch_size
 
-        data: TensorDict = data.to(device=device)
+        data = data.to(device=device)
         with torch.autocast(**autocast_kwargs):
             network_tdm(data)
 
@@ -387,9 +386,7 @@ def _main(config: DictConfig) -> None:
                     config.initial_model_index = int(match[1])
                     continue
         if config.initial_model_index is None:
-            errmsg = (
-                f"{config.initial_model_prefix}: No model snapshot found."
-            )
+            errmsg = f"{config.initial_model_prefix}: No model snapshot found."
             raise RuntimeError(errmsg)
 
         if config.initial_model_index == sys.maxsize:
@@ -553,7 +550,9 @@ def _main(config: DictConfig) -> None:
         dtype=dtype,
     )
     encoder_tdm = TensorDictModule(
-        encoder, in_keys=["sparse", "numeric"], out_keys=["encode"]
+        encoder,
+        in_keys=["sparse", "numeric"],  # type: ignore
+        out_keys=["encode"],  # type: ignore
     )
     decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -568,7 +567,9 @@ def _main(config: DictConfig) -> None:
         dtype=dtype,
     )
     decoder_tdm = TensorDictModule(
-        decoder, in_keys=["encode"], out_keys=["decode"]
+        decoder,
+        in_keys=["encode"],  # type: ignore
+        out_keys=["decode"],  # type: ignore
     )
     network_tdm = TensorDictSequential(encoder_tdm, decoder_tdm)
     network_tdm.to(device=device, dtype=dtype)
@@ -580,7 +581,9 @@ def _main(config: DictConfig) -> None:
 
     softmax = nn.Softmax(2)
     softmax_tdm = TensorDictModule(
-        softmax, in_keys=["decode"], out_keys=["ranking_probs"]
+        softmax,
+        in_keys=["decode"],  # type: ignore
+        out_keys=["ranking_probs"],  # type: ignore
     )
     network_tdm_to_save = TensorDictSequential(
         encoder_tdm, decoder_tdm, softmax_tdm
@@ -631,7 +634,7 @@ def _main(config: DictConfig) -> None:
 
     snapshots_path = output_prefix / "snapshots"
 
-    def snapshot_writer(num_samples: Optional[int] = None) -> None:
+    def snapshot_writer(num_samples: int | None = None) -> None:
         snapshots_path.mkdir(parents=True, exist_ok=True)
 
         infix = "" if num_samples is None else f".{num_samples}"

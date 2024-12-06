@@ -5,7 +5,7 @@ import datetime
 import os
 import logging
 import sys
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 from omegaconf import DictConfig
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -22,8 +22,7 @@ from torch.distributed import (
     all_reduce,
 )
 from torch.utils.tensorboard.writer import SummaryWriter
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
 import kanachan.training.core.config as _config
 
 from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
@@ -81,7 +80,7 @@ def _training(
     )
 
     is_amp_enabled = dtype != amp_dtype
-    autocast_kwargs = {
+    autocast_kwargs: dict[str, Any] = {
         "device_type": device.type,
         "dtype": amp_dtype,
         "enabled": is_amp_enabled,
@@ -97,7 +96,7 @@ def _training(
     loss_function = nn.NLLLoss()
 
     for data in data_loader:
-        data: TensorDict = data.to(device=device)
+        data = data.to(device=device)
         with torch.autocast(**autocast_kwargs):
             network_tdm(data)
         action: Tensor = data["action"]
@@ -518,8 +517,8 @@ def _main(config: DictConfig) -> None:
     )
     encoder_tdm = TensorDictModule(
         encoder,
-        in_keys=["sparse", "numeric", "progression", "candidates"],
-        out_keys=["encode"],
+        in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+        out_keys=["encode"],  # type: ignore
     )
     decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -537,13 +536,15 @@ def _main(config: DictConfig) -> None:
         for _param in decoder.parameters():
             _param.zero_()
     decoder_tdm = TensorDictModule(
-        decoder, in_keys=["encode"], out_keys=["decode"]
+        decoder,
+        in_keys=["encode"],  # type: ignore
+        out_keys=["decode"],  # type: ignore
     )
     decode_converter = DecodeConverter("log_probs")
     decode_converter_tdm = TensorDictModule(
         decode_converter,
-        in_keys=["candidates", "decode"],
-        out_keys=["log_probs"],
+        in_keys=["candidates", "decode"],  # type: ignore
+        out_keys=["log_probs"],  # type: ignore
     )
     network_tdm = TensorDictSequential(
         encoder_tdm, decoder_tdm, decode_converter_tdm
@@ -556,7 +557,9 @@ def _main(config: DictConfig) -> None:
 
     argmax_layer = DecodeConverter("argmax")
     argmax_tdm = TensorDictModule(
-        argmax_layer, in_keys=["candidates", "decode"], out_keys=["action"]
+        argmax_layer,
+        in_keys=["candidates", "decode"],  # type: ignore
+        out_keys=["action"],  # type: ignore
     )
     network_tdm_to_save = TensorDictSequential(
         encoder_tdm, decoder_tdm, argmax_tdm

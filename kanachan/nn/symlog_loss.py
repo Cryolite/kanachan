@@ -7,8 +7,8 @@ class SymlogLoss(nn.Module):
         super().__init__()
         self.__reduction = reduction
 
-    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+    def forward(self, x: Tensor, target: Tensor) -> Tensor:
         target = target.sign() * torch.log(target.abs() + 1.0)
         return nn.functional.mse_loss(
-            input, target, reduction=self.__reduction
+            x, target, reduction=self.__reduction
         )

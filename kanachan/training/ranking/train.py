@@ -22,8 +22,7 @@ from torch.distributed import (
     all_reduce,
 )
 from torch.utils.tensorboard.writer import SummaryWriter
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
 from kanachan.constants import MAX_NUM_ACTIVE_SPARSE_FEATURES, NUM_RESULTS
 import kanachan.training.core.config as _config
 
@@ -110,7 +109,7 @@ def _train(
         assert seat.dim() == 1
         assert seat.size(0) == batch_size
 
-        data: TensorDict = data.to(device=device)
+        data = data.to(device=device)
         with torch.autocast(**autocast_kwargs):
             network_tdm(data)
 
@@ -563,8 +562,8 @@ def _main(config: DictConfig) -> None:
     )
     encoder_tdm = TensorDictModule(
         encoder,
-        in_keys=["sparse", "numeric", "progression", "candidates"],
-        out_keys=["encode"],
+        in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+        out_keys=["encode"],  # type: ignore
     )
     decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -582,7 +581,9 @@ def _main(config: DictConfig) -> None:
         for _param in decoder.parameters():
             _param.zero_()
     decoder_tdm = TensorDictModule(
-        decoder, in_keys=["encode"], out_keys=["decode"]
+        decoder,
+        in_keys=["encode"],  # type: ignore
+        out_keys=["decode"],  # type: ignore
     )
     network_tdm = TensorDictSequential(encoder_tdm, decoder_tdm)
     if world_size >= 2:
@@ -593,7 +594,9 @@ def _main(config: DictConfig) -> None:
 
     softmax = nn.Softmax(2)
     softmax_tdm = TensorDictModule(
-        softmax, in_keys=["decode"], out_keys=["ranking_probs"]
+        softmax,
+        in_keys=["decode"],  # type: ignore
+        out_keys=["ranking_probs"],  # type: ignore
     )
     network_tdm_to_save = TensorDictSequential(
         encoder_tdm, decoder_tdm, softmax_tdm

@@ -1,7 +1,7 @@
 from typing import Callable, Any
 import torch
 from torch import Tensor, nn
-from tensordict import TensorDictBase, TensorDict
+from tensordict import TensorDictBase, TensorDict  # type: ignore
 from kanachan.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES,
     MAX_NUM_ACTIVE_SPARSE_FEATURES,
@@ -123,7 +123,9 @@ def simulate(
         assert progression.size(0) == length
         assert progression.size(1) == MAX_LENGTH_OF_PROGRESSION_FEATURES
         assert torch.all(progression >= 0).item()
-        assert torch.all(progression <= NUM_TYPES_OF_PROGRESSION_FEATURES).item()
+        assert torch.all(
+            progression <= NUM_TYPES_OF_PROGRESSION_FEATURES
+        ).item()
         candidates = episode["candidates"]
         assert isinstance(candidates, Tensor)
         assert candidates.device == torch.device("cpu")
@@ -141,7 +143,7 @@ def simulate(
         assert action_index.size(0) == length
         assert torch.all(action_index >= 0).item()
         assert torch.all(action_index < MAX_NUM_ACTION_CANDIDATES).item()
-        log_prob = episode.get("sample_log_prob", None)
+        log_prob = episode.get("sample_log_prob", None)  # type: ignore
         if log_prob is not None:
             assert log_prob.device == torch.device("cpu")
             assert log_prob.dtype == torch.float64
@@ -238,7 +240,7 @@ def simulate(
         )
 
         get_reward(episode, True)
-        if episode.get(("next", "reward"), None) is None:
+        if episode.get(("next", "reward"), None) is None:  # type: ignore
             errmsg = (
                 "`get_reward` did not set the `('next', 'reward')` tensor."
             )
