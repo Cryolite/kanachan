@@ -1,7 +1,7 @@
 import math
 import torch
 from torch import Tensor, nn
-from tensordict import TensorDict
+from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
     NUM_TYPES_OF_ACTIONS,
     MAX_NUM_ACTION_CANDIDATES,
@@ -148,7 +148,10 @@ def _get_a_star(source_network: nn.Module, data: TensorDict) -> Tensor:
         device=data.device,
     )
     with torch.no_grad():
+        # WORKAROUND: See https://github.com/pytorch/pytorch/issues/43259
+        source_network.requires_grad_(False)
         source_network(copy)
+        source_network.requires_grad_(True)
 
     next_theta: Tensor = copy["qr_action_value"]
     assert isinstance(next_theta, Tensor)
