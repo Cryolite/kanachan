@@ -4,4 +4,4 @@ WORKDIR /workspace/data
 
 #ENV CUDA_LAUNCH_BLOCKING=1
 
-ENTRYPOINT ["bash", "/workspace/kanachan/kanachan/training/ranking/train.sh"]
+ENTRYPOINT ["bash", "-c", "eval \"$(pyenv init -)\"; exec torchrun --nproc_per_node gpu --standalone -m kanachan.training.ranking.train \"$@\"", "--"]

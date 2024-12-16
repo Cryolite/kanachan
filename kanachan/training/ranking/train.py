@@ -602,7 +602,7 @@ def _main(config: DictConfig) -> None:
         encoder_tdm, decoder_tdm, softmax_tdm
     )
 
-    optimizer, scheduler = _config.optimizer.create(config, network_tdm)
+    optimizer, scheduler = _config.optimizer.create(device.type, config, network_tdm)
 
     if config.encoder.load_from is not None:
         assert config.initial_model_prefix is None
