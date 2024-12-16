@@ -89,6 +89,9 @@ class Decoder(nn.Module):
                 input_dimension, dimension, device=device, dtype=dtype
             )
         if num_layers >= 2:
+            if layer_normalization:
+                assert dimension is not None
+                layers["layer_normalization0"] = nn.LayerNorm([dimension])
             if activation_function == "relu":
                 layers["activation0"] = nn.ReLU()
             elif activation_function == "gelu":
@@ -97,9 +100,6 @@ class Decoder(nn.Module):
                 raise AssertionError(activation_function)
             assert dropout is not None
             layers["dropout0"] = nn.Dropout(p=dropout)
-            if layer_normalization:
-                assert dimension is not None
-                layers["layer_normalization0"] = nn.LayerNorm([dimension])
 
         for i in range(1, num_layers):
             assert dimension is not None
@@ -112,6 +112,10 @@ class Decoder(nn.Module):
                 dtype=dtype,
             )
             if not final_layer:
+                if layer_normalization:
+                    layers[f"layer_normalization{i}"] = nn.LayerNorm(
+                        [dimension]
+                    )
                 if activation_function == "relu":
                     layers[f"activation{i}"] = nn.ReLU()
                 elif activation_function == "gelu":
@@ -119,10 +123,6 @@ class Decoder(nn.Module):
                 else:
                     raise AssertionError(activation_function)
                 layers[f"dropout{i}"] = nn.Dropout(p=dropout)
-                if layer_normalization:
-                    layers[f"layer_normalization{i}"] = nn.LayerNorm(
-                        [dimension]
-                    )
 
         self.layers = nn.Sequential(layers)
 
