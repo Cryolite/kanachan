@@ -34,6 +34,7 @@ _BUFFER_ELEMENT = tuple[
     Tensor,  # progression
     Tensor,  # candidates
     Tensor,  # action
+    Tensor,  # action_value
     Tensor,  # next_sparse
     Tensor,  # next_numeric
     Tensor,  # next_progression
@@ -57,6 +58,7 @@ class EpisodeReplayBuffer:
         rewrite_rooms: int | None,
         rewrite_grades: int | None,
         get_reward: RewardFunction,
+        discount_factor: float,
         dtype: torch.dtype,
         max_size: int,
         batch_size: int,
@@ -140,6 +142,7 @@ class EpisodeReplayBuffer:
         )
         self.__done: Tensor = torch.empty(0, device="cpu", dtype=torch.bool)
         self.__get_reward = get_reward
+        self.__discount_factor = discount_factor
         self.__dtype = dtype
         self.__replay_buffer: list[_BUFFER_ELEMENT] = []
         self.__batch_size = batch_size
@@ -157,6 +160,7 @@ class EpisodeReplayBuffer:
             progression = td["progression"]
             candidates = td["candidates"]
             action = td["action"]
+            action_value = td["action_value"]
             next_sparse = td["next", "sparse"]
             next_numeric = td["next", "numeric"]
             next_progression = td["next", "progression"]
@@ -174,6 +178,7 @@ class EpisodeReplayBuffer:
                     progression,
                     candidates,
                     action,
+                    action_value,
                     next_sparse,
                     next_numeric,
                     next_progression,
@@ -200,10 +205,10 @@ class EpisodeReplayBuffer:
             errmsg = "The replay buffer is too small."
             raise RuntimeError(errmsg)
 
-        batch: list[list[Tensor]] = [[] for _ in range(15)]
+        batch: list[list[Tensor]] = [[] for _ in range(16)]
         for _ in range(self.__batch_size * world_size):
             t = self._sample()
-            for i in range(15):
+            for i in range(16):
                 batch[i].append(t[i])
 
         return (
@@ -222,6 +227,7 @@ class EpisodeReplayBuffer:
             torch.stack(batch[12]),
             torch.stack(batch[13]),
             torch.stack(batch[14]),
+            torch.stack(batch[15]),
         )
 
     def _broadcast(self) -> TensorDict:
@@ -234,6 +240,7 @@ class EpisodeReplayBuffer:
                 progression,
                 candidates,
                 action,
+                action_value,
                 next_sparse,
                 next_numeric,
                 next_progression,
@@ -274,6 +281,11 @@ class EpisodeReplayBuffer:
                 self.__batch_size * world_size,
                 device="cpu",
                 dtype=torch.int32,
+            )
+            action_value = torch.empty(
+                self.__batch_size * world_size,
+                device="cpu",
+                dtype=self.__dtype,
             )
             next_sparse = torch.empty(
                 self.__batch_size * world_size,
@@ -339,6 +351,7 @@ class EpisodeReplayBuffer:
                 progression,
                 candidates,
                 action,
+                action_value,
                 next_sparse,
                 next_numeric,
                 next_progression,
@@ -363,6 +376,7 @@ class EpisodeReplayBuffer:
                 progression,
                 candidates,
                 action,
+                action_value,
                 next_sparse,
                 next_numeric,
                 next_progression,
@@ -381,6 +395,7 @@ class EpisodeReplayBuffer:
             "progression": progression,
             "candidates": candidates,
             "action": action,
+            "action_value": action_value,
             "next": {
                 "sparse": next_sparse,
                 "numeric": next_numeric,
@@ -598,6 +613,7 @@ class EpisodeReplayBuffer:
                     length = i + 1
             if length is None:
                 continue
+            assert length >= 1
 
             source: dict[str, Any] = {
                 "sparse": self.__sparse[:length],
@@ -656,6 +672,20 @@ class EpisodeReplayBuffer:
             episode["next", "reward"] = (
                 reward.to(self.__dtype).detach().clone()
             )
+
+            episode["action_value"] = torch.empty(
+                length, device="cpu", dtype=self.__dtype
+            )
+            for i in range(length, 0, -1):
+                i -= 1
+                episode["action_value"][i] = (
+                    episode["next", "reward"][i].detach().clone()
+                )
+                if not episode["next", "done"][i].item():
+                    assert i + 1 < length
+                    episode["action_value"][i] += (
+                        self.__discount_factor * episode["action_value"][i + 1]
+                    )
 
             if progress is not None:
                 if len(self.__replay_buffer) + length <= self.__max_size:

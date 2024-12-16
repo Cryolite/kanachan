@@ -11,8 +11,8 @@ from typing import Callable, Any
 from omegaconf import DictConfig
 import hydra
 from hydra.core.hydra_config import HydraConfig
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict import TensorDict  # type: ignore
+from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
 import torch
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
@@ -94,12 +94,12 @@ def _training(
             rewrite_grades=rewrite_grades,
             # pylint: disable=undefined-variable
             get_reward=get_reward,  # type: ignore # noqa: F821
+            discount_factor=discount_factor,
             dtype=dtype,
             max_size=replay_buffer_size,
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=(num_workers >= 1),
-            drop_last=(world_size >= 2),
         )
     else:
         data_loader = DataLoader(
@@ -1262,13 +1262,13 @@ def _main(config: DictConfig) -> None:
     )
 
     value_optimizer, value_lr_scheduler = _config.optimizer.create(
-        config, value_network
+        device.type, config, value_network
     )
     q1_optimizer, q1_lr_scheduler = _config.optimizer.create(
-        config, q1_source_network
+        device.type, config, q1_source_network
     )
     q2_optimizer, q2_lr_scheduler = _config.optimizer.create(
-        config, q2_source_network
+        device.type, config, q2_source_network
     )
 
     if config.encoder.load_from is not None:

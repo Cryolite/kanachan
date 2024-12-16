@@ -37,7 +37,7 @@ import kanachan.training.core.config as _config
 # pylint: disable=unused-import
 import kanachan.training.cql.config  # noqa: F401
 from kanachan.training.core.offline_rl import DataLoader, EpisodeReplayBuffer
-from kanachan.nn import Encoder, QRDecoder, QDecoder, DecodeConverter
+from kanachan.nn import Encoder, Decoder, QRDecoder, QDecoder, DecodeConverter
 from kanachan.nn.qr_decoder import compute_td_error
 from kanachan.model_loader import dump_object, dump_model
 
@@ -59,9 +59,8 @@ def _training(
     source_network: nn.Module,
     target_network: nn.Module | None,
     reward_plugin: Path,
-    double_q_learning: bool,
     discount_factor: float,
-    kappa: float,
+    td_error_computation: Callable[[TensorDict], None],
     alpha: float,
     batch_size: int,
     gradient_accumulation_steps: int,
@@ -92,6 +91,7 @@ def _training(
             rewrite_grades=rewrite_grades,
             # pylint: disable=undefined-variable
             get_reward=get_reward,  # type: ignore # noqa: F821
+            discount_factor=discount_factor,
             dtype=dtype,
             max_size=replay_buffer_size,
             batch_size=batch_size,
@@ -132,13 +132,8 @@ def _training(
         assert isinstance(data, TensorDict)
 
         with torch.autocast(**autocast_kwargs):
-            compute_td_error(
-                source_network=source_network,
-                target_network=target_network if double_q_learning else None,
-                data=data,
-                discount_factor=discount_factor,
-                kappa=kappa,
-            )
+            td_error_computation(data)
+
         td_error: Tensor = data["td_error"]
         assert isinstance(td_error, Tensor)
         assert td_error.device == device
@@ -421,7 +416,7 @@ def _main(config: DictConfig) -> None:
 
     _config.decoder.validate(config)
 
-    if config.num_qr_intervals <= 0:
+    if config.num_qr_intervals is not None and config.num_qr_intervals <= 0:
         errmsg = (
             f"{config.num_qr_intervals}: `num_qr_intervals` must be a "
             "positive integer."
@@ -698,7 +693,10 @@ def _main(config: DictConfig) -> None:
 
         _config.decoder.dump(config)
 
-        logging.info("# of QR intervals: %d", config.num_qr_intervals)
+        if config.num_qr_intervals is None:
+            logging.info("# of QR intervals: (N/A)")
+        else:
+            logging.info("# of QR intervals: %d", config.num_qr_intervals)
         logging.info("Dueling network: %s", config.dueling_network)
 
         if config.initial_model_prefix is not None:
@@ -811,27 +809,47 @@ def _main(config: DictConfig) -> None:
         in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
         out_keys=["encode"],  # type: ignore
     )
-    decoder = QRDecoder(
-        input_dimension=config.encoder.dimension,
-        dimension=config.decoder.dimension,
-        activation_function=config.decoder.activation_function,
-        dropout=config.decoder.dropout,
-        layer_normalization=config.decoder.layer_normalization,
-        num_layers=config.decoder.num_layers,
-        num_qr_intervals=config.num_qr_intervals,
-        dueling_network=config.dueling_network,
-        noise_init_std=None,
-        device=torch.device("cpu"),
-        dtype=dtype,
-    )
+    decoder: nn.Module
+    if config.num_qr_intervals is None:
+        decoder = Decoder(
+            input_dimension=config.encoder.dimension,
+            dimension=config.decoder.dimension,
+            activation_function=config.decoder.activation_function,
+            dropout=config.decoder.dropout,
+            layer_normalization=config.decoder.layer_normalization,
+            num_layers=config.decoder.num_layers,
+            output_mode="candidates",
+            noise_init_std=None,
+            device=torch.device("cpu"),
+            dtype=dtype,
+        )
+        decoder_tdm = TensorDictModule(
+            decoder,
+            in_keys=["encode"],  # type: ignore
+            out_keys=["action_value"],  # type: ignore
+        )
+    else:
+        decoder = QRDecoder(
+            input_dimension=config.encoder.dimension,
+            dimension=config.decoder.dimension,
+            activation_function=config.decoder.activation_function,
+            dropout=config.decoder.dropout,
+            layer_normalization=config.decoder.layer_normalization,
+            num_layers=config.decoder.num_layers,
+            num_qr_intervals=config.num_qr_intervals,
+            dueling_network=config.dueling_network,
+            noise_init_std=None,
+            device=torch.device("cpu"),
+            dtype=dtype,
+        )
+        decoder_tdm = TensorDictModule(
+            decoder,
+            in_keys=["candidates", "encode"],  # type: ignore
+            out_keys=["qr_action_value"],  # type: ignore
+        )
     with torch.no_grad():
         for _param in decoder.parameters():
             _param.zero_()
-    decoder_tdm = TensorDictModule(
-        decoder,
-        in_keys=["candidates", "encode"],  # type: ignore
-        out_keys=["qr_action_value"],  # type: ignore
-    )
     network = TensorDictSequential(encoder_tdm, decoder_tdm)
     if world_size >= 2:
         network.to(device=device)
@@ -841,7 +859,7 @@ def _main(config: DictConfig) -> None:
 
     target_encoder: Encoder | None = None
     target_encoder_tdm: TensorDictModule | None = None
-    target_decoder: QRDecoder | None = None
+    target_decoder: nn.Module | None = None
     target_decoder_tdm: TensorDictModule | None = None
     target_network: TensorDictSequential | None = None
     if config.double_q_learning:
@@ -863,24 +881,43 @@ def _main(config: DictConfig) -> None:
             in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
             out_keys=["encode"],  # type: ignore
         )
-        target_decoder = QRDecoder(
-            input_dimension=config.encoder.dimension,
-            dimension=config.decoder.dimension,
-            activation_function=config.decoder.activation_function,
-            dropout=config.decoder.dropout,
-            layer_normalization=config.decoder.layer_normalization,
-            num_layers=config.decoder.num_layers,
-            num_qr_intervals=config.num_qr_intervals,
-            dueling_network=config.dueling_network,
-            noise_init_std=None,
-            device=torch.device("cpu"),
-            dtype=dtype,
-        )
-        target_decoder_tdm = TensorDictModule(
-            target_decoder,
-            in_keys=["candidates", "encode"],  # type: ignore
-            out_keys=["qr_action_value"],  # type: ignore
-        )
+        if config.num_qr_intervals is None:
+            target_decoder = Decoder(
+                input_dimension=config.encoder.dimension,
+                dimension=config.decoder.dimension,
+                activation_function=config.decoder.activation_function,
+                dropout=config.decoder.dropout,
+                layer_normalization=config.decoder.layer_normalization,
+                num_layers=config.decoder.num_layers,
+                output_mode="candidates",
+                noise_init_std=None,
+                device=torch.device("cpu"),
+                dtype=dtype,
+            )
+            target_decoder_tdm = TensorDictModule(
+                target_decoder,
+                in_keys=["encode"],  # type: ignore
+                out_keys=["action_value"],  # type: ignore
+            )
+        else:
+            target_decoder = QRDecoder(
+                input_dimension=config.encoder.dimension,
+                dimension=config.decoder.dimension,
+                activation_function=config.decoder.activation_function,
+                dropout=config.decoder.dropout,
+                layer_normalization=config.decoder.layer_normalization,
+                num_layers=config.decoder.num_layers,
+                num_qr_intervals=config.num_qr_intervals,
+                dueling_network=config.dueling_network,
+                noise_init_std=None,
+                device=torch.device("cpu"),
+                dtype=dtype,
+            )
+            target_decoder_tdm = TensorDictModule(
+                target_decoder,
+                in_keys=["candidates", "encode"],  # type: ignore
+                out_keys=["qr_action_value"],  # type: ignore
+            )
         target_network = TensorDictSequential(
             target_encoder_tdm, target_decoder_tdm
         )
@@ -890,31 +927,53 @@ def _main(config: DictConfig) -> None:
             ):
                 _target_param.data = _param.data.detach().clone()
 
-    q_decoder = QDecoder()
-    q_decoder_tdm = TensorDictModule(
-        q_decoder,
-        in_keys=["qr_action_value"],  # type: ignore
-        out_keys=["action_value"],  # type: ignore
-    )
-    argmax_layer = DecodeConverter("argmax")
-    argmax_layer_tdm = TensorDictModule(
-        argmax_layer,
-        in_keys=["candidates", "action_value"],  # type: ignore
-        out_keys=["action"],  # type: ignore
-    )
-    if config.double_q_learning:
-        assert target_encoder_tdm is not None
-        assert target_decoder_tdm is not None
-        network_to_save = TensorDictSequential(
-            target_encoder_tdm,
-            target_decoder_tdm,
-            q_decoder_tdm,
-            argmax_layer_tdm,
+    q_decoder: QDecoder | None = None
+    q_decoder_tdm: TensorDictModule | None = None
+    if config.num_qr_intervals is None:
+        argmax_layer = DecodeConverter("argmax")
+        argmax_layer_tdm = TensorDictModule(
+            argmax_layer,
+            in_keys=["candidates", "action_value"],  # type: ignore
+            out_keys=["action"],  # type: ignore
         )
+        if config.double_q_learning:
+            assert target_encoder_tdm is not None
+            assert target_decoder_tdm is not None
+            network_to_save = TensorDictSequential(
+                target_encoder_tdm,
+                target_decoder_tdm,
+                argmax_layer_tdm,
+            )
+        else:
+            network_to_save = TensorDictSequential(
+                encoder_tdm, decoder_tdm, argmax_layer_tdm
+            )
     else:
-        network_to_save = TensorDictSequential(
-            encoder_tdm, decoder_tdm, q_decoder_tdm, argmax_layer_tdm
+        q_decoder = QDecoder()
+        q_decoder_tdm = TensorDictModule(
+            q_decoder,
+            in_keys=["qr_action_value"],  # type: ignore
+            out_keys=["action_value"],  # type: ignore
         )
+        argmax_layer = DecodeConverter("argmax")
+        argmax_layer_tdm = TensorDictModule(
+            argmax_layer,
+            in_keys=["candidates", "action_value"],  # type: ignore
+            out_keys=["action"],  # type: ignore
+        )
+        if config.double_q_learning:
+            assert target_encoder_tdm is not None
+            assert target_decoder_tdm is not None
+            network_to_save = TensorDictSequential(
+                target_encoder_tdm,
+                target_decoder_tdm,
+                q_decoder_tdm,
+                argmax_layer_tdm,
+            )
+        else:
+            network_to_save = TensorDictSequential(
+                encoder_tdm, decoder_tdm, q_decoder_tdm, argmax_layer_tdm
+            )
 
     network.requires_grad_(True)
     network.train()
@@ -937,7 +996,7 @@ def _main(config: DictConfig) -> None:
         network_to_save.train()
         network_to_save = network_to_save.to(device=device, dtype=dtype)
 
-    optimizer, scheduler = _config.optimizer.create(config, network)
+    optimizer, scheduler = _config.optimizer.create(device.type, config, network)
 
     if config.encoder.load_from is not None:
         assert config.initial_model_prefix is None
@@ -1009,6 +1068,114 @@ def _main(config: DictConfig) -> None:
             )
             scheduler.load_state_dict(schedular_state_dict)
 
+    def td_error_computation(data: TensorDict) -> None:
+        if config.num_qr_intervals is not None:
+            compute_td_error(
+                source_network=network,
+                target_network=target_network
+                if config.double_q_learning
+                else None,
+                data=data,
+                discount_factor=config.discount_factor,
+                kappa=config.kappa,
+            )
+            return
+
+        batch_size = int(data.batch_size[0])
+
+        # Compute a^*.
+        copy = TensorDict(
+            {
+                "sparse": data["next", "sparse"].detach().clone(),
+                "numeric": data["next", "numeric"].detach().clone(),
+                "progression": data["next", "progression"].detach().clone(),
+                "candidates": data["next", "candidates"].detach().clone(),
+            },
+            batch_size=batch_size,
+            device=data.device,
+        )
+        with torch.no_grad():
+            network.requires_grad_(False)
+            network(copy)
+            network.requires_grad_(True)
+
+        a_star = copy["action_value"].argmax(dim=1).int()
+        assert isinstance(a_star, Tensor)
+        assert a_star.device == device
+        assert a_star.dtype == torch.int32
+        assert a_star.dim() == 1
+        assert a_star.size(0) == batch_size
+
+        copy = TensorDict(
+            {
+                "sparse": data["sparse"].detach().clone(),
+                "numeric": data["numeric"].detach().clone(),
+                "progression": data["progression"].detach().clone(),
+                "candidates": data["candidates"].detach().clone(),
+            },
+            batch_size=batch_size,
+            device=data.device,
+        )
+        network(copy)
+        data["action_value"] = copy["action_value"]
+
+        copy = TensorDict(
+            {
+                "sparse": data["next", "sparse"].detach().clone(),
+                "numeric": data["next", "numeric"].detach().clone(),
+                "progression": data["next", "progression"].detach().clone(),
+                "candidates": data["next", "candidates"].detach().clone(),
+            },
+            batch_size=batch_size,
+            device=data.device,
+        )
+        if config.double_q_learning:
+            with torch.no_grad():
+                assert target_network is not None
+                target_network(copy)
+        else:
+            network(copy)
+        data["next", "action_value"] = copy["action_value"]
+
+        action = data["action"]
+        assert isinstance(action, Tensor)
+        assert action.device == device
+        assert action.dtype == torch.int32
+        assert action.dim() == 1
+        assert action.size(0) == batch_size
+
+        reward = data["next", "reward"]
+        assert isinstance(reward, Tensor)
+        assert reward.device == device
+        assert reward.dtype == dtype
+        assert reward.dim() == 1
+        assert reward.size(0) == batch_size
+
+        done = data["next", "done"]
+        assert isinstance(done, Tensor)
+        assert done.device == device
+        assert done.dtype == torch.bool
+        assert done.dim() == 1
+        assert done.size(0) == batch_size
+
+        q_sa = data["action_value"][
+            torch.arange(batch_size, device=device), action
+        ]
+
+        next_q_sa = data["next", "action_value"][
+            torch.arange(batch_size, device=device), a_star
+        ]
+
+        target = torch.where(
+            done,
+            reward,
+            reward + config.discount_factor * next_q_sa,
+        )
+
+        td_error = (q_sa - target).pow(2)
+
+        data["td_error"] = td_error
+
     snapshots_path = output_prefix / "snapshots"
 
     def snapshot_writer(num_samples: int | None = None) -> None:
@@ -1063,85 +1230,165 @@ def _main(config: DictConfig) -> None:
             encoder_tdm_to_save = encoder_tdm
             decoder_to_save = decoder
             decoder_tdm_to_save = decoder_tdm
-        network_state = dump_object(
-            network_to_save,
-            [
-                dump_object(
-                    encoder_tdm_to_save,
-                    [
-                        dump_model(
-                            encoder_to_save,
-                            [],
-                            {
-                                "position_encoder": config.encoder.position_encoder,
-                                "dimension": config.encoder.dimension,
-                                "num_heads": config.encoder.num_heads,
-                                "dim_feedforward": config.encoder.dim_feedforward,
-                                "activation_function": config.encoder.activation_function,
-                                "dropout": config.encoder.dropout,
-                                "layer_normalization": config.encoder.layer_normalization,
-                                "num_layers": config.encoder.num_layers,
-                                "checkpointing": config.checkpointing,
-                                "device": torch.device("cpu"),
-                                "dtype": dtype,
-                            },
-                        )
-                    ],
-                    {
-                        "in_keys": [
-                            "sparse",
-                            "numeric",
-                            "progression",
-                            "candidates",
+        if config.num_qr_intervals is None:
+            network_state = dump_object(
+                network_to_save,
+                [
+                    dump_object(
+                        encoder_tdm_to_save,
+                        [
+                            dump_model(
+                                encoder_to_save,
+                                [],
+                                {
+                                    "position_encoder": config.encoder.position_encoder,
+                                    "dimension": config.encoder.dimension,
+                                    "num_heads": config.encoder.num_heads,
+                                    "dim_feedforward": config.encoder.dim_feedforward,
+                                    "activation_function": config.encoder.activation_function,
+                                    "dropout": config.encoder.dropout,
+                                    "layer_normalization": config.encoder.layer_normalization,
+                                    "num_layers": config.encoder.num_layers,
+                                    "checkpointing": config.checkpointing,
+                                    "device": torch.device("cpu"),
+                                    "dtype": dtype,
+                                },
+                            ),
                         ],
-                        "out_keys": ["encode"],
-                    },
-                ),
-                dump_object(
-                    decoder_tdm_to_save,
-                    [
-                        dump_model(
-                            decoder_to_save,
-                            [],
-                            {
-                                "input_dimension": config.encoder.dimension,
-                                "dimension": config.decoder.dimension,
-                                "activation_function": config.decoder.activation_function,
-                                "dropout": config.decoder.dropout,
-                                "layer_normalization": config.decoder.layer_normalization,
-                                "num_layers": config.decoder.num_layers,
-                                "num_qr_intervals": config.num_qr_intervals,
-                                "dueling_network": config.dueling_network,
-                                "noise_init_std": None,
-                                "device": torch.device("cpu"),
-                                "dtype": dtype,
-                            },
-                        )
-                    ],
-                    {
-                        "in_keys": ["candidates", "encode"],
-                        "out_keys": ["qr_action_value"],
-                    },
-                ),
-                dump_object(
-                    q_decoder_tdm,
-                    [dump_model(q_decoder, [], {})],
-                    {
-                        "in_keys": ["qr_action_value"],
-                        "out_keys": ["action_value"],
-                    },
-                ),
-                dump_object(
-                    argmax_layer_tdm,
-                    [dump_model(argmax_layer, ["argmax"], {})],
-                    {
-                        "in_keys": ["candidates", "action_value"],
-                        "out_keys": ["action"],
-                    },
-                ),
-            ],
-            {},
-        )
+                        {
+                            "in_keys": [
+                                "sparse",
+                                "numeric",
+                                "progression",
+                                "candidates",
+                            ],
+                            "out_keys": ["encode"],
+                        },
+                    ),
+                    dump_object(
+                        decoder_tdm_to_save,
+                        [
+                            dump_model(
+                                decoder_to_save,
+                                [],
+                                {
+                                    "input_dimension": config.encoder.dimension,
+                                    "dimension": config.decoder.dimension,
+                                    "activation_function": config.decoder.activation_function,
+                                    "dropout": config.decoder.dropout,
+                                    "layer_normalization": config.decoder.layer_normalization,
+                                    "num_layers": config.decoder.num_layers,
+                                    "output_mode": "candidates",
+                                    "noise_init_std": None,
+                                    "device": torch.device("cpu"),
+                                    "dtype": dtype,
+                                },
+                            ),
+                        ],
+                        {
+                            "in_keys": ["encode"],
+                            "out_keys": ["action_value"],
+                        },
+                    ),
+                    dump_object(
+                        argmax_layer_tdm,
+                        [
+                            dump_model(
+                                argmax_layer,
+                                ["argmax"],
+                                {},
+                            ),
+                        ],
+                        {
+                            "in_keys": ["candidates", "action_value"],
+                            "out_keys": ["action"],
+                        },
+                    ),
+                ],
+                {},
+            )
+        else:
+            assert q_decoder is not None
+            assert q_decoder_tdm is not None
+            network_state = dump_object(
+                network_to_save,
+                [
+                    dump_object(
+                        encoder_tdm_to_save,
+                        [
+                            dump_model(
+                                encoder_to_save,
+                                [],
+                                {
+                                    "position_encoder": config.encoder.position_encoder,
+                                    "dimension": config.encoder.dimension,
+                                    "num_heads": config.encoder.num_heads,
+                                    "dim_feedforward": config.encoder.dim_feedforward,
+                                    "activation_function": config.encoder.activation_function,
+                                    "dropout": config.encoder.dropout,
+                                    "layer_normalization": config.encoder.layer_normalization,
+                                    "num_layers": config.encoder.num_layers,
+                                    "checkpointing": config.checkpointing,
+                                    "device": torch.device("cpu"),
+                                    "dtype": dtype,
+                                },
+                            )
+                        ],
+                        {
+                            "in_keys": [
+                                "sparse",
+                                "numeric",
+                                "progression",
+                                "candidates",
+                            ],
+                            "out_keys": ["encode"],
+                        },
+                    ),
+                    dump_object(
+                        decoder_tdm_to_save,
+                        [
+                            dump_model(
+                                decoder_to_save,
+                                [],
+                                {
+                                    "input_dimension": config.encoder.dimension,
+                                    "dimension": config.decoder.dimension,
+                                    "activation_function": config.decoder.activation_function,
+                                    "dropout": config.decoder.dropout,
+                                    "layer_normalization": config.decoder.layer_normalization,
+                                    "num_layers": config.decoder.num_layers,
+                                    "num_qr_intervals": config.num_qr_intervals,
+                                    "dueling_network": config.dueling_network,
+                                    "noise_init_std": None,
+                                    "device": torch.device("cpu"),
+                                    "dtype": dtype,
+                                },
+                            )
+                        ],
+                        {
+                            "in_keys": ["candidates", "encode"],
+                            "out_keys": ["qr_action_value"],
+                        },
+                    ),
+                    dump_object(
+                        q_decoder_tdm,
+                        [dump_model(q_decoder, [], {})],
+                        {
+                            "in_keys": ["qr_action_value"],
+                            "out_keys": ["action_value"],
+                        },
+                    ),
+                    dump_object(
+                        argmax_layer_tdm,
+                        [dump_model(argmax_layer, ["argmax"], {})],
+                        {
+                            "in_keys": ["candidates", "action_value"],
+                            "out_keys": ["action"],
+                        },
+                    ),
+                ],
+                {},
+            )
         torch.save(network_state, snapshots_path / f"model{infix}.kanachan")
 
     tensorboard_path = output_prefix / "tensorboard"
@@ -1164,9 +1411,8 @@ def _main(config: DictConfig) -> None:
             source_network=network,
             target_network=target_network,
             reward_plugin=config.reward_plugin,
-            double_q_learning=config.double_q_learning,
             discount_factor=config.discount_factor,
-            kappa=config.kappa,
+            td_error_computation=td_error_computation,
             alpha=config.alpha,
             batch_size=config.batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,

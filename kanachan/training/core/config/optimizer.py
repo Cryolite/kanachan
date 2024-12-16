@@ -1,17 +1,34 @@
 import logging
-from typing import Any
+from typing import Type, Any
 from dataclasses import dataclass
 from omegaconf import MISSING
 from hydra.core.config_store import ConfigStore
 from torch import nn
-from torch.optim import Optimizer, SGD, Adam, RAdam
+from torch.optim.optimizer import Optimizer
+from torch.optim.sgd import SGD
+from torch.optim.adam import Adam
+from torch.optim.radam import RAdam
 from torch.distributed.optim import ZeroRedundancyOptimizer
 import torch.optim.lr_scheduler as lr_scheduler
-from apex.optimizers import FusedSGD, FusedAdam, FusedLAMB
+from apex.optimizers import FusedSGD, FusedAdam, FusedLAMB  # type: ignore
 
 
 @dataclass
-class SgdOptimizerConfig:
+class OptimizerConfig:
+    type: str
+    momentum: float | None
+    epsilon: float | None
+    learning_rate: float
+    warmup_start_lr: float
+    warmup_steps: int
+    annealing_steps: int
+    annealing_steps_factor: int
+    use_zero: bool
+    initialize: bool
+
+
+@dataclass
+class SgdOptimizerConfig(OptimizerConfig):
     type: str = "sgd"
     momentum: float = 0.0
     epsilon: float | None = None
@@ -25,7 +42,7 @@ class SgdOptimizerConfig:
 
 
 @dataclass
-class AdamOptimizerConfig:
+class AdamOptimizerConfig(OptimizerConfig):
     type: str = "adam"
     momentum: float | None = None
     epsilon: float = 1.0e-8
@@ -39,7 +56,7 @@ class AdamOptimizerConfig:
 
 
 @dataclass
-class RAdamOptimizerConfig:
+class RAdamOptimizerConfig(OptimizerConfig):
     type: str = "radam"
     momentum: float | None = None
     epsilon: float = 1.0e-8
@@ -53,7 +70,7 @@ class RAdamOptimizerConfig:
 
 
 @dataclass
-class LambOptimizerConfig:
+class LambOptimizerConfig(OptimizerConfig):
     type: str = "lamb"
     momentum: float | None = None
     epsilon: float = 1.0e-6
@@ -141,38 +158,50 @@ def validate(config: Any):
         raise RuntimeError(errmsg)
 
 
-def dump(config: Any) -> None:
-    logging.info("Optimizer: %s", config.optimizer.type)
+def dump(config: Any, prefix: str = "") -> None:
+    logging.info("%sOptimizer: %s", prefix, config.optimizer.type)
     if config.optimizer.type in ("sgd",):
-        logging.info("Momentum factor: %f", config.optimizer.momentum)
+        logging.info(
+            "%sMomentum factor: %f", prefix, config.optimizer.momentum
+        )
     if config.optimizer.type in ("adam", "radam", "mtadam", "lamb"):
-        logging.info("Epsilon parameter: %E", config.optimizer.epsilon)
-    logging.info("Learning rate: %E", config.optimizer.learning_rate)
+        logging.info(
+            "%sEpsilon parameter: %E", prefix, config.optimizer.epsilon
+        )
+    logging.info("%sLearning rate: %E", prefix, config.optimizer.learning_rate)
     if config.optimizer.warmup_steps == 0:
-        logging.info("LR warm-up: (disabled)")
+        logging.info("%sLR warm-up: (disabled)", prefix)
     else:
         logging.info(
-            "LR warm-up start LR: %E", config.optimizer.warmup_start_lr
+            "%sLR warm-up start LR: %E",
+            prefix,
+            config.optimizer.warmup_start_lr,
         )
-        logging.info("LR warm-up steps: %d", config.optimizer.warmup_steps)
+        logging.info(
+            "%sLR warm-up steps: %d", prefix, config.optimizer.warmup_steps
+        )
     if config.optimizer.annealing_steps == 0:
-        logging.info("LR annealing: (disabled)")
+        logging.info("%sLR annealing: (disabled)", prefix)
     else:
         logging.info(
-            "LR annealing steps: %d", config.optimizer.annealing_steps
+            "%sLR annealing steps: %d",
+            prefix,
+            config.optimizer.annealing_steps,
         )
         logging.info(
-            "LR annealing steps factor: %d",
+            "%sLR annealing steps factor: %d",
+            prefix,
             config.optimizer.annealing_steps_factor,
         )
-    logging.info("Use ZeRO: %s", config.optimizer.use_zero)
+    logging.info("%sUse ZeRO: %s", prefix, config.optimizer.use_zero)
 
 
 def create(
-    config: Any, module: nn.Module
+    device_type: str, config: Any, module: nn.Module
 ) -> tuple[Optimizer, lr_scheduler.LRScheduler | None]:
+    optimizer_class: Type[Optimizer]
     if config.optimizer.type == "sgd":
-        if config.device.type == "cpu":
+        if device_type == "cpu":
             optimizer_class = SGD
         else:
             optimizer_class = FusedSGD
@@ -181,7 +210,7 @@ def create(
             "momentum": config.optimizer.momentum,
         }
     elif config.optimizer.type == "adam":
-        if config.device.type == "cpu":
+        if device_type == "cpu":
             optimizer_class = Adam
         else:
             optimizer_class = FusedAdam
@@ -204,6 +233,7 @@ def create(
     else:
         raise NotImplementedError(config.optimizer.type)
 
+    optimizer: Optimizer
     if config.optimizer.use_zero:
         optimizer = ZeroRedundancyOptimizer(
             module.parameters(), optimizer_class, **optimizer_kwargs
@@ -228,6 +258,7 @@ def create(
             config.optimizer.annealing_steps,
             config.optimizer.annealing_steps_factor,
         )
+    scheduler: lr_scheduler.LRScheduler | None
     if warmup_scheduler is None and annealing_scheduler is None:
         scheduler = None
     elif warmup_scheduler is not None and annealing_scheduler is not None:

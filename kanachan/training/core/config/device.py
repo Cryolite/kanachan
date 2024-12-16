@@ -8,14 +8,21 @@ from torch import backends
 
 
 @dataclass
-class CpuConfig:
+class DeviceConfig:
+    type: str
+    dtype: str
+    amp_dtype: str | None
+
+
+@dataclass
+class CpuConfig(DeviceConfig):
     type: str = "cpu"
     dtype: str = "float32"
     amp_dtype: str | None = None
 
 
 @dataclass
-class CudaConfig:
+class CudaConfig(DeviceConfig):
     type: str = "cuda"
     dtype: str = "float32"
     amp_dtype: str = "float16"

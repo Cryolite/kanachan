@@ -5,7 +5,16 @@ from hydra.core.config_store import ConfigStore
 
 
 @dataclass
-class SingleDecoderConfig:
+class DecoderConfig:
+    dimension: None | int
+    activation_function: None | str
+    dropout: None | float
+    layer_normalization: bool
+    num_layers: int
+
+
+@dataclass
+class SingleDecoderConfig(DecoderConfig):
     dimension: None | int = None
     activation_function: None | str = None
     dropout: None | float = None
@@ -14,7 +23,7 @@ class SingleDecoderConfig:
 
 
 @dataclass
-class DoubleDecoderConfig:
+class DoubleDecoderConfig(DecoderConfig):
     dimension: None | int = None
     activation_function: str = "relu"
     dropout: float = 0.1
@@ -23,7 +32,7 @@ class DoubleDecoderConfig:
 
 
 @dataclass
-class TripleDecoderConfig:
+class TripleDecoderConfig(DecoderConfig):
     dimension: None | int = None
     activation_function: str = "relu"
     dropout: float = 0.1
@@ -96,17 +105,41 @@ def validate(config: Any) -> None:
             )
             raise RuntimeError(errmsg)
 
+    if hasattr(config.decoder, "num_qr_intervals"):
+        if config.decoder.num_qr_intervals is not None and (
+            config.decoder.num_qr_intervals <= 0
+        ):
+            errmsg = (
+                f"{config.decoder.num_qr_intervals}: "
+                "`decoder.num_qr_intervals` must be a positive integer."
+            )
+            raise RuntimeError(errmsg)
 
-def dump(config: Any) -> None:
+
+def dump(config: Any, prefix: str = "") -> None:
     if config.decoder.num_layers >= 2:
-        logging.info("Decoder dimension: %d", config.decoder.dimension)
         logging.info(
-            "Activation function for decoder: %s",
+            "%sDecoder dimension: %d", prefix, config.decoder.dimension
+        )
+        logging.info(
+            "%sActivation function for decoder: %s",
+            prefix,
             config.decoder.activation_function,
         )
-        logging.info("Dropout for decoder: %f", config.decoder.dropout)
         logging.info(
-            "Layer normalization for decoder: %s",
+            "%sDropout for decoder: %f", prefix, config.decoder.dropout
+        )
+        logging.info(
+            "%sLayer normalization for decoder: %s",
+            prefix,
             config.decoder.layer_normalization,
         )
-    logging.info("# of decoder layers: %d", config.decoder.num_layers)
+    logging.info(
+        "%s# of decoder layers: %d", prefix, config.decoder.num_layers
+    )
+    if hasattr(config.decoder, "num_qr_intervals"):
+        logging.info(
+            "%s# of quantile regression intervals: %d",
+            prefix,
+            config.decoder.num_qr_intervals,
+        )

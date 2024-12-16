@@ -6,7 +6,20 @@ from hydra.core.config_store import ConfigStore
 
 
 @dataclass
-class BertTinyEncoderConfig:
+class EncoderConfig:
+    position_encoder: str
+    dimension: int
+    num_heads: int
+    dim_feedforward: None | int = None
+    activation_function: str = "gelu"
+    dropout: float = 0.1
+    num_layers: int = 4
+    layer_normalization: bool = False
+    load_from: None | Path = None
+
+
+@dataclass
+class BertTinyEncoderConfig(EncoderConfig):
     position_encoder: str = "position_embedding"
     dimension: int = 128
     num_heads: int = 2
@@ -19,7 +32,7 @@ class BertTinyEncoderConfig:
 
 
 @dataclass
-class BertMiniEncoderConfig:
+class BertMiniEncoderConfig(EncoderConfig):
     position_encoder: str = "position_embedding"
     dimension: int = 256
     num_heads: int = 4
@@ -32,7 +45,7 @@ class BertMiniEncoderConfig:
 
 
 @dataclass
-class BertSmallEncoderConfig:
+class BertSmallEncoderConfig(EncoderConfig):
     position_encoder: str = "position_embedding"
     dimension: int = 512
     num_heads: int = 8
@@ -45,7 +58,7 @@ class BertSmallEncoderConfig:
 
 
 @dataclass
-class BertMediumEncoderConfig:
+class BertMediumEncoderConfig(EncoderConfig):
     position_encoder: str = "position_embedding"
     dimension: int = 512
     num_heads: int = 8
@@ -58,7 +71,7 @@ class BertMediumEncoderConfig:
 
 
 @dataclass
-class BertBaseEncoderConfig:
+class BertBaseEncoderConfig(EncoderConfig):
     position_encoder: str = "position_embedding"
     dimension: int = 768
     num_heads: int = 12
@@ -71,7 +84,7 @@ class BertBaseEncoderConfig:
 
 
 @dataclass
-class BertLargeEncoderConfig:
+class BertLargeEncoderConfig(EncoderConfig):
     position_encoder: str = "position_embedding"
     dimension: int = 1024
     num_heads: int = 16
@@ -168,23 +181,34 @@ def validate(config: Any) -> None:
             raise RuntimeError(errmsg)
 
 
-def dump(config: Any) -> None:
-    logging.info("Position encoder: %s", config.encoder.position_encoder)
-    logging.info("Encoder dimension: %d", config.encoder.dimension)
-    logging.info("# of heads for encoder: %d", config.encoder.num_heads)
+def dump(config: Any, prefix: str = "") -> None:
     logging.info(
-        "Dimension of feedforward networks for encoder: %d",
+        "%sPosition encoder: %s", prefix, config.encoder.position_encoder
+    )
+    logging.info("%sEncoder dimension: %d", prefix, config.encoder.dimension)
+    logging.info(
+        "%s# of heads for encoder: %d", prefix, config.encoder.num_heads
+    )
+    logging.info(
+        "%sDimension of feedforward networks for encoder: %d",
+        prefix,
         config.encoder.dim_feedforward,
     )
     logging.info(
-        "Activation function for encoder: %s",
+        "%sActivation function for encoder: %s",
+        prefix,
         config.encoder.activation_function,
     )
-    logging.info("Dropout for encoder: %f", config.encoder.dropout)
+    logging.info("%sDropout for encoder: %f", prefix, config.encoder.dropout)
     logging.info(
-        "Layer normalization for encoder: %s",
+        "%sLayer normalization for encoder: %s",
+        prefix,
         config.encoder.layer_normalization,
     )
-    logging.info("# of encoder layers: %d", config.encoder.num_layers)
+    logging.info(
+        "%s# of encoder layers: %d", prefix, config.encoder.num_layers
+    )
     if config.encoder.load_from is not None:
-        logging.info("Load encoder from: %s", config.encoder.load_from)
+        logging.info(
+            "%sLoad encoder from: %s", prefix, config.encoder.load_from
+        )

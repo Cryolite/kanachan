@@ -25,8 +25,8 @@ from torch.distributed import (
     all_reduce,
 )
 from torch.utils.tensorboard.writer import SummaryWriter
-from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict import TensorDict  # type: ignore
+from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
 from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import (
     get_distributed_environment,
@@ -120,7 +120,7 @@ def _backward(
     if world_size >= 2:
         all_reduce(v_batch_mean, ReduceOp.AVG)
 
-    _copy: TensorDict = data["next"]
+    _copy: TensorDict = data["next"]  # type: ignore
     assert isinstance(_copy, TensorDict)
     _copy = _copy.copy()
     _copy = _copy.detach()
@@ -248,12 +248,12 @@ def _train(
             rewrite_grades=rewrite_grades,
             # pylint: disable=undefined-variable
             get_reward=get_reward,  # type: ignore # noqa: F821
+            discount_factor=discount_factor,
             dtype=dtype,
             max_size=replay_buffer_size,
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=(num_workers >= 1),
-            drop_last=(world_size >= 2),
         )
     else:
         data_loader = DataLoader(
@@ -285,7 +285,7 @@ def _train(
     batch_count = 0
 
     for data in data_loader:
-        data: TensorDict = data.to(device=device)
+        data = data.to(device=device)
 
         # Compute the Q target value.
         with torch.no_grad(), torch.autocast(**autocast_kwargs):
@@ -1111,8 +1111,8 @@ def _main(config: DictConfig) -> None:
     )
     source1_encoder_tdm = TensorDictModule(
         source1_encoder,
-        in_keys=["sparse", "numeric", "progression", "candidates"],
-        out_keys=["encode"],
+        in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+        out_keys=["encode"],  # type: ignore
     )
     source1_q_decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -1131,8 +1131,8 @@ def _main(config: DictConfig) -> None:
             _param.zero_()
     source1_q_decoder_tdm = TensorDictModule(
         source1_q_decoder,
-        in_keys=["encode"],
-        out_keys=["action_value"],
+        in_keys=["encode"],  # type: ignore
+        out_keys=["action_value"],  # type: ignore
     )
     source1_v_decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -1151,8 +1151,8 @@ def _main(config: DictConfig) -> None:
             _param.zero_()
     source1_v_decoder_tdm = TensorDictModule(
         source1_v_decoder,
-        in_keys=["encode"],
-        out_keys=["state_value"],
+        in_keys=["encode"],  # type: ignore
+        out_keys=["state_value"],  # type: ignore
     )
     source1_model = TensorDictSequential(
         source1_encoder_tdm,
@@ -1180,8 +1180,8 @@ def _main(config: DictConfig) -> None:
     )
     source2_encoder_tdm = TensorDictModule(
         source2_encoder,
-        in_keys=["sparse", "numeric", "progression", "candidates"],
-        out_keys=["encode"],
+        in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+        out_keys=["encode"],  # type: ignore
     )
     source2_q_decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -1200,8 +1200,8 @@ def _main(config: DictConfig) -> None:
             _param.zero_()
     source2_q_decoder_tdm = TensorDictModule(
         source2_q_decoder,
-        in_keys=["encode"],
-        out_keys=["action_value"],
+        in_keys=["encode"],  # type: ignore
+        out_keys=["action_value"],  # type: ignore
     )
     source2_v_decoder = Decoder(
         input_dimension=config.encoder.dimension,
@@ -1220,8 +1220,8 @@ def _main(config: DictConfig) -> None:
             _param.zero_()
     source2_v_decoder_tdm = TensorDictModule(
         source2_v_decoder,
-        in_keys=["encode"],
-        out_keys=["state_value"],
+        in_keys=["encode"],  # type: ignore
+        out_keys=["state_value"],  # type: ignore
     )
     source2_model = TensorDictSequential(
         source2_encoder_tdm,
@@ -1250,8 +1250,8 @@ def _main(config: DictConfig) -> None:
         )
         target1_encoder_tdm = TensorDictModule(
             target1_encoder,
-            in_keys=["sparse", "numeric", "progression", "candidates"],
-            out_keys=["encode"],
+            in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+            out_keys=["encode"],  # type: ignore
         )
         target1_q_decoder = Decoder(
             input_dimension=config.encoder.dimension,
@@ -1267,8 +1267,8 @@ def _main(config: DictConfig) -> None:
         )
         target1_q_decoder_tdm = TensorDictModule(
             target1_q_decoder,
-            in_keys=["encode"],
-            out_keys=["action_value"],
+            in_keys=["encode"],  # type: ignore
+            out_keys=["action_value"],  # type: ignore
         )
         target1_v_decoder = Decoder(
             input_dimension=config.encoder.dimension,
@@ -1284,8 +1284,8 @@ def _main(config: DictConfig) -> None:
         )
         target1_v_decoder_tdm = TensorDictModule(
             target1_v_decoder,
-            in_keys=["encode"],
-            out_keys=["state_value"],
+            in_keys=["encode"],  # type: ignore
+            out_keys=["state_value"],  # type: ignore
         )
         target1_model = TensorDictSequential(
             target1_encoder_tdm,
@@ -1313,8 +1313,8 @@ def _main(config: DictConfig) -> None:
         )
         target2_encoder_tdm = TensorDictModule(
             target2_encoder,
-            in_keys=["sparse", "numeric", "progression", "candidates"],
-            out_keys=["encode"],
+            in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+            out_keys=["encode"],  # type: ignore
         )
         target2_q_decoder = Decoder(
             input_dimension=config.encoder.dimension,
@@ -1330,8 +1330,8 @@ def _main(config: DictConfig) -> None:
         )
         target2_q_decoder_tdm = TensorDictModule(
             target2_q_decoder,
-            in_keys=["encode"],
-            out_keys=["action_value"],
+            in_keys=["encode"],  # type: ignore
+            out_keys=["action_value"],  # type: ignore
         )
         target2_v_decoder = Decoder(
             input_dimension=config.encoder.dimension,
@@ -1347,8 +1347,8 @@ def _main(config: DictConfig) -> None:
         )
         target2_v_decoder_tdm = TensorDictModule(
             target2_v_decoder,
-            in_keys=["encode"],
-            out_keys=["state_value"],
+            in_keys=["encode"],  # type: ignore
+            out_keys=["state_value"],  # type: ignore
         )
         target2_model = TensorDictSequential(
             target2_encoder_tdm,
@@ -1379,12 +1379,16 @@ def _main(config: DictConfig) -> None:
     model_to_save = TwinQActor(target1_model, target2_model)
     model_to_save_tdm = TensorDictModule(
         model_to_save,
-        in_keys=["sparse", "numeric", "progression", "candidates"],
-        out_keys=["action"],
+        in_keys=["sparse", "numeric", "progression", "candidates"],  # type: ignore
+        out_keys=["action"],  # type: ignore
     )
 
-    optimizer1, lr_scheduler1 = _config.optimizer.create(config, source1_model)
-    optimizer2, lr_scheduler2 = _config.optimizer.create(config, source2_model)
+    optimizer1, lr_scheduler1 = _config.optimizer.create(
+        device.type, config, source1_model
+    )
+    optimizer2, lr_scheduler2 = _config.optimizer.create(
+        device.type, config, source2_model
+    )
 
     if config.encoder.load_from is not None:
         assert config.initial_model_prefix is None
