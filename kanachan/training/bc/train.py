@@ -1,43 +1,46 @@
-import re
-import math
-from pathlib import Path
 import datetime
-import os
 import logging
+import math
+import os
+import re
 import sys
-from typing import Optional, Callable, Any
-from omegaconf import DictConfig
+from pathlib import Path
+from typing import Any, Callable, Optional
+
 import hydra
-from hydra.core.hydra_config import HydraConfig
 import torch
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig
+from tensordict import TensorDict  # type: ignore
+from tensordict.nn import (  # type: ignore
+    TensorDictModule,
+    TensorDictSequential,
+)
 from torch import Tensor, nn
-from torch.nn.parallel import DistributedDataParallel
-from torch.optim.optimizer import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
 from torch.amp.grad_scaler import GradScaler
 from torch.distributed import (
-    init_process_group,
-    broadcast,
     ReduceOp,
     all_reduce,
+    broadcast,
+    init_process_group,
 )
+from torch.nn.parallel import DistributedDataParallel
+from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.optimizer import Optimizer
 from torch.utils.tensorboard.writer import SummaryWriter
-from tensordict.nn import TensorDictModule, TensorDictSequential  # type: ignore
-import kanachan.training.core.config as _config
-
-from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
 
 # pylint: disable=unused-import
 import kanachan.training.bc.config
-from kanachan.training.core.bc import DataLoader
-from kanachan.nn import Encoder, Decoder, DecodeConverter
-from kanachan.model_loader import dump_object, dump_model
+import kanachan.training.core.config as _config
+from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
+from kanachan.model_loader import dump_model, dump_object
+from kanachan.nn import DecodeConverter, Decoder, Encoder
 from kanachan.training.common import (
     get_distributed_environment,
     get_gradient,
     is_gradient_nan,
 )
-
+from kanachan.training.core.bc import DataLoader
 
 SnapshotWriter = Callable[[int | None], None]
 
@@ -97,21 +100,27 @@ def _training(
 
     for data in data_loader:
         data = data.to(device=device)
-        with torch.autocast(**autocast_kwargs):
-            network_tdm(data)
+
         action: Tensor = data["action"]
         assert isinstance(action, Tensor)
         assert action.device == device
         assert action.dtype == torch.int32
         assert action.dim() == 1
         assert action.size(0) == batch_size
-        log_probs: Tensor = data["log_probs"]
+
+        copy = data.detach().clone()
+        assert isinstance(copy, TensorDict)
+        with torch.autocast(**autocast_kwargs):
+            network_tdm(copy)
+
+        log_probs: Tensor = copy["log_probs"]
         assert isinstance(log_probs, Tensor)
         assert log_probs.device == device
         assert log_probs.dtype == dtype
         assert log_probs.dim() == 2
         assert log_probs.size(0) == batch_size
         assert log_probs.size(1) == MAX_NUM_ACTION_CANDIDATES
+
         loss: Tensor = loss_function(log_probs, action.long())
 
         _loss = loss.detach().clone()
@@ -151,6 +160,7 @@ def _training(
                 max_gradient_norm,
                 error_if_nonfinite=False,
             )
+
             grad_scaler.step(optimizer)
             grad_scaler.update()
             if scheduler is not None:
@@ -329,7 +339,7 @@ def _main(config: DictConfig) -> None:
         if config.initial_model_index is None:
             for child in os.listdir(config.initial_model_prefix):
                 match = re.search(
-                    "^(?:encoder|decoder|optimizer|lr-scheduler)(?:\\.(\\d+))?\\.pth$",
+                    "^(?:encoder|decoder|optimizer|scheduler)(?:\\.(\\d+))?\\.pth$",
                     child,
                 )
                 if match is None:
@@ -386,7 +396,7 @@ def _main(config: DictConfig) -> None:
             optimizer_snapshot_path = None
 
         scheduler_snapshot_path = (
-            config.initial_model_prefix / f"lr-scheduler{infix}.pth"
+            config.initial_model_prefix / f"scheduler{infix}.pth"
         )
         assert scheduler_snapshot_path is not None
         if (
@@ -555,17 +565,31 @@ def _main(config: DictConfig) -> None:
             broadcast(_param.data, src=0)
         network_tdm.to(device="cpu")
 
+    network_tdm.requires_grad_(True)
+    network_tdm.train()
+    network_tdm = network_tdm.to(device=device, dtype=dtype)
+    if world_size >= 2:
+        network_tdm = nn.SyncBatchNorm.convert_sync_batchnorm(network_tdm)
+        network_tdm = DistributedDataParallel(network_tdm)
+        assert isinstance(network_tdm, nn.Module)
+
     argmax_layer = DecodeConverter("argmax")
     argmax_tdm = TensorDictModule(
         argmax_layer,
-        in_keys=["candidates", "decode"],  # type: ignore
+        in_keys=["candidates", "log_probs"],  # type: ignore
         out_keys=["action"],  # type: ignore
     )
     network_tdm_to_save = TensorDictSequential(
-        encoder_tdm, decoder_tdm, argmax_tdm
+        encoder_tdm, decoder_tdm, decode_converter_tdm, argmax_tdm
     )
 
-    optimizer, scheduler = _config.optimizer.create(device.type, config, network_tdm)
+    network_tdm_to_save.requires_grad_(True)
+    network_tdm_to_save.train()
+    network_tdm_to_save = network_tdm_to_save.to(device=device, dtype=dtype)
+
+    optimizer, scheduler = _config.optimizer.create(
+        device.type, config, network_tdm
+    )
 
     if config.encoder.load_from is not None:
         assert config.initial_model_prefix is None
@@ -575,6 +599,7 @@ def _main(config: DictConfig) -> None:
             config.encoder.load_from, map_location="cpu", weights_only=True
         )
         encoder.load_state_dict(encoder_state_dict)
+        encoder.to(device=device, dtype=dtype)
 
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
@@ -584,18 +609,27 @@ def _main(config: DictConfig) -> None:
             encoder_snapshot_path, map_location="cpu", weights_only=True
         )
         encoder.load_state_dict(encoder_state_dict)
+        encoder.to(device=device, dtype=dtype)
 
         assert decoder_snapshot_path is not None
         decoder_state_dict = torch.load(
             decoder_snapshot_path, map_location="cpu", weights_only=True
         )
         decoder.load_state_dict(decoder_state_dict)
+        decoder.to(device=device, dtype=dtype)
 
         if optimizer_snapshot_path is not None:
             optimizer_state_dict = torch.load(
                 optimizer_snapshot_path, map_location="cpu", weights_only=True
             )
             optimizer.load_state_dict(optimizer_state_dict)
+            for _optimizer_state in optimizer.state.values():
+                assert isinstance(_optimizer_state, dict)
+                for key, value in _optimizer_state.items():
+                    if isinstance(value, Tensor):
+                        _optimizer_state[key] = value.to(
+                            device=device, dtype=dtype
+                        )
 
         if scheduler_snapshot_path is not None:
             assert scheduler is not None
@@ -603,24 +637,6 @@ def _main(config: DictConfig) -> None:
                 scheduler_snapshot_path, map_location="cpu", weights_only=True
             )
             scheduler.load_state_dict(scheduler_state_dict)
-
-    network_tdm.requires_grad_(True)
-    network_tdm.train()
-    network_tdm = network_tdm.to(device=device, dtype=dtype)
-    if world_size >= 2:
-        network_tdm = DistributedDataParallel(network_tdm)
-        network_tdm = nn.SyncBatchNorm.convert_sync_batchnorm(network_tdm)
-        assert isinstance(network_tdm, nn.Module)
-
-    network_tdm_to_save.requires_grad_(True)
-    network_tdm_to_save.train()
-    network_tdm_to_save = network_tdm_to_save.to(device=device, dtype=dtype)
-
-    for _optimizer_state in optimizer.state.values():
-        assert isinstance(_optimizer_state, dict)
-        for key, value in _optimizer_state.items():
-            if isinstance(value, Tensor):
-                _optimizer_state[key] = value.to(device=device, dtype=dtype)
 
     snapshots_path = output_prefix / "snapshots"
 
@@ -641,16 +657,16 @@ def _main(config: DictConfig) -> None:
         if scheduler is not None:
             torch.save(
                 scheduler.state_dict(),
-                snapshots_path / f"lr-scheduler{infix}.pth",
+                snapshots_path / f"scheduler{infix}.pth",
             )
 
-        network_tdm_state = dump_object(
+        network_tdm_state = dump_model(
             network_tdm_to_save,
             [
                 dump_object(
                     encoder_tdm,
                     [
-                        dump_model(
+                        dump_object(
                             encoder,
                             [],
                             {
@@ -681,7 +697,7 @@ def _main(config: DictConfig) -> None:
                 dump_object(
                     decoder_tdm,
                     [
-                        dump_model(
+                        dump_object(
                             decoder,
                             [],
                             {
@@ -701,10 +717,18 @@ def _main(config: DictConfig) -> None:
                     {"in_keys": ["encode"], "out_keys": ["decode"]},
                 ),
                 dump_object(
-                    argmax_tdm,
-                    [dump_model(argmax_layer, ["argmax"], {})],
+                    decode_converter_tdm,
+                    [dump_object(decode_converter, ["log_probs"], {})],
                     {
                         "in_keys": ["candidates", "decode"],
+                        "out_keys": ["log_probs"],
+                    },
+                ),
+                dump_object(
+                    argmax_tdm,
+                    [dump_object(argmax_layer, ["argmax"], {})],
+                    {
+                        "in_keys": ["candidates", "log_probs"],
                         "out_keys": ["action"],
                     },
                 ),
