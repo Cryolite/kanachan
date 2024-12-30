@@ -1,1 +1,1 @@
-from .data_loader import DataLoader
+from kanachan.training.core.bc.data_loader import DataLoader
