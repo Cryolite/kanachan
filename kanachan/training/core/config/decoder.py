@@ -1,6 +1,8 @@
 import logging
-from typing import Any
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 from hydra.core.config_store import ConfigStore
 
 
@@ -11,6 +13,7 @@ class DecoderConfig:
     dropout: None | float
     layer_normalization: bool
     num_layers: int
+    load_from: Path | None
 
 
 @dataclass
@@ -20,6 +23,7 @@ class SingleDecoderConfig(DecoderConfig):
     dropout: None | float = None
     layer_normalization: bool = False
     num_layers: int = 1
+    load_from: Path | None = None
 
 
 @dataclass
@@ -29,6 +33,7 @@ class DoubleDecoderConfig(DecoderConfig):
     dropout: float = 0.1
     layer_normalization: bool = False
     num_layers: int = 2
+    load_from: Path | None = None
 
 
 @dataclass
@@ -38,6 +43,7 @@ class TripleDecoderConfig(DecoderConfig):
     dropout: float = 0.1
     layer_normalization: bool = False
     num_layers: int = 3
+    load_from: Path | None = None
 
 
 config_store = ConfigStore.instance()
@@ -105,6 +111,14 @@ def validate(config: Any) -> None:
             )
             raise RuntimeError(errmsg)
 
+    if config.decoder.load_from is not None:
+        if not config.decoder.load_from.exists():
+            errmsg = f"{config.decoder.load_from}: Does not exist."
+            raise RuntimeError(errmsg)
+        if not config.decoder.load_from.is_file():
+            errmsg = f"{config.decoder.load_from}: Not a file."
+            raise RuntimeError(errmsg)
+
     if hasattr(config.decoder, "num_qr_intervals"):
         if config.decoder.num_qr_intervals is not None and (
             config.decoder.num_qr_intervals <= 0
@@ -137,6 +151,10 @@ def dump(config: Any, prefix: str = "") -> None:
     logging.info(
         "%s# of decoder layers: %d", prefix, config.decoder.num_layers
     )
+    if config.decoder.load_from is not None:
+        logging.info(
+            "%sLoad decoder from: %s", prefix, config.decoder.load_from
+        )
     if hasattr(config.decoder, "num_qr_intervals"):
         logging.info(
             "%s# of quantile regression intervals: %d",

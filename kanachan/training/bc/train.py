@@ -601,6 +601,16 @@ def _main(config: DictConfig) -> None:
         encoder.load_state_dict(encoder_state_dict)
         encoder.to(device=device, dtype=dtype)
 
+    if config.decoder.load_from is not None:
+        assert config.initial_model_prefix is None
+        assert config.initial_model_index is None
+
+        decoder_state_dict = torch.load(
+            config.decoder.load_from, map_location="cpu", weights_only=True
+        )
+        decoder.load_state_dict(decoder_state_dict)
+        decoder.to(device=device, dtype=dtype)
+
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
 
