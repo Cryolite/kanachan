@@ -1005,10 +1005,26 @@ def _main(config: DictConfig) -> None:
             config.encoder.load_from, map_location="cpu", weights_only=True
         )
         encoder.load_state_dict(encoder_state_dict)
+        encoder.to(device=device, dtype=dtype)
 
         if config.double_q_learning:
             assert target_encoder is not None
             target_encoder.load_state_dict(encoder_state_dict)
+            target_encoder.to(device=device, dtype=dtype)
+
+    if config.decoder.load_from is not None:
+        assert config.initial_model_prefix is None
+        assert config.initial_model_index is None
+        decoder_state_dict = torch.load(
+            config.decoder.load_from, map_location="cpu", weights_only=True
+        )
+        decoder.load_state_dict(decoder_state_dict)
+        decoder.to(device=device, dtype=dtype)
+
+        if config.double_q_learning:
+            assert target_decoder is not None
+            target_decoder.load_state_dict(decoder_state_dict)
+            target_decoder.to(device=device, dtype=dtype)
 
     if config.initial_model_prefix is not None:
         assert config.encoder.load_from is None
@@ -1020,47 +1036,66 @@ def _main(config: DictConfig) -> None:
             assert target_decoder_snapshot_path is not None
             assert target_decoder is not None
             assert target_network is not None
+
             source_encoder_state_dict = torch.load(
                 source_encoder_snapshot_path,
                 map_location="cpu",
                 weights_only=True,
             )
             encoder.load_state_dict(source_encoder_state_dict)
+            encoder.to(device=device, dtype=dtype)
+
             source_decoder_state_dict = torch.load(
                 source_decoder_snapshot_path,
                 map_location="cpu",
                 weights_only=True,
             )
             decoder.load_state_dict(source_decoder_state_dict)
+            decoder.to(device=device, dtype=dtype)
+
             target_encoder_state_dict = torch.load(
                 target_encoder_snapshot_path,
                 map_location="cpu",
                 weights_only=True,
             )
             target_encoder.load_state_dict(target_encoder_state_dict)
+            target_encoder.to(device=device, dtype=dtype)
+
             target_decoder_state_dict = torch.load(
                 target_decoder_snapshot_path,
                 map_location="cpu",
                 weights_only=True,
             )
             target_decoder.load_state_dict(target_decoder_state_dict)
+            target_decoder.to(device=device, dtype=dtype)
         else:
             assert encoder_snapshot_path is not None
             assert decoder_snapshot_path is not None
+
             encoder_state_dict = torch.load(
                 encoder_snapshot_path, map_location="cpu", weights_only=True
             )
             encoder.load_state_dict(encoder_state_dict)
+            encoder.to(device=device, dtype=dtype)
+
             decoder_state_dict = torch.load(
                 decoder_snapshot_path, map_location="cpu", weights_only=True
             )
             decoder.load_state_dict(decoder_state_dict)
+            decoder.to(device=device, dtype=dtype)
 
         if optimizer_snapshot_path is not None:
             optimizer_state_dict = torch.load(
                 optimizer_snapshot_path, map_location="cpu", weights_only=True
             )
             optimizer.load_state_dict(optimizer_state_dict)
+            for _optimizer_state in optimizer.state.values():
+                assert isinstance(_optimizer_state, dict)
+                for key, value in _optimizer_state.items():
+                    if isinstance(value, Tensor):
+                        _optimizer_state[key] = value.to(
+                            device=device, dtype=dtype
+                        )
 
         if scheduler is not None and scheduler_snapshot_path is not None:
             schedular_state_dict = torch.load(
@@ -1166,11 +1201,7 @@ def _main(config: DictConfig) -> None:
             torch.arange(batch_size, device=device), a_star
         ]
 
-        target = torch.where(
-            done,
-            reward,
-            reward + config.discount_factor * next_q_sa,
-        )
+        target = reward + (1.0 - done) * config.discount_factor * next_q_sa
 
         td_error = (q_sa - target).pow(2)
 
