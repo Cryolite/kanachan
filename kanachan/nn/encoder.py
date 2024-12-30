@@ -1,18 +1,20 @@
 import torch
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint_sequential
+
+from kanachan import piecewise_linear_encoding
 from kanachan.constants import (
-    NUM_TYPES_OF_SPARSE_FEATURES,
+    ENCODER_WIDTH,
+    MAX_LENGTH_OF_PROGRESSION_FEATURES,
+    MAX_NUM_ACTION_CANDIDATES,
     MAX_NUM_ACTIVE_SPARSE_FEATURES,
     NUM_NUMERIC_FEATURES,
-    NUM_TYPES_OF_PROGRESSION_FEATURES,
-    MAX_LENGTH_OF_PROGRESSION_FEATURES,
     NUM_TYPES_OF_ACTIONS,
-    MAX_NUM_ACTION_CANDIDATES,
-    ENCODER_WIDTH,
+    NUM_TYPES_OF_PROGRESSION_FEATURES,
+    NUM_TYPES_OF_SPARSE_FEATURES,
 )
-from kanachan import piecewise_linear_encoding
-from kanachan.nn import PositionalEncoding, PositionEmbedding
+from kanachan.nn.position_embedding import PositionEmbedding
+from kanachan.nn.positional_encoding import PositionalEncoding
 
 
 class Encoder(nn.Module):
