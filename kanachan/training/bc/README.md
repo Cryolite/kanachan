@@ -51,6 +51,10 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 `num_workers=NWORKERS`: Specify the number of workers used in data loading. `NWORKERS` must be a non-negative integer. `0` means that the main process is used to load data. Default to `0` for CPU, and `2` for CUDA.
 
+`rewrite_rooms=ROOM`: By specifying this option, you can replace every **room** value in the training data with the specified `ROOM`. The `ROOM` can be one of the following: `bronze`, `silver`, `gold`, `jade`, or `throne`. The default value is `null`, which means no **room** values in the training data are modified.
+
+`rewrite_grades=GRADE`: By specifying this option, you can replace every **grade** value in the training data with the specified `GRADE`. The `GRADE` can be one of the following: `novice1`, `novice2`, `novice3`, `adept1`, `adept2`, `adept3`, `expert1`, `expert2`, `expert3`, `master1`, `master2`, `master3`, `saint1`, `saint2`, `saint3`, or `celestial`. The default value is `null`, which means no **grade** values in the training data are modified.
+
 `encoder={bert_tiny|bert_mini|bert_small|bert_medium|bert_base|bert_large}`: Specify the encoder structure. Default to `bert_base`. See the table below for the detailed meaning of the options:
 
 | `encoder`     | `encoder.position_encoder` | `encoder.dimension` | `encoder.num_heads` | `encoder.dim_feedforward` | `encoder.activation_function` | `encoder.dropout` | `encoder.num_layers` | `encoder.load_from` |
@@ -68,7 +72,7 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 `encoder.num_heads=NHEADS`: Specify the number of heads in each encoder layer. `NHEADS` must be a positive integer. Override the value by the `encoder` option.
 
-`encoder.dim_feedforward=DIM_FEEDFORWARD`: Specify the dimension of the feedforward networks in each encoder layer. `DIM_FEEDFORWARD` must be a positive integer. Override the value by the `encoder` option.
+`encoder.dim_feedforward=DIM_FEEDFORWARD`: Specify the dimension of the feedforward networks in each encoder layer. `DIM_FEEDFORWARD` must be a positive integer. Default to `4 * DIM`. Override the value by the `encoder` option.
 
 `encoder.activation_function={relu|gelu}`: Specify the activation function for the feedforward networks in each encoder layer. Override the value specified by the `encoder` option.
 
@@ -76,25 +80,27 @@ Options are specified in the [Hydra](https://hydra.cc/) manner.
 
 `encoder.num_layers=NLAYERS`: Specify the number of encoder layers. `NLAYERS` must be a positive integer. Override the value by the `encoder` option.
 
-`encoder.load_from=INITIAL_ENCODER`: Specify the path to the initial encoder snapshot. `INITIAL_ENCODER` must be a path that can be interpreted within the Docker guest environment. Mutually exclusive to the `initial_model` and `initial_model_prefix` options.
+`encoder.load_from=INITIAL_ENCODER`: Specify the path to the initial encoder snapshot. `INITIAL_ENCODER` must be a path that can be interpreted within the Docker guest environment. Mutually exclusive to the `initial_model_prefix` option.
 
 `decoder={single|double|triple}`: Specify the decoder structure. Default to `single`. See the table below for the detailed meaning of the options:
 
-| `decoder` | `decoder.dimension`         | `decoder.activation_function` | `decoder.dropout` | `decoder.num_layers` | `decoder.load_from` |
-|-----------|-----------------------------|-------------------------------|-------------------|----------------------|---------------------|
-| `single`  | (N/A)                       | (N/A)                         | (N/A)             | `1`                  | (N/A)               |
-| `double`  | (`encoder.dim_feedforward`) | `relu`                        | `0.1`             | `2`                  | (N/A)               |
-| `triple`  | (`encoder.dim_feedforward`) | `relu`                        | `0.1`             | `3`                  | (N/A)               |
+| `decoder` | `decoder.dimension`         | `decoder.layer_normalization` | `decoder.activation_function` | `decoder.dropout` | `decoder.num_layers` | `decoder.load_from` |
+|-----------|-----------------------------|-------------------------------|-------------------------------|-------------------|----------------------|---------------------|
+| `single`  | (N/A)                       | `false`                       | (N/A)                         | (N/A)             | `1`                  | (N/A)               |
+| `double`  | (`encoder.dim_feedforward`) | `false`                       | `relu`                        | `0.1`             | `2`                  | (N/A)               |
+| `triple`  | (`encoder.dim_feedforward`) | `false`                       | `relu`                        | `0.1`             | `3`                  | (N/A)               |
 
 `decoder.dim_feedforward=DIM_FEEDFORWARD`: Specify the dimension of the feedforward networks in each decoder layer. `DIM_FEEDFORWARD` must be a positive integer. Override the value by the `decoder` option.
 
-`decoder.activation_function={relu|gelu}`: Specify the activation function for the feedforward networks in each decoder layer. Override the value by the `decoder` option.
+`decoder.layer_normalization={false|true}`: Specify whether to use layer normalization in each hidden (non-last) decoder layer. Override the value by the `decoder` option.
 
-`decoder.dropout=DROPOUT`: Specify the dropout ratio for the feedforward networks in each decoder layer. `DROPOUT` must be a real number in the range \[0.0, 1.0\). Override the value by the `decoder` option.
+`decoder.activation_function={relu|gelu}`: Specify the activation function for the feedforward networks in each hidden (non-last) decoder layer. Override the value by the `decoder` option.
+
+`decoder.dropout=DROPOUT`: Specify the dropout ratio for the feedforward networks in each hidden (non-last) decoder layer. `DROPOUT` must be a real number in the range \[0.0, 1.0\). Override the value by the `decoder` option.
 
 `decoder.num_layers=NLAYERS`: Specify the number of decoder layers. `NLAYERS` must be a positive integer. Override the value by the `decoder` option.
 
-`decoder.load_from=INITIAL_DECODER`: Specify the path to the initial decoder snapshot. `INITIAL_DECODER` must be a path that can be interpreted within the Docker guest environment. Mutually exclusive to the `initial_model` and `initial_model_prefix` options.
+`decoder.load_from=INITIAL_DECODER`: Specify the path to the initial decoder snapshot. `INITIAL_DECODER` must be a path that can be interpreted within the Docker guest environment. Mutually exclusive to the `initial_model_prefix` option.
 
 `initial_model_prefix=PREFIX`: Specify the prefix to the initial model snapshot. `PREFIX` must be a path that can be interpreted within the Docker guest environment. Mutually exclusive to the `encoder.load_from` and `decoder.load_from` options.
 
