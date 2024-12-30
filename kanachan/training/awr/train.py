@@ -603,6 +603,11 @@ def _main(config: DictConfig) -> None:
     if world_size >= 2:
         init_process_group(backend="nccl")
 
+    q_model = load_model(config.q_model, map_location=torch.device("cpu"))
+    q_model.to(device=config.device.type, dtype=dtype)
+    q_model.requires_grad_(False)
+    q_model.eval()
+
     if config.value_model is None:
         value_model = None
     else:
@@ -612,11 +617,6 @@ def _main(config: DictConfig) -> None:
         value_model.to(device=config.device.type, dtype=dtype)
         value_model.requires_grad_(False)
         value_model.eval()
-
-    q_model = load_model(config.q_model, map_location=torch.device("cpu"))
-    q_model.to(device=config.device.type, dtype=dtype)
-    q_model.requires_grad_(False)
-    q_model.eval()
 
     encoder = Encoder(
         position_encoder=config.encoder.position_encoder,
@@ -674,11 +674,11 @@ def _main(config: DictConfig) -> None:
     argmax_layer = DecodeConverter("argmax")
     argmax_tdm = TensorDictModule(
         argmax_layer,
-        in_keys=["candidates", "decode"],  # type: ignore
+        in_keys=["candidates", "log_probs"],  # type: ignore
         out_keys=["action"],  # type: ignore
     )
     network_tdm_to_save = TensorDictSequential(
-        encoder_tdm, decoder_tdm, argmax_tdm
+        encoder_tdm, decoder_tdm, decode_converter_tdm, argmax_tdm
     )
 
     network_tdm.requires_grad_(True)
@@ -827,12 +827,26 @@ def _main(config: DictConfig) -> None:
                     },
                 ),
                 dump_object(
+                    decode_converter_tdm,
+                    [
+                        dump_object(
+                            decode_converter,
+                            [],
+                            {},
+                        ),
+                    ],
+                    {
+                        "in_keys": ["candidates", "decode"],
+                        "out_keys": ["log_probs"],
+                    },
+                ),
+                dump_object(
                     argmax_tdm,
                     [
                         dump_object(argmax_layer, ["argmax"], {}),
                     ],
                     {
-                        "in_keys": ["candidates", "decode"],
+                        "in_keys": ["candidates", "log_probs"],
                         "out_keys": ["action"],
                     },
                 ),
