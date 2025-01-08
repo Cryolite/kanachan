@@ -35,6 +35,8 @@ def piecewise_linear_encoding(
         raise ValueError(errmsg)
     if dimension <= 0:
         raise ValueError(dimension)
+    if dtype not in (torch.float64, torch.float32, torch.float16):
+        raise ValueError(dtype)
 
     interval = (maximum - minimum) / dimension
     intervals = torch.arange(
