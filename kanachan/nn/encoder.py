@@ -44,12 +44,14 @@ class Encoder(nn.Module):
             raise ValueError(num_heads)
         if dim_feedforward <= 0:
             raise ValueError(dim_feedforward)
-        if num_layers <= 0:
-            raise ValueError(num_layers)
         if activation_function not in ("relu", "gelu"):
             raise ValueError(activation_function)
         if dropout < 0.0 or 1.0 <= dropout:
             raise ValueError(dropout)
+        if num_layers <= 0:
+            raise ValueError(num_layers)
+        if dtype not in (torch.float64, torch.float32, torch.float16):
+            raise ValueError(dtype)
 
         super().__init__()
 
@@ -134,22 +136,45 @@ class Encoder(nn.Module):
         progression: Tensor,
         candidates: Tensor,
     ) -> Tensor:
-        assert sparse.dim() == 2
+        device = sparse.device
         batch_size = sparse.size(0)
+
+        assert isinstance(sparse, Tensor)
+        assert sparse.device == device
+        assert sparse.dtype == torch.int32
+        assert sparse.dim() == 2
+        assert sparse.size(0) == batch_size
         assert sparse.size(1) == MAX_NUM_ACTIVE_SPARSE_FEATURES
+        assert (0 <= sparse).all().item()
+        assert (sparse <= NUM_TYPES_OF_SPARSE_FEATURES).all().item()
+
+        assert isinstance(numeric, Tensor)
+        assert numeric.device == device
+        assert numeric.dtype == torch.int32
         assert numeric.dim() == 2
         assert numeric.size(0) == batch_size
         assert numeric.size(1) == NUM_NUMERIC_FEATURES
+
+        assert isinstance(progression, Tensor)
+        assert progression.device == device
+        assert progression.dtype == torch.int32
         assert progression.dim() == 2
         assert progression.size(0) == batch_size
         assert progression.size(1) == MAX_LENGTH_OF_PROGRESSION_FEATURES
+        assert (0 <= progression).all().item()
+        assert (progression <= NUM_TYPES_OF_PROGRESSION_FEATURES).all().item()
+
+        assert isinstance(candidates, Tensor)
+        assert candidates.device == device
+        assert candidates.dtype == torch.int32
         assert candidates.dim() == 2
         assert candidates.size(0) == batch_size
         assert candidates.size(1) == MAX_NUM_ACTION_CANDIDATES
+        assert (0 <= candidates).all().item()
+        assert (candidates <= NUM_TYPES_OF_ACTIONS).all().item()
 
         sparse = self.sparse_embedding(sparse)
 
-        device = sparse.device
         dtype = sparse.dtype
         numeric = numeric.to(device=torch.device("cpu"))
         _numeric = torch.zeros(
@@ -163,7 +188,7 @@ class Encoder(nn.Module):
             _numeric[i, 0] = piecewise_linear_encoding(
                 benchang,
                 0.0,
-                self.__dimension // 2,
+                float(self.__dimension // 2),
                 self.__dimension // 2,
                 torch.device("cpu"),
                 dtype,
@@ -172,7 +197,7 @@ class Encoder(nn.Module):
             _numeric[i, 1] = piecewise_linear_encoding(
                 deposites,
                 0.0,
-                self.__dimension // 2,
+                float(self.__dimension // 2),
                 self.__dimension // 2,
                 torch.device("cpu"),
                 dtype,
