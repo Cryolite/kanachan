@@ -126,6 +126,7 @@ class Decoder(nn.Module):
 
         self.layers = nn.Sequential(layers)
 
+    @torch.compile
     def forward(self, encode: Tensor) -> Tensor:
         assert encode.dim() == 3
         batch_size = encode.size(0)
