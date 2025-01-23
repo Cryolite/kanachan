@@ -137,9 +137,9 @@ class Decoder(nn.Module):
         last: int
         decode: Tensor
         if self.__output_mode == "state":
-            decode = self.layers(encode)
-            decode = decode.squeeze(2)
-            decode = decode.sum(1)
+            decode = encode.sum(1)
+            decode = self.layers(decode)
+            decode = decode.squeeze(1)
             assert decode.dim() == 1
             assert decode.size(0) == batch_size
         elif self.__output_mode == "scores":
