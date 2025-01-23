@@ -129,53 +129,14 @@ class Encoder(nn.Module):
 
         self.checkpointing = checkpointing
 
-    def forward(
+    @torch.compiler.disable()  # type: ignore
+    def __create_numeric(
         self,
-        sparse: Tensor,
+        device: torch.device,
+        dtype: torch.dtype,
+        batch_size: int,
         numeric: Tensor,
-        progression: Tensor,
-        candidates: Tensor,
     ) -> Tensor:
-        device = sparse.device
-        batch_size = sparse.size(0)
-
-        assert isinstance(sparse, Tensor)
-        assert sparse.device == device
-        assert sparse.dtype == torch.int32
-        assert sparse.dim() == 2
-        assert sparse.size(0) == batch_size
-        assert sparse.size(1) == MAX_NUM_ACTIVE_SPARSE_FEATURES
-        assert (0 <= sparse).all().item()
-        assert (sparse <= NUM_TYPES_OF_SPARSE_FEATURES).all().item()
-
-        assert isinstance(numeric, Tensor)
-        assert numeric.device == device
-        assert numeric.dtype == torch.int32
-        assert numeric.dim() == 2
-        assert numeric.size(0) == batch_size
-        assert numeric.size(1) == NUM_NUMERIC_FEATURES
-
-        assert isinstance(progression, Tensor)
-        assert progression.device == device
-        assert progression.dtype == torch.int32
-        assert progression.dim() == 2
-        assert progression.size(0) == batch_size
-        assert progression.size(1) == MAX_LENGTH_OF_PROGRESSION_FEATURES
-        assert (0 <= progression).all().item()
-        assert (progression <= NUM_TYPES_OF_PROGRESSION_FEATURES).all().item()
-
-        assert isinstance(candidates, Tensor)
-        assert candidates.device == device
-        assert candidates.dtype == torch.int32
-        assert candidates.dim() == 2
-        assert candidates.size(0) == batch_size
-        assert candidates.size(1) == MAX_NUM_ACTION_CANDIDATES
-        assert (0 <= candidates).all().item()
-        assert (candidates <= NUM_TYPES_OF_ACTIONS).all().item()
-
-        sparse = self.sparse_embedding(sparse)
-
-        dtype = sparse.dtype
         numeric = numeric.to(device=torch.device("cpu"))
         _numeric = torch.zeros(
             (batch_size, NUM_NUMERIC_FEATURES, self.__dimension // 2),
@@ -221,7 +182,51 @@ class Encoder(nn.Module):
         numeric_embedding = numeric_embedding.unsqueeze(0).expand(
             batch_size, -1, -1
         )
-        numeric = torch.cat((_numeric, numeric_embedding), 2)
+        return torch.cat((_numeric, numeric_embedding), 2)
+
+    @torch.compile
+    def forward(
+        self,
+        sparse: Tensor,
+        numeric: Tensor,
+        progression: Tensor,
+        candidates: Tensor,
+    ) -> Tensor:
+        device = sparse.device
+        batch_size = int(sparse.size(0))
+
+        assert isinstance(sparse, Tensor)
+        assert sparse.device == device
+        assert sparse.dtype == torch.int32
+        assert sparse.dim() == 2
+        assert sparse.size(0) == batch_size
+        assert sparse.size(1) == MAX_NUM_ACTIVE_SPARSE_FEATURES
+
+        assert isinstance(numeric, Tensor)
+        assert numeric.device == device
+        assert numeric.dtype == torch.int32
+        assert numeric.dim() == 2
+        assert numeric.size(0) == batch_size
+        assert numeric.size(1) == NUM_NUMERIC_FEATURES
+
+        assert isinstance(progression, Tensor)
+        assert progression.device == device
+        assert progression.dtype == torch.int32
+        assert progression.dim() == 2
+        assert progression.size(0) == batch_size
+        assert progression.size(1) == MAX_LENGTH_OF_PROGRESSION_FEATURES
+
+        assert isinstance(candidates, Tensor)
+        assert candidates.device == device
+        assert candidates.dtype == torch.int32
+        assert candidates.dim() == 2
+        assert candidates.size(0) == batch_size
+        assert candidates.size(1) == MAX_NUM_ACTION_CANDIDATES
+
+        sparse = self.sparse_embedding(sparse)
+
+        dtype = sparse.dtype
+        numeric = self.__create_numeric(device, dtype, batch_size, numeric)  # type: ignore
 
         progression = self.progression_embedding(progression)
         progression = self.position_encoder(progression)
@@ -238,6 +243,5 @@ class Encoder(nn.Module):
             )  # type: ignore
         else:
             encode = self.encoder(embedding)
-        assert encode.size() == (batch_size, ENCODER_WIDTH, self.__dimension)
 
         return encode
