@@ -3,9 +3,9 @@ import torch
 from torch import Tensor, nn
 from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
+    ENCODER_WIDTH,
     NUM_TYPES_OF_ACTIONS,
     MAX_NUM_ACTION_CANDIDATES,
-    ENCODER_WIDTH,
 )
 from kanachan.nn import Decoder
 
@@ -82,10 +82,21 @@ class QRDecoder(nn.Module):
             )
             self.advantage_decoder_list.append(advantage_decoder)
 
+    @torch.compile
     def forward(self, candidates: Tensor, encode: Tensor) -> Tensor:
+        device = candidates.device
+        batch_size = int(candidates.size(0))
+
+        assert isinstance(candidates, Tensor)
+        assert candidates.device == device
+        assert candidates.dtype == torch.int32
         assert candidates.dim() == 2
-        batch_size = candidates.size(0)
+        assert candidates.size(0) == batch_size
         assert candidates.size(1) == MAX_NUM_ACTION_CANDIDATES
+
+        assert isinstance(encode, Tensor)
+        assert encode.device == device
+        assert encode.dtype in (torch.float64, torch.float32, torch.float16)
         assert encode.dim() == 3
         assert encode.size(0) == batch_size
         assert encode.size(1) == ENCODER_WIDTH
@@ -94,33 +105,22 @@ class QRDecoder(nn.Module):
 
         num_qr_intervals = len(self.advantage_decoder_list)
         dueling_network = len(self.state_value_decoder_list) != 0
-        assert dueling_network == (
-            len(self.state_value_decoder_list) == num_qr_intervals
-        )
+
         qs: list[Tensor] = []
         for i in range(num_qr_intervals):
             advantage_decoder = self.advantage_decoder_list[i]
             advantage: Tensor = advantage_decoder(encode)
-            assert advantage.dim() == 2
-            assert advantage.size(0) == batch_size
-            assert advantage.size(1) == MAX_NUM_ACTION_CANDIDATES
 
             if dueling_network:
                 advantage = advantage.masked_fill(mask, 0.0)
                 advantage = advantage - advantage.mean(1, keepdim=True)
                 state_value_decoder = self.state_value_decoder_list[i]
                 state_value: Tensor = state_value_decoder(encode)
-                assert state_value.dim() == 1
-                assert state_value.size(0) == batch_size
                 advantage += state_value.unsqueeze(1).expand_as(advantage)
 
             qs.append(advantage)
 
         theta = torch.stack(qs, 2)
-        assert theta.dim() == 3
-        assert theta.size(0) == batch_size
-        assert theta.size(1) == MAX_NUM_ACTION_CANDIDATES
-        assert theta.size(2) == num_qr_intervals
         theta = theta.masked_fill(
             mask.unsqueeze(2).expand_as(theta), -math.inf
         )
@@ -150,7 +150,10 @@ def _get_a_star(source_network: nn.Module, data: TensorDict) -> Tensor:
     with torch.no_grad():
         # WORKAROUND: See https://github.com/pytorch/pytorch/issues/43259
         source_network.requires_grad_(False)
+        assert source_network.training
+        source_network.eval()
         source_network(copy)
+        source_network.train()
         source_network.requires_grad_(True)
 
     next_theta: Tensor = copy["qr_action_value"]
@@ -211,6 +214,7 @@ def compute_td_error(
         source_network(_copy)
     else:
         with torch.no_grad():
+            assert not target_network.training
             target_network(_copy)
     data["next", "qr_action_value"] = _copy["qr_action_value"]
 
