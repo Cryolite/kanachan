@@ -7,7 +7,7 @@ authors = [
 description = "A Japanese (Riichi) Mahjong AI Framework"
 license = {file = "LICENSE"}
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
   "hydra-core",
   "jsonschema",
