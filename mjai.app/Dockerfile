@@ -1,57 +1,117 @@
-FROM ubuntu:20.04
+ARG PYTHON_VERSION=3.10.16
+FROM ubuntu:jammy
+ARG PYTHON_VERSION
 
-ENV LD_LIBRARY_PATH=/usr/local/lib64:/usr/local/lib
 ENV PATH=/usr/local/bin${PATH:+:$PATH}
 
-RUN apt-get update && \
-    apt-get -y dist-upgrade && \
+SHELL ["/bin/bash", "-c"]
+
+RUN set -euxo pipefail; \
+    apt-get update; \
+    apt-get -y dist-upgrade; \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
-      autoconf \
-      automake \
       curl \
       g++ \
       git \
       gnupg \
+      libboost-all-dev \
+      libbz2-dev \
+      libffi-dev \
+      libgdbm-compat-dev \
+      libgdbm-dev \
+      liblzma-dev \
+      libncurses-dev \
+      libreadline-dev \
+      libsqlite3-dev \
       libssl-dev \
       libtool \
       locales \
       locales-all \
-      m4 \
       make \
+      tk-dev \
+      uuid-dev \
       xz-utils \
       zip \
-      zlib1g-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    locale-gen en_US.UTF-8 ja_JP.UTF-8 && \
-    mkdir -p /opt/src && \
-    (cd /opt && git clone 'https://github.com/Cryolite/prerequisites.git') && \
-    /opt/prerequisites/cmake/install --debug && \
-    (cd /opt/src && curl -fLsSo Python-3.10.7.tar.xz 'https://www.python.org/ftp/python/3.10.7/Python-3.10.7.tar.xz') && \
-    (cd /opt/src && tar xf Python-3.10.7.tar.xz) && \
-    rm /opt/src/Python-3.10.7.tar.xz && \
-    (cd /opt/src/Python-3.10.7 && ./configure --enable-optimizations --with-lto) && \
-    (cd /opt/src/Python-3.10.7 && make -j) && \
-    (cd /opt/src/Python-3.10.7 && make install) && \
-    rm -rf /opt/src/Python-3.10.7 && \
-    echo 'using python : : /usr/local/bin/python3 ;' >/root/user-config.jam && \
-    /opt/prerequisites/boost/download --debug --source-dir /opt/src/boost && \
-    /opt/prerequisites/boost/build --debug \
-      --source-dir /opt/src/boost -- \
-      -d+2 --with-headers --with-stacktrace --with-python --build-type=complete --layout=tagged \
-      toolset=gcc variant=release threading=multi link=shared runtime-link=shared && \
-    (mkdir -p /opt/src && cd /opt/src && curl -fLsSo protobuf-cpp-3.21.7.tar.gz 'https://github.com/protocolbuffers/protobuf/releases/download/v21.7/protobuf-cpp-3.21.7.tar.gz') && \
-    (cd /opt/src && tar xf protobuf-cpp-3.21.7.tar.gz) && \
-    rm /opt/src/protobuf-cpp-3.21.7.tar.gz && \
-    (cd /opt/src/protobuf-3.21.7 && ./configure) && \
-    (cd /opt/src/protobuf-3.21.7 && make -j) && \
-    (cd /opt/src/protobuf-3.21.7 && make install) && \
-    rm -rf /opt/src/protobuf-3.21.7 && \
-    (mkdir -p /opt/src && cd /opt/src && git clone 'https://github.com/s-yata/marisa-trie.git') && \
-    (cd /opt/src/marisa-trie && autoreconf -i) && \
-    (cd /opt/src/marisa-trie && CFLAGS='-DNDEBUG -O3 -flto' CXXFLAGS='-DNDEBUG -O3 -flto' ./configure --enable-native-code --disable-static) && \
-    (cd /opt/src/marisa-trie && make -j) && \
-    (cd /opt/src/marisa-trie && make install) && \
-    rm -rf /opt/src/marisa-trie && \
-    (mkdir -p /opt/src && cd /opt/src && git clone 'https://github.com/tomohxx/shanten-number') && \
-    (cd /opt/src/shanten-number && tar xf index.tar.gz) && \
-    (mkdir -p /opt/src && cd /opt/src && git clone 'https://github.com/MahjongRepository/mahjong' -b v1.1.11)
+      zlib1g-dev; \
+    apt-get clean && rm -rf /var/lib/apt/lists/*; \
+    locale-gen en_US.UTF-8 ja_JP.UTF-8
+
+# Install CMake.
+RUN set -euxo pipefail; \
+    mkdir -p /opt/src; \
+    pushd /opt; \
+    git clone 'https://github.com/Cryolite/prerequisites.git'; \
+    /opt/prerequisites/cmake/install --debug; \
+    popd
+
+# Install Python.
+RUN set -euxo pipefail; \
+    mkdir -p /opt/src; \
+    pushd /opt/src; \
+    curl -fLsSo Python-${PYTHON_VERSION}.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz"; \
+    tar xf Python-${PYTHON_VERSION}.tar.xz; \
+    rm /opt/src/Python-${PYTHON_VERSION}.tar.xz; \
+    pushd /opt/src/Python-${PYTHON_VERSION}; \
+    ./configure --enable-optimizations --with-lto; \
+    make -j; \
+    make install; \
+    popd; \
+    rm -rf /opt/src/Python-${PYTHON_VERSION}; \
+    popd; \
+    python3 -m pip install -U pip
+
+# Install Protocol Buffers.
+RUN set -euxo pipefail; \
+    mkdir -p /opt/src; \
+    pushd /opt/src; \
+    git clone 'https://github.com/protocolbuffers/protobuf.git'; \
+    pushd /opt/src/protobuf; \
+    git submodule update --init --recursive; \
+    cmake . -DCMAKE_CXX_STANDARD=17; \
+    cmake --build . --parallel $(nproc); \
+    cmake --install .; \
+    popd; \
+    rm -rf /opt/src/protobuf; \
+    popd
+
+# Install Nyanten.
+RUN set -euxo pipefail; \
+    mkdir -p /opt/src; \
+    pushd /opt/src; \
+    git clone 'https://github.com/Cryolite/nyanten.git'; \
+    cmake -S nyanten -B nyanten/build; \
+    cmake --install nyanten/build; \
+    rm -rf /opt/src/nyanten; \
+    popd
+
+COPY . /opt/kanachan
+
+RUN set -euxo pipefail; \
+    pushd /opt/kanachan/src/common; \
+    protoc -I. --cpp_out=. mahjongsoul.proto; \
+    popd
+
+RUN set -euxo pipefail; \
+    pushd /opt/kanachan; \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_BUILD_RPATH=/workspace/.local/lib; \
+    VERBOSE=1 cmake --build build --target _nyanten; \
+    cp build/src/nyanten/lib_nyanten.so mjai.app/nyanten/_nyanten.so; \
+    popd
+
+RUN set -euxo pipefail; \
+    mkdir -p /opt/kanachan/mjai.app/build; \
+    pushd /opt/kanachan/mjai.app/build; \
+    python3 -m pip install -t . mahjong==1.1.11 torch tensordict ../..; \
+    cp -r ../nyanten .; \
+    cp ../hand_calculator.py .; \
+    cp ../config.json.orig config.json; \
+    cp ../_kanachan.py ../bot.py .; \
+    rm -rf cusparselt; \
+    rm -rf nvidia; \
+    rm -rf torch; \
+    rm -rf triton; \
+    sed -i -e 's/@torch.compile//' kanachan/nn/encoder.py; \
+    sed -i -e 's/@torch.compile//' kanachan/nn/decoder.py; \
+    sed -i -e 's/@torch.compile//' kanachan/nn/qr_decoder.py; \
+    sed -i -e 's/weights_only=True/weights_only=False/' kanachan/model_loader.py; \
+    popd

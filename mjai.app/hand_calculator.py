@@ -1,8 +1,8 @@
 import sys
 from typing import (List,)
-from mahjong.meld import Meld
-from mahjong.hand_calculating.hand_config import (OptionalRules, HandConfig,)
-from mahjong.hand_calculating.hand import HandCalculator as Impl
+from mahjong.meld import Meld  # type: ignore
+from mahjong.hand_calculating.hand_config import (OptionalRules, HandConfig,)  # type: ignore
+from mahjong.hand_calculating.hand import HandCalculator as Impl  # type: ignore
 
 
 _FULU2MELD = {
@@ -302,8 +302,8 @@ class HandCalculator:
     def has_yihan(
         self, chang: int, player_wind: int, hand: List[int],
         fulu_list: List[int], hupai: int, rong: bool) -> bool:
-        tiles = set()
-        melds = []
+        tiles: set[int] = set()
+        melds: list[Meld] = []
 
         # `tiles` には副露牌も含めなければならない．
         # ただし，槓は3枚としてカウントする．
@@ -311,14 +311,14 @@ class HandCalculator:
             if 148 <= fulu and fulu <= 181:
                 meld = _FULU2MELD[fulu]
                 for i in range(3):
-                    tiles.add(meld.tiles[i])
+                    tiles.add(meld.tiles[i])  # type: ignore
             elif 182 <= fulu and fulu <= 218:
                 meld = _FULU2MELD[fulu]
                 for i in range(3):
-                    tiles.add(meld.tiles[i])
+                    tiles.add(meld.tiles[i])  # type: ignore
             elif 222 <= fulu and fulu <= 311:
                 meld = _FULU2MELD[fulu]
-                for t in meld.tiles:
+                for t in meld.tiles:  # type: ignore
                     for i in range(4):
                         if t + i not in tiles:
                             tiles.add(t + i)
@@ -327,7 +327,7 @@ class HandCalculator:
                 encode = fulu - 312
                 peng = encode % 40
                 meld = _FULU2MELD[peng + 312]
-                for t in meld.tiles:
+                for t in meld.tiles:  # type: ignore
                     for i in range(4):
                         if t + i not in tiles:
                             tiles.add(t + i)
@@ -337,7 +337,7 @@ class HandCalculator:
                 daminggang = encode % 37
                 meld = _FULU2MELD[daminggang + 432]
                 for i in range(3):
-                    tiles.add(meld.tiles[i])
+                    tiles.add(meld.tiles[i])  # type: ignore
             else:
                 raise RuntimeError(fulu)
             melds.append(meld)
@@ -366,8 +366,8 @@ class HandCalculator:
         if not flag:
             raise RuntimeError('TODO: (A suitable error message)')
 
-        tiles = list(tiles)
-        tiles.sort()
+        _tiles = list(tiles)
+        _tiles.sort()
 
         hupai = _TILE_OFFSET_RANGE[hupai][0]
 
@@ -379,13 +379,13 @@ class HandCalculator:
 
         try:
             response = hand_calculator.estimate_hand_value(
-                tiles=tiles, win_tile=hupai, melds=melds, config=config)
+                tiles=_tiles, win_tile=hupai, melds=melds, config=config)
             if response.error is not None:
                 if response.error == 'There are no yaku in the hand':
                     return False
                 raise RuntimeError(response.error)
         except Exception as exc:
-            print(f'tiles = {tiles}', file=sys.stderr)
+            print(f'tiles = {_tiles}', file=sys.stderr)
             for meld in melds:
                 print(f'meld = {meld.tiles}', file=sys.stderr)
             print(f'hupai = {hupai}', file=sys.stderr)

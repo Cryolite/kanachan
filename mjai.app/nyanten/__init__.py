@@ -1,0 +1,1 @@
+from ._nyanten import calculate_replacement_number

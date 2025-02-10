@@ -2,7 +2,7 @@
     "model": "./model.kanachan",
     "device": "cpu",
     "dtype": "float32",
-    "my_name": "kanachan",
+    "my_name": "Kanachan",
     "room": 3,
     "game_style": 1,
     "my_grade": 14,
