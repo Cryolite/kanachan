@@ -129,7 +129,6 @@ class Encoder(nn.Module):
 
         self.checkpointing = checkpointing
 
-    @torch.compiler.disable()  # type: ignore
     def __create_numeric(
         self,
         device: torch.device,
@@ -185,6 +184,14 @@ class Encoder(nn.Module):
         return torch.cat((_numeric, numeric_embedding), 2)
 
     @torch.compile
+    def __encode(self, embedding: Tensor) -> Tensor:
+        if self.checkpointing:
+            encoder_layers = self.encoder.layers
+            return checkpoint_sequential(
+                encoder_layers, len(encoder_layers), embedding
+            )  # type: ignore
+        return self.encoder(embedding)
+
     def forward(
         self,
         sparse: Tensor,
@@ -226,7 +233,7 @@ class Encoder(nn.Module):
         sparse = self.sparse_embedding(sparse)
 
         dtype = sparse.dtype
-        numeric = self.__create_numeric(device, dtype, batch_size, numeric)  # type: ignore
+        numeric = self.__create_numeric(device, dtype, batch_size, numeric)
 
         progression = self.progression_embedding(progression)
         progression = self.position_encoder(progression)
@@ -235,13 +242,4 @@ class Encoder(nn.Module):
 
         embedding = torch.cat((sparse, numeric, progression, candidates), 1)
 
-        encode: Tensor
-        if self.checkpointing:
-            encoder_layers = self.encoder.layers
-            encode = checkpoint_sequential(
-                encoder_layers, len(encoder_layers), embedding
-            )  # type: ignore
-        else:
-            encode = self.encoder(embedding)
-
-        return encode
+        return self.__encode(embedding)
