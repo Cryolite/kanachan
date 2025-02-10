@@ -2,7 +2,7 @@
 
 set -euxo pipefail
 
-PYTHON_VERSION=latest
+PYTHON_VERSION=3.12.8
 
 PS4='+${BASH_SOURCE[0]}:$LINENO: '
 if [[ -t 1 ]] && type -t tput >/dev/null; then
@@ -22,12 +22,16 @@ sudo apt-get -y install \
   g++ \
   libbz2-dev \
   libffi-dev \
+  libgdbm-compat-dev \
+  libgdbm-dev \
   liblzma-dev \
   libncurses-dev \
   libreadline-dev \
   libsqlite3-dev \
   libtool \
-  protobuf-compiler
+  protobuf-compiler \
+  tk-dev \
+  uuid-dev
 
 sudo chown vscode:vscode /workspaces
 
@@ -120,38 +124,46 @@ export CXX="$HOME/.local/bin/g++"
 # Install libbacktrace.
 /workspaces/prerequisites/libbacktrace/install --debug --prefix "$HOME/.local"
 
-# Install Boost.Stacktrace and Boost.Python.
+# Install Boost.Stacktrace, Boost.Python, and Boost.System.
+# (Boost.System is required by akochan.)
 PYTHON_PREFIX="$(python3 -c 'import sys; print(sys.prefix);')"
 echo "import toolset : using ; using python : : \"$PYTHON_PREFIX/bin/python3\" ;" > "$HOME/user-config.jam"
 /workspaces/prerequisites/boost/download --debug --source-dir /workspaces/boost
 /workspaces/prerequisites/boost/build --debug --source-dir /workspaces/boost --prefix "$HOME/.local" -- \
-  -d+2 --with-headers --with-stacktrace --with-python --build-type=complete --layout=tagged \
+  -d+2 --with-headers --with-stacktrace --with-python --with-system --build-type=complete --layout=tagged \
   toolset=gcc variant=debug threading=multi link=shared runtime-link=shared \
   cxxflags=-D_GLIBCXX_DEBUG cxxflags=-D_GLIBCXX_DEBUG_PEDANTIC \
   cflags=-fsanitize=address cxxflags=-fsanitize=address linkflags=-fsanitize=address \
   cflags=-fsanitize=undefined cxxflags=-fsanitize=undefined linkflags=-fsanitize=undefined
 /workspaces/prerequisites/boost/build --debug --source-dir /workspaces/boost --prefix "$HOME/.local" -- \
-  -d+2 --with-headers --with-stacktrace --with-python --build-type=complete --layout=tagged \
+  -d+2 --with-headers --with-stacktrace --with-python --with-system --build-type=complete --layout=tagged \
   toolset=gcc variant=release threading=multi link=shared runtime-link=shared
 rm -rf /workspaces/boost
-
-# Build and install marisa-trie.
-pushd /workspaces
-git clone 'https://github.com/s-yata/marisa-trie.git'
-pushd marisa-trie
-autoreconf -i
-CFLAGS='-DNDEBUG -O3 -flto' CXXFLAGS='-DNDEBUG -O3 -flto' ./configure --prefix="$HOME/.local" --enable-native-code --disable-static
-make -j
-make install
-popd
-rm -rf marisa-trie
+pushd "$HOME/.local/lib"
+ln -s libboost_system-mt-x64.so libboost_system.so
 popd
 
-# Clone shanten-number.
+# Install `Nyanten`.
 pushd /workspaces
-git clone 'https://github.com/tomohxx/shanten-number.git'
-pushd shanten-number
-tar xzvf data.tar.gz
+git clone 'https://github.com/Cryolite/nyanten.git'
+cmake -S nyanten -B nyanten/build
+cmake --install nyanten/build --prefix /home/vscode/.local
+rm -rf nyanten
+popd
+
+# Install akochan.
+pushd /workspaces
+git clone https://github.com/critter-mj/akochan.git
+pushd akochan
+pushd ai_src
+make -f Makefile_Linux
+popd
+sed -i -e 's/boost::asio::io_service/boost::asio::io_context/' mjai_client.hpp
+sed -i -e 's/boost::asio::ip::address::from_string/boost::asio::ip::make_address/' mjai_client.cpp
+sed -i -e 's/boost::asio::buffer_cast<const char \*>(buffer\.data())/static_cast<const char *>(buffer.data().data())/' mjai_client.cpp
+make -f Makefile_Linux
+cp libai.so /home/vscode/.local/lib64
+cp system.exe /home/vscode/.local/bin/akochan
 popd
 popd
 
@@ -160,21 +172,17 @@ pushd /workspaces/kanachan/src/common
 protoc -I. --cpp_out=. mahjongsoul.proto
 popd
 
-# Build kanachan.
-mkdir -p /workspaces/kanachan/build
-pushd /workspaces/kanachan/build
-cmake \
-  -DSHANTEN_NUMBER_SOURCE_PATH=/workspaces/shanten-number \
-  -DCMAKE_BUILD_TYPE=Release \
-  ..
-VERBOSE=1 make -j make_trie simulation
-mkdir -p "$HOME/.local/share/kanachan"
-src/xiangting/make_trie /workspaces/shanten-number "$HOME/.local/share/kanachan"
-cp src/simulation/libsimulation.so ../kanachan/simulation/_simulation.so
+# Build Kanachan.
+rm -rf /workspaces/kanachan/build
+pushd /workspaces/kanachan
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+VERBOSE=1 cmake --build build --parallel $(nproc) --target simulation
+cp build/src/simulation/libsimulation.so kanachan/simulation/_simulation.so
 popd
 
-# Install kanachan.
+# Install Kanachan.
+rm -rf /workspaces/kanachan/dist
 pushd /workspaces/kanachan
-python3 -m build -w; \
-python3 -m pip install -U dist/*.whl; \
+python3 -m build -w
+python3 -m pip install -U dist/*.whl
 popd

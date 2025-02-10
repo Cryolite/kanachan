@@ -1,11 +1,11 @@
 #define PY_SSIZE_T_CLEAN
 #include "simulation/shoupai.hpp"
 
-#include "simulation/xiangting_calculator.hpp"
 #include "simulation/paishan.hpp"
 #include "simulation/gil.hpp"
 #include "common/assert.hpp"
 #include "common/throw.hpp"
+#include <nyanten/replacement_number.hpp>
 #include <boost/python/import.hpp>
 #include <boost/python/extract.hpp>
 #include <boost/python/list.hpp>
@@ -310,10 +310,9 @@ bool Shoupai::isTingpai() const
   }
 
   std::vector<std::uint_fast8_t> shoupai34 = getShoupai34_();
-  std::uint_fast8_t const num_fulu = getNumFulu_();
-  std::uint_fast8_t const xiangting = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
-  tingpai_cache_ = (xiangting == 1u);
-  xiangting_lower_bound_ = xiangting;
+  std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(shoupai34);
+  tingpai_cache_ = (replacement_number == 1u);
+  replacement_number_lower_bound_ = replacement_number;
   return tingpai_cache_;
 }
 
@@ -731,7 +730,7 @@ python::list Shoupai::getFuluList_() const
 void Shoupai::updateHupaiList_()
 {
   KANACHAN_ASSERT((tingpai_cache_));
-  KANACHAN_ASSERT((xiangting_lower_bound_ == 1u));
+  KANACHAN_ASSERT((replacement_number_lower_bound_ == 1u));
 
   hupai_list_.clear();
 
@@ -761,17 +760,16 @@ void Shoupai::updateHupaiList_()
     }();
     if (shoupai34[hupai34] == 4u) {
       shoupai34[hupai34] -= 2u;
-      std::uint_fast8_t const xiangting
-        = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu - 1u);
-      if (xiangting == 0u) {
+      std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(shoupai34);
+      if (replacement_number == 0u) {
         hupai_list_.push_back(i);
       }
       shoupai34[hupai34] += 2u;
     }
     else {
       ++shoupai34[hupai34];
-      std::uint_fast8_t const xiangting = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
-      if (xiangting == 0u) {
+      std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(shoupai34);
+      if (replacement_number == 0u) {
         hupai_list_.push_back(i);
       }
       --shoupai34[hupai34];
@@ -845,9 +843,9 @@ std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnZimo(
         continue;
       }
       --shoupai34[i];
-      std::uint_fast8_t const xiangting = Kanachan::calculateXiangting(shoupai34, 4u - num_fulu);
+      std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(shoupai34);
       ++shoupai34[i];
-      bool const lizhi = menqian && (xiangting == 1u) && !lizhi_prohibited;
+      bool const lizhi = menqian && (replacement_number == 1u) && !lizhi_prohibited;
 
       auto append = [&](std::uint_fast8_t const tile, bool const moqi) mutable -> void
       {
@@ -1009,9 +1007,8 @@ std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnZimo(
       std::vector<std::uint_fast8_t> new_shoupai34 = getShoupai34_();
       std::uint_fast8_t const num_fulu = getNumFulu_();
       new_shoupai34[zimo_tile_34] -= 3u;
-      std::uint_fast8_t const xiangting
-        = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 1u);
-      if (xiangting >= 2u) {
+      std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(new_shoupai34);
+      if (replacement_number >= 2u) {
         // 暗槓すると聴牌が外れるので送り槓になる．
         break;
       }
@@ -1041,18 +1038,16 @@ std::vector<std::uint_fast16_t> Shoupai::getCandidatesOnZimo(
         }();
         if (new_shoupai34[hupai34] == 4u) {
           new_shoupai34[hupai34] -= 2u;
-          std::uint_fast8_t const xiangting
-            = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 2u);
-          if (xiangting == 0u) {
+          std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(new_shoupai34);
+          if (replacement_number == 0u) {
             new_hupai_list.push_back(i);
           }
           new_shoupai34[hupai34] += 2u;
         }
         else {
           ++new_shoupai34[hupai34];
-          std::uint_fast8_t const xiangting
-            = Kanachan::calculateXiangting(new_shoupai34, 4u - num_fulu - 1u);
-          if (xiangting == 0u) {
+          std::uint_fast8_t const replacement_number = Nyanten::calculateReplacementNumber(new_shoupai34);
+          if (replacement_number == 0u) {
             new_hupai_list.push_back(i);
           }
           --new_shoupai34[hupai34];
@@ -1638,9 +1633,9 @@ void Shoupai::onPostZimo(
   --shoupai_[dapai];
 
   tingpai_cache_ = false;
-  if (xiangting_lower_bound_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-    if (xiangting_lower_bound_ >= 1u) {
-      --xiangting_lower_bound_;
+  if (replacement_number_lower_bound_ != std::numeric_limits<std::uint_fast8_t>::max()) {
+    if (replacement_number_lower_bound_ >= 1u) {
+      --replacement_number_lower_bound_;
     }
   }
   hupai_list_.clear();
@@ -1793,9 +1788,9 @@ void Shoupai::onPostChiPeng(std::uint_fast8_t const dapai)
   he_.push_back(dapai);
 
   tingpai_cache_ = false;
-  if (xiangting_lower_bound_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-    if (xiangting_lower_bound_ >= 1u) {
-      --xiangting_lower_bound_;
+  if (replacement_number_lower_bound_ != std::numeric_limits<std::uint_fast8_t>::max()) {
+    if (replacement_number_lower_bound_ >= 1u) {
+      --replacement_number_lower_bound_;
     }
   }
   hupai_list_.clear();
@@ -2010,9 +2005,9 @@ void Shoupai::onPostGang(bool const in_lizhi)
     (kuikae_delayed_ == std::numeric_limits<std::uint_fast16_t>::max()));
 
   tingpai_cache_ = false;
-  if (xiangting_lower_bound_ != std::numeric_limits<std::uint_fast8_t>::max()) {
-    if (xiangting_lower_bound_ >= 1u) {
-      --xiangting_lower_bound_;
+  if (replacement_number_lower_bound_!= std::numeric_limits<std::uint_fast8_t>::max()) {
+    if (replacement_number_lower_bound_ >= 1u) {
+      --replacement_number_lower_bound_;
     }
   }
   hupai_list_.clear();

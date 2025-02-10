@@ -1,5 +1,5 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
-ARG PYTHON_VERSION=3.12.7
+ARG PYTHON_VERSION=3.12.8
 ARG BUILD_TYPE=Release
 FROM $BASE_IMAGE
 ARG PYTHON_VERSION
@@ -11,13 +11,15 @@ SHELL ["/bin/bash", "-c"]
 RUN set -euxo pipefail; \
     apt-get -y update; \
     apt-get -y dist-upgrade; \
-    apt-get -y install \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
       autoconf \
       automake \
       curl \
       git-core \
       libbz2-dev \
       libffi-dev \
+      libgdbm-compat-dev \
+      libgdbm-dev \
       liblzma-dev \
       libncurses-dev \
       libreadline-dev \
@@ -26,7 +28,9 @@ RUN set -euxo pipefail; \
       libtool \
       locales \
       locales-all \
-      protobuf-compiler; \
+      protobuf-compiler \
+      tk-dev \
+      uuid-dev; \
     apt-get clean && rm -rf /var/lib/apt/lists/*; \
     locale-gen en_US.UTF-8 ja_JP.UTF-8; \
     useradd -ms /bin/bash ubuntu; \
@@ -116,71 +120,58 @@ RUN set -euxo pipefail; \
     /workspace/prerequisites/boost/download --debug --source-dir /workspace/boost; \
     if [[ $BUILD_TYPE == 'Debug' ]]; then \
       /workspace/prerequisites/boost/build --debug --source-dir /workspace/boost --prefix /home/ubuntu/.local -- \
-        -d+2 --with-headers --with-stacktrace --with-python --with-timer --build-type=complete --layout=tagged \
+        -d+2 --with-headers --with-stacktrace --with-python --with-timer --with-system --build-type=complete --layout=tagged \
         toolset=gcc variant=debug threading=multi link=shared runtime-link=shared \
         cxxflags=-D_GLIBCXX_DEBUG cxxflags=-D_GLIBCXX_DEBUG_PEDANTIC \
         cflags=-fsanitize=address cxxflags=-fsanitize=address linkflags=-fsanitize=address \
         cflags=-fsanitize=undefined cxxflags=-fsanitize=undefined linkflags=-fsanitize=undefined; \
     else \
       /workspace/prerequisites/boost/build --debug --source-dir /workspace/boost --prefix /home/ubuntu/.local -- \
-        -d+2 --with-headers --with-stacktrace --with-python --with-timer --build-type=complete --layout=tagged \
+        -d+2 --with-headers --with-stacktrace --with-python --with-timer --with-system --build-type=complete --layout=tagged \
         toolset=gcc variant=release threading=multi link=shared runtime-link=shared; \
+      pushd /home/ubuntu/.local/lib; \
+      ln -s libboost_system-mt-x64.so libboost_system.so; \
+      popd; \
     fi; \
     rm -rf /workspace/boost
 
-# Install `marisa-trie`.
+# Install `Nyanten`.
 RUN set -euxo pipefail; \
     pushd /workspace; \
-    git clone 'https://github.com/s-yata/marisa-trie.git'; \
-    pushd marisa-trie; \
-    autoreconf -i; \
-    if [[ $BUILD_TYPE == 'Debug' ]]; then \
-      CFLAGS='-D_DEBUG -g' CXXFLAGS='-D_DEBUG -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -g' ./configure --prefix=/home/ubuntu/.local --enable-native-code --disable-static; \
-    else \
-      CFLAGS='-DNDEBUG -O3 -flto' CXXFLAGS='-DNDEBUG -O3 -flto' ./configure --prefix=/home/ubuntu/.local --enable-native-code --disable-static; \
-    fi; \
-    make -j; \
-    make install; \
-    popd; \
-    rm -rf marisa-trie; \
+    git clone 'https://github.com/Cryolite/nyanten.git'; \
+    cmake -S nyanten -B nyanten/build; \
+    cmake --install nyanten/build --prefix /home/ubuntu/.local; \
+    rm -rf nyanten; \
     popd
 
-# Clone `shanten-number`.
+# Install `akochan`.
 RUN set -euxo pipefail; \
     pushd /workspace; \
-    git clone 'https://github.com/tomohxx/shanten-number.git'; \
-    pushd shanten-number; \
-    tar xzvf data.tar.gz; \
+    git clone 'https://github.com/critter-mj/akochan.git'; \
+    pushd akochan; \
+    pushd ai_src; \
+    make -f Makefile_Linux; \
+    popd; \
+    sed -i -e 's/boost::asio::io_service/boost::asio::io_context/' mjai_client.hpp; \
+    sed -i -e 's/boost::asio::ip::address::from_string/boost::asio::ip::make_address/' mjai_client.cpp; \
+    sed -i -e 's/boost::asio::buffer_cast<const char \*>(buffer\.data())/static_cast<const char *>(buffer.data().data())/' mjai_client.cpp; \
+    make -f Makefile_Linux; \
+    cp libai.so /home/ubuntu/.local/lib64; \
+    cp system.exe /home/ubuntu/.local/bin/akochan; \
     popd; \
     popd
 
 COPY --chown=ubuntu . /workspace/kanachan
 
-# Install `kanachan`.
+# Install `Kanachan`.
 RUN set -euxo pipefail; \
     eval "$(pyenv init -)"; \
     pushd /workspace/kanachan/src/common; \
     protoc -I. --cpp_out=. mahjongsoul.proto; \
     popd; \
-    mkdir -p /workspace/kanachan/build; \
-    pushd /workspace/kanachan/build; \
-    if [[ $BUILD_TYPE == 'Debug' ]]; then \
-      cmake \
-        -DSHANTEN_NUMBER_SOURCE_PATH=/workspace/shanten-number \
-        -DCMAKE_BUILD_TYPE=Debug \
-        ..; \
-    else \
-      cmake \
-        -DSHANTEN_NUMBER_SOURCE_PATH=/workspace/shanten-number \
-        -DCMAKE_BUILD_TYPE=Release \
-        ..; \
-    fi; \
-    make VERBOSE=1 -j make_trie simulation; \
-    mkdir -p /home/ubuntu/.local/share/kanachan; \
-    src/xiangting/make_trie /workspace/shanten-number /home/ubuntu/.local/share/kanachan; \
-    popd; \
-    rm -rf /workspace/shanten-number; \
     pushd /workspace/kanachan; \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=${BUILD_TYPE}; \
+    VERBOSE=1 cmake --build build --parallel $(nproc) --target simulation; \
     cp build/src/simulation/libsimulation.so kanachan/simulation/_simulation.so; \
     python3 -m build -w; \
     python3 -m pip install -U dist/*.whl; \

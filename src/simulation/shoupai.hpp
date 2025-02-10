@@ -117,7 +117,7 @@ private:
 
   std::vector<std::uint_fast8_t> he_;
   mutable bool tingpai_cache_ = false;
-  mutable std::uint_fast8_t xiangting_lower_bound_ = std::numeric_limits<std::uint_fast8_t>::max();
+  mutable std::uint_fast8_t replacement_number_lower_bound_ = std::numeric_limits<std::uint_fast8_t>::max();
   std::vector<std::uint_fast8_t> hupai_list_{};
   mutable bool zhenting_ = false;
 }; // class Shoupai
