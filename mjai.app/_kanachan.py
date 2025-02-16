@@ -846,6 +846,7 @@ _ANGANG2NUM: dict[tuple[str, str, str, str], int] = {
     ("2m", "2m", "2m", "2m"): 1,
     ("3m", "3m", "3m", "3m"): 2,
     ("4m", "4m", "4m", "4m"): 3,
+    ("5mr", "5m", "5m", "5m"): 4,
     ("5m", "5m", "5m", "5mr"): 4,
     ("6m", "6m", "6m", "6m"): 5,
     ("7m", "7m", "7m", "7m"): 6,
@@ -855,6 +856,7 @@ _ANGANG2NUM: dict[tuple[str, str, str, str], int] = {
     ("2p", "2p", "2p", "2p"): 10,
     ("3p", "3p", "3p", "3p"): 11,
     ("4p", "4p", "4p", "4p"): 12,
+    ("5pr", "5p", "5p", "5p"): 13,
     ("5p", "5p", "5p", "5pr"): 13,
     ("6p", "6p", "6p", "6p"): 14,
     ("7p", "7p", "7p", "7p"): 15,
@@ -864,6 +866,7 @@ _ANGANG2NUM: dict[tuple[str, str, str, str], int] = {
     ("2s", "2s", "2s", "2s"): 19,
     ("3s", "3s", "3s", "3s"): 20,
     ("4s", "4s", "4s", "4s"): 21,
+    ("5sr", "5s", "5s", "5s"): 22,
     ("5s", "5s", "5s", "5sr"): 22,
     ("6s", "6s", "6s", "6s"): 23,
     ("7s", "7s", "7s", "7s"): 24,
@@ -1535,7 +1538,7 @@ class RoundState:
             # 鳴き直後の打牌であり必ず手出しであるため問題ない．
             moqi = False
 
-        liqi = self._liqi_to_be_accepted[seat]
+        liqi = self._liqi_to_be_accepted[actor]
 
         encode = (
             5
@@ -2957,17 +2960,23 @@ class Kanachan:
                     raise RuntimeError("The standard input is empty.")
 
             message = messages[0]
+
             if "type" not in message:
                 raise RuntimeError("A message without the `type` key.")
+            message_type: str = message["type"]
+            if not isinstance(message_type, str):
+                raise RuntimeError(
+                    f"A message with an invalid `type` ({type(message_type)})."
+                )
 
-            if message["type"] == "hello":
+            if message_type == "hello":
                 if len(messages) > 1:
                     raise RuntimeError("A multi-line `hello` message.")
                 self._on_hello(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "start_game":
+            if message_type == "start_game":
                 if len(messages) != 1:
                     raise RuntimeError(
                         "Too many messages starting with `start_game`."
@@ -2976,7 +2985,7 @@ class Kanachan:
                 messages.pop(0)
                 continue
 
-            if message["type"] == "start_kyoku":
+            if message_type == "start_kyoku":
                 if len(messages) < 2:
                     raise RuntimeError(
                         "Too few messages starting with `start_kyoku`."
@@ -2985,72 +2994,72 @@ class Kanachan:
                 messages.pop(0)
                 continue
 
-            if message["type"] == "tsumo":
+            if message_type == "tsumo":
                 self._on_zimo(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "dahai":
+            if message_type == "dahai":
                 self._on_dapai(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "chi":
+            if message_type == "chi":
                 self._on_chi(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "pon":
+            if message_type == "pon":
                 self._on_peng(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "daiminkan":
+            if message_type == "daiminkan":
                 self._on_daminggang(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "ankan":
+            if message_type == "ankan":
                 self._on_angang(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "kakan":
+            if message_type == "kakan":
                 self._on_jiagang(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "reach":
+            if message_type == "reach":
                 self._on_liqi(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "reach_accepted":
+            if message_type == "reach_accepted":
                 self._on_liqi_acceptance(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "dora":
+            if message_type == "dora":
                 self._on_new_dora(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "hora":
+            if message_type == "hora":
                 self._on_hulu(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "ryukyoku":
+            if message_type == "ryukyoku":
                 self._on_luju(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "end_kyoku":
+            if message_type == "end_kyoku":
                 self._on_round_end(message)
                 messages.pop(0)
                 continue
 
-            if message["type"] == "end_game":
+            if message_type == "end_game":
                 self._on_game_end(message)
                 messages.pop(0)
                 if len(messages) > 0:
