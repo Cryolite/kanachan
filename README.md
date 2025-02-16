@@ -1,7 +1,8 @@
 *"It's time to get me in."* - Kana Ikeda
 
-# kanachan
-A Mahjong AI that supports a variant of rules of 4-player Japanese Riichi Mahjong that is adopted in standard games in Mahjong Soul (雀魂, Jantama, [CN](https://www.maj-soul.com/), [JP](https://mahjongsoul.com/), [EN](https://mahjongsoul.yo-star.com/)).
+# Kanachan
+
+A Mahjong AI that supports a variant of rules of 4-player Riichi (Japanese) Mahjong that is adopted in standard games in Mahjong Soul (雀魂, Jantama, [CN](https://www.maj-soul.com/), [JP](https://mahjongsoul.com/), [EN](https://mahjongsoul.yo-star.com/)).
 
 ## Announcements
 
@@ -19,7 +20,7 @@ Finally, the trained model can be obtained by running the training programs unde
 
 ## Goal of This Project
 
-The goal of this project is to create a Mahjong AI for a variant of rules of 4-player Japanese Riichi Mahjong that can beat existing top-tier Mahjong AIs, including [NAGA](https://dmv.nico/ja/articles/mahjong_ai_naga/) and [Suphx](https://arxiv.org/abs/2003.13590), and even top professional human players.
+The goal of this project is to create a Mahjong AI for a variant of rules of 4-player Japanese Riichi Mahjong that can beat existing top-tier Mahjong AIs, including [NAGA](https://dmv.nico/ja/articles/mahjong_ai_naga/), [Suphx](https://arxiv.org/abs/2003.13590), [Mortal](https://mortal.ekyu.moe/), and even top professional human players.
 
 This project is a personal one by myself. This is in contrast to some of the top mahjong AI projects today, which are run by corporations. This project is also intended to show the world that top-class mahjong AI can be built by personal projects.
 
@@ -58,10 +59,6 @@ Make various prerequisite packages and tools available for use in other componen
 ### [src/annotation](src/annotation)
 
 A C++ program that extracts almost all the *decision-making points* from game records of Mahjong Soul, and converts the game situation at each decision-making point together with the player's action and round's/game's final results into annotations suitable to learning.
-
-### [src/xiangting](src/xiangting)
-
-A C++ program that generates a [LOUDS-based TRIE data structure](https://github.com/s-yata/marisa-trie) used to calculate shanten (xiang ting, 向聴) numbers.
 
 ### [src/simulation](src/simulation)
 
