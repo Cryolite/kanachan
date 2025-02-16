@@ -557,7 +557,7 @@ def _main(config: DictConfig) -> None:
         out_keys=["log_probs"],  # type: ignore
     )
     network_tdm = TensorDictSequential(
-        encoder_tdm, decoder_tdm, decode_converter_tdm
+        [encoder_tdm, decoder_tdm, decode_converter_tdm]
     )
     if world_size >= 2:
         network_tdm.to(device=device)
@@ -580,7 +580,7 @@ def _main(config: DictConfig) -> None:
         out_keys=["action"],  # type: ignore
     )
     network_tdm_to_save = TensorDictSequential(
-        encoder_tdm, decoder_tdm, decode_converter_tdm, argmax_tdm
+        [encoder_tdm, decoder_tdm, decode_converter_tdm, argmax_tdm]
     )
 
     network_tdm_to_save.requires_grad_(True)

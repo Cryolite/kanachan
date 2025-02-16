@@ -836,7 +836,7 @@ def _main(config: DictConfig) -> None:
     with torch.no_grad():
         for _param in decoder.parameters():
             _param.zero_()
-    network = TensorDictSequential(encoder_tdm, decoder_tdm)
+    network = TensorDictSequential([encoder_tdm, decoder_tdm])
     if world_size >= 2:
         network.to(device=device)
         for _param in network.parameters():
@@ -905,7 +905,7 @@ def _main(config: DictConfig) -> None:
                 out_keys=["qr_action_value"],  # type: ignore
             )
         target_network = TensorDictSequential(
-            target_encoder_tdm, target_decoder_tdm
+            [target_encoder_tdm, target_decoder_tdm]
         )
         with torch.no_grad():
             for _param, _target_param in zip(
@@ -926,13 +926,15 @@ def _main(config: DictConfig) -> None:
             assert target_encoder_tdm is not None
             assert target_decoder_tdm is not None
             network_to_save = TensorDictSequential(
-                target_encoder_tdm,
-                target_decoder_tdm,
-                argmax_layer_tdm,
+                [
+                    target_encoder_tdm,
+                    target_decoder_tdm,
+                    argmax_layer_tdm,
+                ]
             )
         else:
             network_to_save = TensorDictSequential(
-                encoder_tdm, decoder_tdm, argmax_layer_tdm
+                [encoder_tdm, decoder_tdm, argmax_layer_tdm]
             )
     else:
         q_decoder = QDecoder()
@@ -951,14 +953,16 @@ def _main(config: DictConfig) -> None:
             assert target_encoder_tdm is not None
             assert target_decoder_tdm is not None
             network_to_save = TensorDictSequential(
-                target_encoder_tdm,
-                target_decoder_tdm,
-                q_decoder_tdm,
-                argmax_layer_tdm,
+                [
+                    target_encoder_tdm,
+                    target_decoder_tdm,
+                    q_decoder_tdm,
+                    argmax_layer_tdm,
+                ]
             )
         else:
             network_to_save = TensorDictSequential(
-                encoder_tdm, decoder_tdm, q_decoder_tdm, argmax_layer_tdm
+                [encoder_tdm, decoder_tdm, q_decoder_tdm, argmax_layer_tdm]
             )
 
     network.requires_grad_(True)
