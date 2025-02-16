@@ -5,7 +5,7 @@ from tqdm import tqdm
 import torch
 from torch import Tensor
 import torch.utils.data
-from torch.distributed import broadcast
+from torch.distributed import ProcessGroup, new_group, broadcast
 from tensordict import TensorDict  # type: ignore
 from kanachan.constants import (
     NUM_TYPES_OF_SPARSE_FEATURES,
@@ -25,7 +25,6 @@ from kanachan.training.core.offline_rl.dataset import Dataset
 
 
 _INTERNAL_BATCH_SIZE = 1024
-_MAIN_RANK = 0
 
 
 _BUFFER_ELEMENT = tuple[
@@ -64,6 +63,8 @@ class EpisodeReplayBuffer:
         batch_size: int,
         num_workers: int,
         pin_memory: bool,
+        ranks: list[int],
+        main_rank: int,
     ) -> None:
         if not training_data.exists():
             raise RuntimeError(f"{training_data}: Does not exist.")
@@ -85,6 +86,12 @@ class EpisodeReplayBuffer:
             raise ValueError(f"{batch_size} > {max_size}")
         if num_workers < 0:
             raise ValueError(num_workers)
+        if len(ranks) == 0:
+            raise ValueError(ranks)
+        if main_rank < 0:
+            raise ValueError(main_rank)
+        if main_rank not in ranks:
+            raise ValueError(main_rank)
 
         dataset = Dataset(
             path=training_data,
@@ -147,6 +154,10 @@ class EpisodeReplayBuffer:
         self.__replay_buffer: list[_BUFFER_ELEMENT] = []
         self.__batch_size = batch_size
         self.__max_size = max_size
+        self.__group: ProcessGroup | None = None
+        if len(ranks) >= 2:
+            self.__group = new_group(ranks=ranks, backend="gloo")
+        self.__main_rank = main_rank
         self.__first_iteration = True
 
     def __iter__(self) -> "EpisodeReplayBuffer":
@@ -200,13 +211,14 @@ class EpisodeReplayBuffer:
         return self.__replay_buffer.pop(idx)
 
     def _sample_batch(self) -> _BUFFER_ELEMENT:
-        world_size, _, _ = get_distributed_environment()
-        if len(self.__replay_buffer) < self.__batch_size * world_size:
+        num_processes = self.__group.size() if self.__group is not None else 1
+
+        if len(self.__replay_buffer) < self.__batch_size * num_processes:
             errmsg = "The replay buffer is too small."
             raise RuntimeError(errmsg)
 
         batch: list[list[Tensor]] = [[] for _ in range(16)]
-        for _ in range(self.__batch_size * world_size):
+        for _ in range(self.__batch_size * num_processes):
             t = self._sample()
             for i in range(16):
                 batch[i].append(t[i])
@@ -231,9 +243,10 @@ class EpisodeReplayBuffer:
         )
 
     def _broadcast(self) -> TensorDict:
-        world_size, rank, _ = get_distributed_environment()
+        num_processes = self.__group.size() if self.__group is not None else 1
+        _, rank, _ = get_distributed_environment()
 
-        if rank == _MAIN_RANK:
+        if rank == self.__main_rank:
             (
                 sparse,
                 numeric,
@@ -254,97 +267,97 @@ class EpisodeReplayBuffer:
             ) = self._sample_batch()
         else:
             sparse = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_NUM_ACTIVE_SPARSE_FEATURES,
                 device="cpu",
                 dtype=torch.int32,
             )
             numeric = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 NUM_NUMERIC_FEATURES,
                 device="cpu",
                 dtype=torch.int32,
             )
             progression = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_LENGTH_OF_PROGRESSION_FEATURES,
                 device="cpu",
                 dtype=torch.int32,
             )
             candidates = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_NUM_ACTION_CANDIDATES,
                 device="cpu",
                 dtype=torch.int32,
             )
             action = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 device="cpu",
                 dtype=torch.int32,
             )
             action_value = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 device="cpu",
                 dtype=self.__dtype,
             )
             next_sparse = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_NUM_ACTIVE_SPARSE_FEATURES,
                 device="cpu",
                 dtype=torch.int32,
             )
             next_numeric = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 NUM_NUMERIC_FEATURES,
                 device="cpu",
                 dtype=torch.int32,
             )
             next_progression = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_LENGTH_OF_PROGRESSION_FEATURES,
                 device="cpu",
                 dtype=torch.int32,
             )
             next_candidates = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_NUM_ACTION_CANDIDATES,
                 device="cpu",
                 dtype=torch.int32,
             )
             round_summary = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 MAX_NUM_ROUND_SUMMARY,
                 device="cpu",
                 dtype=torch.int32,
             )
             results = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 NUM_RESULTS,
                 device="cpu",
                 dtype=torch.int32,
             )
             end_of_round = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 device="cpu",
                 dtype=torch.bool,
             )
             end_of_game = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 device="cpu",
                 dtype=torch.bool,
             )
             done = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 device="cpu",
                 dtype=torch.bool,
             )
             reward = torch.empty(
-                self.__batch_size * world_size,
+                self.__batch_size * num_processes,
                 device="cpu",
                 dtype=self.__dtype,
             )
 
-        if world_size >= 2:
+        if num_processes >= 2:
             tensors = [
                 sparse,
                 numeric,
@@ -364,9 +377,11 @@ class EpisodeReplayBuffer:
                 reward,
             ]
             for i, t in enumerate(tensors):
-                t = t.to(device="cuda")
-                broadcast(t, src=_MAIN_RANK)
-                t = t.to(device="cpu")
+                broadcast(
+                    t,
+                    src=self.__main_rank,
+                    group=self.__group,
+                )
                 first = self.__batch_size * rank
                 last = self.__batch_size * (rank + 1)
                 tensors[i] = t[first:last]
@@ -416,14 +431,15 @@ class EpisodeReplayBuffer:
         )
 
     def __next__(self) -> TensorDict:
-        world_size, rank, local_rank = get_distributed_environment()
+        num_processes = self.__group.size() if self.__group is not None else 1
+        _, rank, local_rank = get_distributed_environment()
 
-        if rank != _MAIN_RANK:
+        if rank != self.__main_rank:
             return self._broadcast()
 
         if (
             len(self.__replay_buffer)
-            >= self.__max_size + self.__batch_size * world_size
+            >= self.__max_size + self.__batch_size * num_processes
         ):
             return self._broadcast()
 
@@ -445,7 +461,10 @@ class EpisodeReplayBuffer:
             except StopIteration:
                 if progress is not None:
                     progress.close()
-                if len(self.__replay_buffer) >= self.__batch_size * world_size:
+                if (
+                    len(self.__replay_buffer)
+                    >= self.__batch_size * num_processes
+                ):
                     return self._broadcast()
                 raise
 
@@ -643,8 +662,7 @@ class EpisodeReplayBuffer:
                 self.__get_reward(episode, self.__contiguous)
             if episode.get(("next", "reward"), None) is None:  # type: ignore
                 errmsg = (
-                    "`get_reward` did not set the "
-                    '`("next", "reward")` tensor.'
+                    '`get_reward` did not set the `("next", "reward")` tensor.'
                 )
                 raise RuntimeError(errmsg)
             reward: Tensor = episode["next", "reward"]
@@ -712,7 +730,7 @@ class EpisodeReplayBuffer:
 
             if (
                 len(self.__replay_buffer)
-                >= self.__max_size + self.__batch_size * world_size
+                >= self.__max_size + self.__batch_size * num_processes
             ):
                 if progress is not None:
                     progress.close()

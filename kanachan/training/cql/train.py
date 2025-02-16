@@ -96,6 +96,8 @@ def _training(
             batch_size=batch_size,
             num_workers=num_workers,
             pin_memory=(num_workers >= 1),
+            ranks=[r for r in range(world_size)],
+            main_rank=0,
         )
     else:
         data_loader = DataLoader(
