@@ -117,98 +117,98 @@ config_store.store(
 )
 
 
-def validate(config: Any) -> None:
-    if config.encoder.position_encoder not in (
+def validate(encoder_config: Any) -> None:
+    if encoder_config.position_encoder not in (
         "positional_encoding",
         "position_embedding",
     ):
         errmsg = (
-            f"{config.encoder.position_encoder}: An invalid position"
-            " encoder."
+            f"{encoder_config.position_encoder}: "
+            "An invalid position encoder."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.dimension <= 0:
+    if encoder_config.dimension <= 0:
         errmsg = (
-            f"{config.encoder.dimension}: `encoder.dimension` must be a"
-            " positive integer."
+            f"{encoder_config.dimension}: "
+            "`encoder.dimension` must be a positive integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.num_heads <= 0:
+    if encoder_config.num_heads <= 0:
         errmsg = (
-            f"{config.encoder.num_heads}: `encoder.num_heads` must be a"
-            " positive integer."
+            f"{encoder_config.num_heads}: "
+            "`encoder.num_heads` must be a positive integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.dim_feedforward is None:
-        config.encoder.dim_feedforward = 4 * config.encoder.dimension
-    if config.encoder.dim_feedforward <= 1:
+    if encoder_config.dim_feedforward is None:
+        encoder_config.dim_feedforward = 4 * encoder_config.dimension
+    if encoder_config.dim_feedforward <= 0:
         errmsg = (
-            f"{config.encoder.dim_feedforward}:"
-            " `encoder.dim_feedforward` must be a positive integer."
+            f"{encoder_config.dim_feedforward}: "
+            "`encoder.dim_feedforward` must be a positive integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.activation_function not in ("relu", "gelu"):
+    if encoder_config.activation_function not in ("relu", "gelu"):
         errmsg = (
-            f"{config.encoder.activation_function}: An invalid"
-            " activation function for the encoder."
+            f"{encoder_config.activation_function}: "
+            "An invalid activation function for the encoder."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.dropout < 0.0 or 1.0 <= config.encoder.dropout:
+    if encoder_config.dropout < 0.0 or 1.0 <= encoder_config.dropout:
         errmsg = (
-            f"{config.encoder.dropout}: `encoder.dropout` must be a"
-            " real value within the range [0.0, 1.0)."
+            f"{encoder_config.dropout}: `encoder.dropout` must be a real "
+            "number within the range [0.0, 1.0)."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.num_layers <= 0:
+    if encoder_config.num_layers <= 0:
         errmsg = (
-            f"{config.encoder.num_layers}: `encoder.num_layers` must be"
-            " a positive integer."
+            f"{encoder_config.num_layers}: "
+            "`encoder.num_layers` must be a positive integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.encoder.load_from is not None:
-        if not config.encoder.load_from.exists():
-            errmsg = f"{config.encoder.load_from}: Does not exist."
+    if encoder_config.load_from is not None:
+        if not encoder_config.load_from.exists():
+            errmsg = f"{encoder_config.load_from}: Does not exist."
             raise RuntimeError(errmsg)
-        if not config.encoder.load_from.is_file():
-            errmsg = f"{config.encoder.load_from}: Not a file."
+        if not encoder_config.load_from.is_file():
+            errmsg = f"{encoder_config.load_from}: Not a file."
             raise RuntimeError(errmsg)
 
 
-def dump(config: Any, prefix: str = "") -> None:
+def dump(encoder_config: Any, prefix: str = "") -> None:
     logging.info(
-        "%sPosition encoder: %s", prefix, config.encoder.position_encoder
+        "%sPosition encoder: %s", prefix, encoder_config.position_encoder
     )
-    logging.info("%sEncoder dimension: %d", prefix, config.encoder.dimension)
+    logging.info("%sEncoder dimension: %d", prefix, encoder_config.dimension)
     logging.info(
-        "%s# of heads for encoder: %d", prefix, config.encoder.num_heads
+        "%s# of heads for encoder: %d", prefix, encoder_config.num_heads
     )
     logging.info(
         "%sDimension of feedforward networks for encoder: %d",
         prefix,
-        config.encoder.dim_feedforward,
+        encoder_config.dim_feedforward,
     )
     logging.info(
         "%sActivation function for encoder: %s",
         prefix,
-        config.encoder.activation_function,
+        encoder_config.activation_function,
     )
-    logging.info("%sDropout for encoder: %f", prefix, config.encoder.dropout)
+    logging.info("%sDropout for encoder: %f", prefix, encoder_config.dropout)
     logging.info(
         "%sLayer normalization for encoder: %s",
         prefix,
-        config.encoder.layer_normalization,
+        encoder_config.layer_normalization,
     )
     logging.info(
-        "%s# of encoder layers: %d", prefix, config.encoder.num_layers
+        "%s# of encoder layers: %d", prefix, encoder_config.num_layers
     )
-    if config.encoder.load_from is not None:
+    if encoder_config.load_from is not None:
         logging.info(
-            "%sLoad encoder from: %s", prefix, config.encoder.load_from
+            "%sLoad encoder from: %s", prefix, encoder_config.load_from
         )

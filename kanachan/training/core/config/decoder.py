@@ -52,112 +52,119 @@ config_store.store(name="double", node=DoubleDecoderConfig, group="decoder")
 config_store.store(name="triple", node=TripleDecoderConfig, group="decoder")
 
 
-def validate(config: Any) -> None:
-    if config.decoder.dimension is None and config.decoder.num_layers >= 2:
-        config.decoder.dimension = config.encoder.dimension
-    if config.decoder.dimension is not None and config.decoder.dimension <= 0:
+def validate(decoder_config: Any, encoder_dimension: int) -> None:
+    if decoder_config.dimension is None and decoder_config.num_layers >= 2:
+        decoder_config.dimension = encoder_dimension
+    if decoder_config.dimension is not None and decoder_config.dimension <= 0:
         errmsg = (
-            f"{config.decoder.dimension}: "
-            "`decoder.dimension` must be a positive integer."
+            f"{decoder_config.dimension}: "
+            "`dimension` must be a positive integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.decoder.activation_function not in (None, "relu", "gelu"):
+    if decoder_config.activation_function not in (None, "relu", "gelu"):
         errmsg = (
-            f"{config.decoder.activation_function}:"
-            " An invalid activation function for the decoder."
+            f"{decoder_config.activation_function}: "
+            "An invalid activation function for the decoder."
         )
         raise RuntimeError(errmsg)
 
-    if config.decoder.dropout is not None and (
-        config.decoder.dropout < 0.0 or 1.0 <= config.decoder.dropout
+    if decoder_config.dropout is not None and (
+        decoder_config.dropout < 0.0 or 1.0 <= decoder_config.dropout
     ):
         errmsg = (
-            f"{config.decoder.dropout}: `decoder.dropout` must be a real value"
-            " within the range [0.0, 1.0)."
+            f"{decoder_config.dropout}: "
+            "`dropout` must be a real number within the range [0.0, 1.0)."
         )
         raise RuntimeError(errmsg)
 
-    if config.decoder.num_layers <= 0:
+    if decoder_config.num_layers <= 0:
         errmsg = (
-            f"{config.decoder.num_layers}: "
-            "`decoder.num_layers` must be a positive integer."
+            f"{decoder_config.num_layers}: "
+            "`num_layers` must be a positive integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.decoder.num_layers == 1:
-        if config.decoder.dimension is not None:
+    if decoder_config.num_layers == 1:
+        if decoder_config.dimension is not None:
             errmsg = (
-                "`decoder.dimension` cannot be specified for a "
-                "single-layer decoder."
+                "`dimension` cannot be specified for a single-layer decoder."
             )
             raise RuntimeError(errmsg)
-        if config.decoder.activation_function is not None:
+        if decoder_config.activation_function is not None:
             errmsg = (
-                "`decoder.activation_function` cannot be specified for "
-                "a single-layer decoder."
+                "`activation_function` cannot be specified for a single-layer "
+                "decoder."
             )
             raise RuntimeError(errmsg)
-        if config.decoder.dropout is not None:
+        if decoder_config.dropout is not None:
             errmsg = (
-                "`decoder.dropout` cannot be specified for a "
-                "single-layer decoder."
+                "`dropout` cannot be specified for a single-layer decoder."
             )
             raise RuntimeError(errmsg)
-        if config.decoder.layer_normalization:
+        if decoder_config.layer_normalization:
             errmsg = (
-                "`decoder.layer_normalization` cannot be specified for a "
-                "single-layer decoder."
+                "`layer_normalization` cannot be specified for a single-layer "
+                "decoder."
             )
             raise RuntimeError(errmsg)
 
-    if config.decoder.load_from is not None:
-        if not config.decoder.load_from.exists():
-            errmsg = f"{config.decoder.load_from}: Does not exist."
+    if decoder_config.load_from is not None:
+        if not decoder_config.load_from.exists():
+            errmsg = f"{decoder_config.load_from}: Does not exist."
             raise RuntimeError(errmsg)
-        if not config.decoder.load_from.is_file():
-            errmsg = f"{config.decoder.load_from}: Not a file."
+        if not decoder_config.load_from.is_file():
+            errmsg = f"{decoder_config.load_from}: Not a file."
             raise RuntimeError(errmsg)
 
-    if hasattr(config.decoder, "num_qr_intervals"):
-        if config.decoder.num_qr_intervals is not None and (
-            config.decoder.num_qr_intervals <= 0
-        ):
+    if hasattr(decoder_config, "num_qr_intervals"):
+        if decoder_config.num_qr_intervals < 0:
             errmsg = (
-                f"{config.decoder.num_qr_intervals}: "
-                "`decoder.num_qr_intervals` must be a positive integer."
+                f"{decoder_config.num_qr_intervals}: "
+                "`num_qr_intervals` must be a non-negative integer."
             )
             raise RuntimeError(errmsg)
 
 
-def dump(config: Any, prefix: str = "") -> None:
-    if config.decoder.num_layers >= 2:
+def dump(decoder_config: Any, prefix: str = "") -> None:
+    if decoder_config.num_layers >= 2:
         logging.info(
-            "%sDecoder dimension: %d", prefix, config.decoder.dimension
+            "%sDecoder dimension: %d", prefix, decoder_config.dimension
         )
         logging.info(
             "%sActivation function for decoder: %s",
             prefix,
-            config.decoder.activation_function,
+            decoder_config.activation_function,
         )
         logging.info(
-            "%sDropout for decoder: %f", prefix, config.decoder.dropout
+            "%sDropout for decoder: %f", prefix, decoder_config.dropout
         )
         logging.info(
             "%sLayer normalization for decoder: %s",
             prefix,
-            config.decoder.layer_normalization,
+            decoder_config.layer_normalization,
         )
     logging.info(
-        "%s# of decoder layers: %d", prefix, config.decoder.num_layers
+        "%s# of decoder layers: %d", prefix, decoder_config.num_layers
     )
-    if config.decoder.load_from is not None:
+    if decoder_config.load_from is not None:
         logging.info(
-            "%sLoad decoder from: %s", prefix, config.decoder.load_from
+            "%sLoad decoder from: %s", prefix, decoder_config.load_from
         )
-    if hasattr(config.decoder, "num_qr_intervals"):
+    if hasattr(decoder_config, "num_qr_intervals"):
+        if decoder_config.num_qr_intervals == 0:
+            logging.info(
+                "%sQuantile regression: (N/A)", prefix
+            )
+        else:
+            logging.info(
+                "%s# of quantile regression intervals: %d",
+                prefix,
+                decoder_config.num_qr_intervals,
+            )
+    if hasattr(decoder_config, "dueling_network"):
         logging.info(
-            "%s# of quantile regression intervals: %d",
+            "%sDueling network: %s",
             prefix,
-            config.decoder.num_qr_intervals,
+            decoder_config.dueling_network,
         )

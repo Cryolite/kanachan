@@ -296,9 +296,9 @@ def _main(config: DictConfig) -> None:
             )
             raise RuntimeError(errmsg)
 
-    _config.encoder.validate(config)
+    _config.encoder.validate(config.encoder)
 
-    _config.decoder.validate(config)
+    _config.decoder.validate(config.decoder, config.encoder.dimension)
 
     if config.initial_model_prefix is not None:
         if config.encoder.load_from is not None:
@@ -426,7 +426,7 @@ def _main(config: DictConfig) -> None:
         )
         raise RuntimeError(errmsg)
 
-    _config.optimizer.validate(config)
+    _config.optimizer.validate(config.optimizer)
 
     if config.snapshot_interval < 0:
         errmsg = (
@@ -466,9 +466,9 @@ def _main(config: DictConfig) -> None:
             )
         logging.info("# of workers: %d", config.num_workers)
 
-        _config.encoder.dump(config)
+        _config.encoder.dump(config.encoder)
 
-        _config.decoder.dump(config)
+        _config.decoder.dump(config.decoder)
 
         if config.initial_model_prefix is not None:
             logging.info(
@@ -489,7 +489,7 @@ def _main(config: DictConfig) -> None:
             config.max_gradient_norm,
         )
 
-        _config.optimizer.dump(config)
+        _config.optimizer.dump(config.optimizer)
 
         if config.initial_model_prefix is not None:
             logging.info("Initial encoder snapshot: %s", encoder_snapshot_path)
@@ -588,7 +588,7 @@ def _main(config: DictConfig) -> None:
     network_tdm_to_save = network_tdm_to_save.to(device=device, dtype=dtype)
 
     optimizer, scheduler = _config.optimizer.create(
-        device.type, config, network_tdm
+        device.type, config.optimizer, network_tdm
     )
 
     if config.encoder.load_from is not None:

@@ -90,173 +90,173 @@ config_store.store(name="radam", node=RAdamOptimizerConfig, group="optimizer")
 config_store.store(name="lamb", node=LambOptimizerConfig, group="optimizer")
 
 
-def validate(config: Any):
-    if config.optimizer.type in ("sgd",):
-        if config.optimizer.momentum < 0.0 or 1.0 <= config.optimizer.momentum:
+def validate(optimizer_config: Any):
+    if optimizer_config.type in ("sgd",):
+        if optimizer_config.momentum < 0.0 or 1.0 <= optimizer_config.momentum:
             errmsg = (
-                f"{config.optimizer.momentum}: `optimizer.momentum`"
+                f"{optimizer_config.momentum}: `optimizer.momentum`"
                 " must be a real value within the range [0.0, 1.0)."
             )
             raise RuntimeError(errmsg)
     else:
-        if config.optimizer.momentum is not None:
+        if optimizer_config.momentum is not None:
             errmsg = (
                 "`optimizer.momentum` is useless for"
-                f" `{config.optimizer.type}`."
+                f" `{optimizer_config.type}`."
             )
             raise RuntimeError(errmsg)
 
-    if config.optimizer.epsilon <= 0.0:
+    if optimizer_config.epsilon <= 0.0:
         errmsg = (
-            f"{config.optimizer.epsilon}: `optimizer.epsilon` must be a"
+            f"{optimizer_config.epsilon}: `optimizer.epsilon` must be a"
             " non-negative real value."
         )
         raise RuntimeError(errmsg)
 
-    if config.optimizer.learning_rate <= 0.0:
+    if optimizer_config.learning_rate <= 0.0:
         errmsg = (
-            f"{config.optimizer.learning_rate}: "
+            f"{optimizer_config.learning_rate}: "
             "`optimizer.learning_rate` must be a positive real value."
         )
         raise RuntimeError(errmsg)
 
-    if config.optimizer.warmup_start_lr <= 0.0:
+    if optimizer_config.warmup_start_lr <= 0.0:
         errmsg = (
-            f"{config.optimizer.warmup_start_lr}: "
+            f"{optimizer_config.warmup_start_lr}: "
             "`optimizer.warmup_start_lr` must be a positive real value."
         )
         raise RuntimeError(errmsg)
-    if config.optimizer.warmup_start_lr > config.optimizer.learning_rate:
+    if optimizer_config.warmup_start_lr > optimizer_config.learning_rate:
         errmsg = (
-            f"{config.optimizer.warmup_start_lr}:"
-            " `config.optimizer.warmup_start_lr` must be less than"
-            " `config.optimizer.learning_rate`."
+            f"{optimizer_config.warmup_start_lr}:"
+            " `optimizer_config.warmup_start_lr` must be less than"
+            " `optimizer_config.learning_rate`."
         )
         raise RuntimeError(errmsg)
 
-    if config.optimizer.warmup_steps < 0:
+    if optimizer_config.warmup_steps < 0:
         errmsg = (
-            f"{config.optimizer.warmup_steps}: `optimizer.warmup_steps`"
+            f"{optimizer_config.warmup_steps}: `optimizer.warmup_steps`"
             " must be a non-negative integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.optimizer.annealing_steps < 0:
+    if optimizer_config.annealing_steps < 0:
         errmsg = (
-            f"{config.optimizer.annealing_steps}:"
+            f"{optimizer_config.annealing_steps}:"
             " `optimizer.annealing_steps` must be a non-negative"
             " integer."
         )
         raise RuntimeError(errmsg)
 
-    if config.optimizer.annealing_steps_factor <= 0:
+    if optimizer_config.annealing_steps_factor <= 0:
         errmsg = (
-            f"{config.optimizer.annealing_steps_factor}: "
+            f"{optimizer_config.annealing_steps_factor}: "
             "`optimizer.annealing_steps_factor` must be a positive"
             " integer."
         )
         raise RuntimeError(errmsg)
 
 
-def dump(config: Any, prefix: str = "") -> None:
-    logging.info("%sOptimizer: %s", prefix, config.optimizer.type)
-    if config.optimizer.type in ("sgd",):
+def dump(optimizer_config: Any, prefix: str = "") -> None:
+    logging.info("%sOptimizer: %s", prefix, optimizer_config.type)
+    if optimizer_config.type in ("sgd",):
         logging.info(
-            "%sMomentum factor: %f", prefix, config.optimizer.momentum
+            "%sMomentum factor: %f", prefix, optimizer_config.momentum
         )
-    if config.optimizer.type in ("adam", "radam", "mtadam", "lamb"):
+    if optimizer_config.type in ("adam", "radam", "mtadam", "lamb"):
         logging.info(
-            "%sEpsilon parameter: %E", prefix, config.optimizer.epsilon
+            "%sEpsilon parameter: %E", prefix, optimizer_config.epsilon
         )
-    logging.info("%sLearning rate: %E", prefix, config.optimizer.learning_rate)
-    if config.optimizer.warmup_steps == 0:
+    logging.info("%sLearning rate: %E", prefix, optimizer_config.learning_rate)
+    if optimizer_config.warmup_steps == 0:
         logging.info("%sLR warm-up: (disabled)", prefix)
     else:
         logging.info(
             "%sLR warm-up start LR: %E",
             prefix,
-            config.optimizer.warmup_start_lr,
+            optimizer_config.warmup_start_lr,
         )
         logging.info(
-            "%sLR warm-up steps: %d", prefix, config.optimizer.warmup_steps
+            "%sLR warm-up steps: %d", prefix, optimizer_config.warmup_steps
         )
-    if config.optimizer.annealing_steps == 0:
+    if optimizer_config.annealing_steps == 0:
         logging.info("%sLR annealing: (disabled)", prefix)
     else:
         logging.info(
             "%sLR annealing steps: %d",
             prefix,
-            config.optimizer.annealing_steps,
+            optimizer_config.annealing_steps,
         )
         logging.info(
             "%sLR annealing steps factor: %d",
             prefix,
-            config.optimizer.annealing_steps_factor,
+            optimizer_config.annealing_steps_factor,
         )
-    logging.info("%sUse ZeRO: %s", prefix, config.optimizer.use_zero)
+    logging.info("%sUse ZeRO: %s", prefix, optimizer_config.use_zero)
 
 
 def create(
-    device_type: str, config: Any, module: nn.Module
+    device_type: str, optimizer_config: Any, module: nn.Module
 ) -> tuple[Optimizer, lr_scheduler.LRScheduler | None]:
     optimizer_class: Type[Optimizer]
-    if config.optimizer.type == "sgd":
+    if optimizer_config.type == "sgd":
         if device_type == "cpu":
             optimizer_class = SGD
         else:
             optimizer_class = FusedSGD
         optimizer_kwargs = {
-            "lr": config.optimizer.learning_rate,
-            "momentum": config.optimizer.momentum,
+            "lr": optimizer_config.learning_rate,
+            "momentum": optimizer_config.momentum,
         }
-    elif config.optimizer.type == "adam":
+    elif optimizer_config.type == "adam":
         if device_type == "cpu":
             optimizer_class = Adam
         else:
             optimizer_class = FusedAdam
         optimizer_kwargs = {
-            "lr": config.optimizer.learning_rate,
-            "eps": config.optimizer.epsilon,
+            "lr": optimizer_config.learning_rate,
+            "eps": optimizer_config.epsilon,
         }
-    elif config.optimizer.type == "radam":
+    elif optimizer_config.type == "radam":
         optimizer_class = RAdam
         optimizer_kwargs = {
-            "lr": config.optimizer.learning_rate,
-            "eps": config.optimizer.epsilon,
+            "lr": optimizer_config.learning_rate,
+            "eps": optimizer_config.epsilon,
         }
-    elif config.optimizer.type == "lamb":
+    elif optimizer_config.type == "lamb":
         optimizer_class = FusedLAMB
         optimizer_kwargs = {
-            "lr": config.optimizer.learning_rate,
-            "eps": config.optimizer.epsilon,
+            "lr": optimizer_config.learning_rate,
+            "eps": optimizer_config.epsilon,
         }
     else:
-        raise NotImplementedError(config.optimizer.type)
+        raise NotImplementedError(optimizer_config.type)
 
     optimizer: Optimizer
-    if config.optimizer.use_zero:
+    if optimizer_config.use_zero:
         optimizer = ZeroRedundancyOptimizer(
             module.parameters(), optimizer_class, **optimizer_kwargs
         )
     else:
         optimizer = optimizer_class(module.parameters(), **optimizer_kwargs)
 
-    if config.optimizer.warmup_steps == 0:
+    if optimizer_config.warmup_steps == 0:
         warmup_scheduler = None
     else:
         warmup_scheduler = lr_scheduler.LinearLR(
             optimizer,
-            start_factor=config.optimizer.warmup_start_lr
-            / config.optimizer.learning_rate,
-            total_iters=config.optimizer.warmup_steps,
+            start_factor=optimizer_config.warmup_start_lr
+            / optimizer_config.learning_rate,
+            total_iters=optimizer_config.warmup_steps,
         )
-    if config.optimizer.annealing_steps == 0:
+    if optimizer_config.annealing_steps == 0:
         annealing_scheduler = None
     else:
         annealing_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
-            config.optimizer.annealing_steps,
-            config.optimizer.annealing_steps_factor,
+            optimizer_config.annealing_steps,
+            optimizer_config.annealing_steps_factor,
         )
     scheduler: lr_scheduler.LRScheduler | None
     if warmup_scheduler is None and annealing_scheduler is None:
@@ -275,4 +275,4 @@ def create(
         assert annealing_scheduler is not None
         scheduler = annealing_scheduler
 
-    return optimizer_class(module.parameters(), **optimizer_kwargs), scheduler
+    return optimizer, scheduler

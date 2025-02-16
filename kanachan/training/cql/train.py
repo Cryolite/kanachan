@@ -30,7 +30,6 @@ from kanachan.constants import MAX_NUM_ACTION_CANDIDATES
 from kanachan.training.common import (
     get_distributed_environment,
     get_gradient,
-    is_gradient_nan,
 )
 import kanachan.training.core.config as _config
 
@@ -131,6 +130,15 @@ def _training(
         data = data.to(device=device)
         assert isinstance(data, TensorDict)
 
+        action: Tensor = data["action"]
+        assert isinstance(action, Tensor)
+        assert action.device == device
+        assert action.dtype == torch.int32
+        assert action.dim() == 1
+        assert action.size(0) == batch_size
+        assert (0 <= action).all().item()
+        assert (action < MAX_NUM_ACTION_CANDIDATES).all().item()
+
         with torch.autocast(**autocast_kwargs):
             td_error_computation(data)
 
@@ -150,14 +158,7 @@ def _training(
         assert q.size(0) == batch_size
         assert q.size(1) == MAX_NUM_ACTION_CANDIDATES
 
-        action: Tensor = data["action"]
-        assert isinstance(action, Tensor)
-        assert action.device == device
-        assert action.dtype == torch.int32
-        assert action.dim() == 1
-        assert action.size(0) == batch_size
-
-        q_sa = q[torch.arange(batch_size), action]
+        q_sa = q[torch.arange(batch_size, device=device), action]
         assert q_sa.device == device
         assert q_sa.dtype == dtype
         assert q_sa.dim() == 1
@@ -195,24 +196,12 @@ def _training(
             raise RuntimeError(errmsg)
 
         loss /= gradient_accumulation_steps
-        grad_scaler.scale(loss).backward()  # type: ignore
+        grad_scaler.scale(loss).backward()
 
         num_samples += batch_size * world_size
         batch_count += 1
 
         if batch_count % gradient_accumulation_steps == 0:
-            with torch.no_grad():
-                is_grad_nan = is_gradient_nan(source_network)
-            if world_size >= 2:
-                all_reduce(is_grad_nan)
-            if is_grad_nan.item() >= 1:
-                if local_rank == 0:
-                    logging.warning(
-                        "Skip an optimization step because of NaN in the gradient."
-                    )
-                optimizer.zero_grad()
-                continue
-
             grad_scaler.unscale_(optimizer)
             with torch.no_grad():
                 gradient = get_gradient(source_network)
@@ -223,11 +212,11 @@ def _training(
                 max_gradient_norm,
                 error_if_nonfinite=False,
             )
+
             grad_scaler.step(optimizer)
             grad_scaler.update()
             if scheduler is not None:
                 scheduler.step()
-
             optimizer.zero_grad()
 
             if (
@@ -239,17 +228,12 @@ def _training(
                 assert target_update_interval >= 1
                 assert target_update_rate > 0.0
                 with torch.no_grad():
-                    _u = torch.nn.utils.parameters_to_vector(
-                        source_network.parameters()
-                    )
-                    _v = torch.nn.utils.parameters_to_vector(
-                        target_network.parameters()
-                    )
-                    _v *= 1.0 - target_update_rate
-                    _v += target_update_rate * _u
-                    torch.nn.utils.vector_to_parameters(
-                        _v, target_network.parameters()
-                    )
+                    for _u, _v in zip(
+                        source_network.parameters(),
+                        target_network.parameters(),
+                    ):
+                        _v.data *= 1.0 - target_update_rate
+                        _v.data += target_update_rate * _u.data
 
             if local_rank == 0:
                 logging.info(
@@ -412,9 +396,9 @@ def _main(config: DictConfig) -> None:
         errmsg = "Use `replay_buffer_size` for `contiguous_training_data`."
         raise RuntimeError(errmsg)
 
-    _config.encoder.validate(config)
+    _config.encoder.validate(config.encoder)
 
-    _config.decoder.validate(config)
+    _config.decoder.validate(config.decoder, config.encoder.dimension)
 
     if config.num_qr_intervals is not None and config.num_qr_intervals <= 0:
         errmsg = (
@@ -618,7 +602,7 @@ def _main(config: DictConfig) -> None:
         )
         raise RuntimeError(errmsg)
 
-    _config.optimizer.validate(config)
+    _config.optimizer.validate(config.optimizer)
 
     if config.target_update_interval < 0:
         errmsg = (
@@ -689,9 +673,9 @@ def _main(config: DictConfig) -> None:
         if config.replay_buffer_size > 0:
             logging.info("Replay buffer size: %d", config.replay_buffer_size)
 
-        _config.encoder.dump(config)
+        _config.encoder.dump(config.encoder)
 
-        _config.decoder.dump(config)
+        _config.decoder.dump(config.decoder)
 
         if config.num_qr_intervals is None:
             logging.info("# of QR intervals: (N/A)")
@@ -727,7 +711,7 @@ def _main(config: DictConfig) -> None:
             config.max_gradient_norm,
         )
 
-        _config.optimizer.dump(config)
+        _config.optimizer.dump(config.optimizer)
 
         if config.double_q_learning:
             logging.info(
@@ -979,8 +963,8 @@ def _main(config: DictConfig) -> None:
     network.train()
     network = network.to(device=device, dtype=dtype)
     if world_size >= 2:
-        network = DistributedDataParallel(network)
         network = nn.SyncBatchNorm.convert_sync_batchnorm(network)
+        network = DistributedDataParallel(network)
 
     if config.double_q_learning:
         assert target_network is not None
@@ -996,7 +980,9 @@ def _main(config: DictConfig) -> None:
         network_to_save.train()
         network_to_save = network_to_save.to(device=device, dtype=dtype)
 
-    optimizer, scheduler = _config.optimizer.create(device.type, config, network)
+    optimizer, scheduler = _config.optimizer.create(
+        device.type, config.optimizer, network
+    )
 
     if config.encoder.load_from is not None:
         assert config.initial_model_prefix is None
@@ -1140,6 +1126,8 @@ def _main(config: DictConfig) -> None:
         assert a_star.dtype == torch.int32
         assert a_star.dim() == 1
         assert a_star.size(0) == batch_size
+        assert (0 <= a_star).all().item()
+        assert (a_star < MAX_NUM_ACTION_CANDIDATES).all().item()
 
         copy = TensorDict(
             {
@@ -1178,6 +1166,8 @@ def _main(config: DictConfig) -> None:
         assert action.dtype == torch.int32
         assert action.dim() == 1
         assert action.size(0) == batch_size
+        assert (0 <= action).all().item()
+        assert (action < MAX_NUM_ACTION_CANDIDATES).all().item()
 
         reward = data["next", "reward"]
         assert isinstance(reward, Tensor)
@@ -1201,7 +1191,9 @@ def _main(config: DictConfig) -> None:
             torch.arange(batch_size, device=device), a_star
         ]
 
-        target = reward + (1.0 - done) * config.discount_factor * next_q_sa
+        target = (
+            reward + (1.0 - done.float()) * config.discount_factor * next_q_sa
+        )
 
         td_error = (q_sa - target).pow(2)
 
@@ -1262,13 +1254,13 @@ def _main(config: DictConfig) -> None:
             decoder_to_save = decoder
             decoder_tdm_to_save = decoder_tdm
         if config.num_qr_intervals is None:
-            network_state = dump_object(
+            network_state = dump_model(
                 network_to_save,
                 [
                     dump_object(
                         encoder_tdm_to_save,
                         [
-                            dump_model(
+                            dump_object(
                                 encoder_to_save,
                                 [],
                                 {
@@ -1299,7 +1291,7 @@ def _main(config: DictConfig) -> None:
                     dump_object(
                         decoder_tdm_to_save,
                         [
-                            dump_model(
+                            dump_object(
                                 decoder_to_save,
                                 [],
                                 {
@@ -1324,7 +1316,7 @@ def _main(config: DictConfig) -> None:
                     dump_object(
                         argmax_layer_tdm,
                         [
-                            dump_model(
+                            dump_object(
                                 argmax_layer,
                                 ["argmax"],
                                 {},
@@ -1341,13 +1333,13 @@ def _main(config: DictConfig) -> None:
         else:
             assert q_decoder is not None
             assert q_decoder_tdm is not None
-            network_state = dump_object(
+            network_state = dump_model(
                 network_to_save,
                 [
                     dump_object(
                         encoder_tdm_to_save,
                         [
-                            dump_model(
+                            dump_object(
                                 encoder_to_save,
                                 [],
                                 {
@@ -1378,7 +1370,7 @@ def _main(config: DictConfig) -> None:
                     dump_object(
                         decoder_tdm_to_save,
                         [
-                            dump_model(
+                            dump_object(
                                 decoder_to_save,
                                 [],
                                 {
@@ -1403,7 +1395,7 @@ def _main(config: DictConfig) -> None:
                     ),
                     dump_object(
                         q_decoder_tdm,
-                        [dump_model(q_decoder, [], {})],
+                        [dump_object(q_decoder, [], {})],
                         {
                             "in_keys": ["qr_action_value"],
                             "out_keys": ["action_value"],
@@ -1411,7 +1403,7 @@ def _main(config: DictConfig) -> None:
                     ),
                     dump_object(
                         argmax_layer_tdm,
-                        [dump_model(argmax_layer, ["argmax"], {})],
+                        [dump_object(argmax_layer, ["argmax"], {})],
                         {
                             "in_keys": ["candidates", "action_value"],
                             "out_keys": ["action"],
