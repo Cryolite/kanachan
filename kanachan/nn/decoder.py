@@ -52,6 +52,8 @@ class Decoder(nn.Module):
 
         super().__init__()
 
+        self.__input_dimension = input_dimension
+
         self.__output_mode = output_mode
 
         self.__output_width = 1
@@ -128,9 +130,13 @@ class Decoder(nn.Module):
 
     @torch.compile
     def forward(self, encode: Tensor) -> Tensor:
+        batch_size = int(encode.size(0))
+        input_width = int(encode.size(1))
+
+        assert isinstance(encode, Tensor)
+        assert encode.dtype in (torch.float64, torch.float32, torch.float16)
         assert encode.dim() == 3
-        batch_size = encode.size(0)
-        input_width = encode.size(1)
+        assert encode.size(2) == self.__input_dimension
 
         original_dtype = encode.dtype
 

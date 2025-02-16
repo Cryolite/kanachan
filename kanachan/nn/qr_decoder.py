@@ -129,9 +129,9 @@ class QRDecoder(nn.Module):
 
     def reset_parameters(self) -> None:
         for state_value_decoder in self.state_value_decoder_list:
-            state_value_decoder.reset_parameters()
+            state_value_decoder.reset_parameters()  # type: ignore
         for advantage_decoder in self.advantage_decoder_list:
-            advantage_decoder.reset_parameters()
+            advantage_decoder.reset_parameters()  # type: ignore
 
 
 def _get_a_star(source_network: nn.Module, data: TensorDict) -> Tensor:

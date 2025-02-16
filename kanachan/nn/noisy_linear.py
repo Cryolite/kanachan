@@ -109,8 +109,10 @@ class NoisyLinear(nn.Module):
     def reset_noise(self) -> None:
         epsilon_in = self._scale_noise(self.in_features)
         epsilon_out = self._scale_noise(self.out_features)
+        assert isinstance(self.weight_epsilon, Tensor)
         self.weight_epsilon.copy_(epsilon_out.outer(epsilon_in))
         if self.bias_mu is not None:
+            assert isinstance(self.bias_epsilon, Tensor)
             self.bias_epsilon.copy_(epsilon_out)
 
     def _scale_noise(
@@ -122,6 +124,7 @@ class NoisyLinear(nn.Module):
         return x.sign().mul_(x.abs().sqrt_())
 
     def forward(self, x: Tensor) -> Tensor:
+        assert isinstance(self.weight_epsilon, Tensor)
         weight: Tensor
         if self.training:
             weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
@@ -130,6 +133,7 @@ class NoisyLinear(nn.Module):
 
         bias: Tensor
         if self.bias_mu is not None:
+            assert isinstance(self.bias_epsilon, Tensor)
             if self.training:
                 bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
             else:

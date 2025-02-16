@@ -2,7 +2,7 @@
 
 import math
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 
 class PositionalEncoding(nn.Module):
@@ -22,5 +22,6 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x: torch.Tensor):
+        assert isinstance(self._pe, Tensor)
         x += self._pe
         return self.dropout(x)
