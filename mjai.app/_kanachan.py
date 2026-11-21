@@ -1299,7 +1299,7 @@ class RoundState:
                 self.__xiangting_calculator, self.__my_hand, 4)
             if angang not in hupai_candidates:
                 return None
-            if angang in self.__get_my_zhenting_tiles_34(seat):
+            if self.__my_zhenting != 0 or angang in self.__get_my_zhenting_tiles_34(seat):
                 return None
             relseat = (actor + 4 - seat) % 4 - 1
             return [221, 543 + relseat]
@@ -1337,7 +1337,7 @@ class RoundState:
                 self.__xiangting_calculator, self.__my_hand, 4 - len(self.__my_fulu_list))
             if tile34 not in hupai_candidates:
                 return None
-            if tile34 in self.__get_my_zhenting_tiles_34(seat):
+            if self.__my_zhenting != 0 or tile34 in self.__get_my_zhenting_tiles_34(seat):
                 return None
             relseat = (actor + 4 - seat) % 4 - 1
             return [221, 543 + relseat]
