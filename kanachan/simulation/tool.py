@@ -196,9 +196,8 @@ class Tool(object):
                 dora_indicators=dora_indicators, config=hand_config)
 
         if response.error is None:
-            if 13 <= response.han and response.han < 26:
+            if 13 <= response.han and not any(yaku.is_yakuman for yaku in response.yaku):
                 # 数え役満は13翻に切り揃える．
-                # TODO: 26翻以上の数え役満に対応する．
                 return (13, response.fu)
             return (response.han, response.fu)
 
